@@ -1,0 +1,20 @@
+{
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"result\":{\"path\":\"D:\\\\workspace\\\\redocoreemail\\\\analysis\\\\native-auth-evidence.json\",\"bytes\":105,\"records\":0,\"unknowns\":0}}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "path": "D:\\workspace\\redocoreemail\\analysis\\native-auth-evidence.json",
+        "bytes": 105,
+        "records": 0,
+        "unknowns": 0
+      }
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 5
+}

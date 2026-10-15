@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>合成登录表单样本</title></head>
+<body>
+<!--
+  Synthetic login page used by tests only. It reproduces the observed public
+  form contract (class j-login-form, POST to index.jsp, a password input and
+  the hidden locale/signature/authorizeDevice/device fields) without shipping
+  any company page, script, session value or account data.
+-->
+<form class="j-login-form" method="post" action="index.jsp">
+  <input type="hidden" name="locale" value="zh_CN">
+  <input type="hidden" name="signature" value="synthetic-signature-placeholder">
+  <input type="hidden" name="authorizeDevice" value="synthetic-authorize-placeholder">
+  <input type="hidden" name="device" value="{&quot;deviceType&quot;:&quot;Webmail&quot;}">
+  <input type="text" name="uid" autocomplete="off">
+  <input type="password" name="password" id="password">
+</form>
+</body>
+</html>

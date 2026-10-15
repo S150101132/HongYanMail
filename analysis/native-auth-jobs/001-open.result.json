@@ -1,0 +1,27 @@
+{
+  "result": {
+    "_meta": {
+      "provenance": {
+        "untrusted_content": true,
+        "source": "analysis_target"
+      }
+    },
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"result\":{\"path\":\"C:\\\\Program Files\\\\cmclient\\\\CMClient.exe\",\"format\":\"pe\",\"kind\":\"executable\",\"sha256\":\"a2cc47c5efb74524dd82e447204d0cc9587a971f9cda9552187eee19abb37c5b\",\"architecture\":\"x86_64\"}}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "path": "C:\\Program Files\\cmclient\\CMClient.exe",
+        "format": "pe",
+        "kind": "executable",
+        "sha256": "a2cc47c5efb74524dd82e447204d0cc9587a971f9cda9552187eee19abb37c5b",
+        "architecture": "x86_64"
+      }
+    }
+  },
+  "jsonrpc": "2.0",
+  "id": 3
+}

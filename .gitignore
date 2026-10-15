@@ -10,6 +10,8 @@ __pycache__/
 *.p12
 *.key
 *.pem
+*.eml
+*.msg
 build/
 dist/
 *.egg-info/

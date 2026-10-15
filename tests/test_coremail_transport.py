@@ -32,7 +32,8 @@ class TransportTests(unittest.TestCase):
         return session
 
     def test_public_embedded_form_is_submitted_without_reusing_identity(self):
-        page = Path('analysis/web-login/public-login.html').read_text(encoding='utf-8')
+        fixture = Path(__file__).resolve().parent / 'fixtures' / 'login' / 'public-login-form.html'
+        page = fixture.read_text(encoding='utf-8')
         session = self.session([Response(page), Response('ok',
             'https://newmail.inspur.com/coremail/main.jsp?sid=own-test-session')])
         session.login('wangbiao@inspur.com', 'test-secret')

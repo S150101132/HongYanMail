@@ -1,0 +1,1 @@
+{"name":"search_strings","arguments":{"pattern":"user:login|accessToken|signature|nonce|LoginAction|Coremail Login","mode":"regex","case_sensitive":false}}

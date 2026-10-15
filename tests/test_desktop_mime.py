@@ -1,0 +1,73 @@
+import unittest
+from email.message import EmailMessage
+from unittest.mock import patch
+
+from coremail_desktop.mime.parser import parse_mime
+
+
+class MimeTests(unittest.TestCase):
+    def test_chinese_encodings_and_duplicate_headers(self):
+        raw = b'Message-ID: <one>\r\nMessage-ID: <two>\r\nContent-Type: text/plain; charset=gbk\r\n\r\n' + '中文正文'.encode('gbk')
+        doc = parse_mime(raw, 'remote')
+        self.assertEqual(doc.text, '中文正文')
+        self.assertEqual(doc.remote_id, 'remote')
+        self.assertEqual(doc.headers['message-id'], ('<one>', '<two>'))
+
+    def test_alternative_and_nested_attachment_are_not_body(self):
+        msg = EmailMessage()
+        msg.set_content('真正正文')
+        msg.add_alternative('<p>真正正文</p>', subtype='html')
+        attached = EmailMessage()
+        attached.set_content('附件秘密不能当正文')
+        msg.add_attachment(attached, filename='../secret.eml')
+        doc = parse_mime(msg.as_bytes(), 'remote')
+        self.assertIn('真正正文', doc.text)
+        self.assertNotIn('附件秘密', doc.text)
+        self.assertIn('真正正文', doc.html)
+        self.assertEqual(len(doc.attachments), 1)
+        self.assertEqual(doc.attachments[0].name, 'secret.eml')
+
+    def test_html_only_has_plain_text_fallback_and_no_message_id_required(self):
+        doc = parse_mime(b'Content-Type: text/html; charset=utf-8\r\n\r\n<p>Hello<br>world</p>', 'x')
+        self.assertIn('Hello', doc.text)
+        self.assertIn('world', doc.text)
+
+    def test_cid_images_belong_to_document_and_svg_is_not_loaded(self):
+        msg = EmailMessage()
+        msg.set_content('<img src="cid:picture"><img src="cid:vector">', subtype='html')
+        msg.add_related(b'\x89PNG\r\n\x1a\nabc', maintype='image', subtype='png', cid='<picture>')
+        msg.add_related(b'<svg/>', maintype='image', subtype='svg+xml', cid='<vector>')
+        doc = parse_mime(msg.as_bytes(), 'x')
+        self.assertIn('picture', doc.cid_resources)
+        self.assertNotIn('vector', doc.cid_resources)
+        self.assertNotIn('cid:vector', doc.html)
+
+    def test_inline_image_filename_keeps_owned_cid(self):
+        msg = EmailMessage()
+        msg.set_content('<img src="cid:picture">', subtype='html')
+        msg.add_related(b'\x89PNG\r\n\x1a\nabc', maintype='image', subtype='png', cid='<picture>', filename='logo.png', disposition='inline')
+        doc = parse_mime(msg.as_bytes(), 'x')
+        self.assertIn('picture', doc.cid_resources)
+        self.assertIn('cid:picture', doc.html)
+
+    def test_limits_return_visible_reason_and_never_partial_body(self):
+        with patch('coremail_desktop.mime.parser.MAX_RAW_BYTES', 8):
+            doc = parse_mime(b'Subject: Summary\r\n\r\nSecret body', 'x')
+        self.assertIn('超出', doc.text)
+        self.assertNotIn('Secret body', doc.text)
+        with patch('coremail_desktop.mime.parser.MAX_DECODED_BYTES', 3):
+            self.assertIn('超出', parse_mime(b'Content-Type: text/plain\r\n\r\n1234', 'x').text)
+
+    def test_depth_limit_and_encrypted_payload_are_visible(self):
+        msg = EmailMessage()
+        msg.set_content('hidden')
+        for _ in range(32):
+            outer = EmailMessage()
+            outer.make_mixed()
+            outer.attach(msg)
+            msg = outer
+        self.assertIn('超出', parse_mime(msg.as_bytes(), 'x').text)
+        doc = parse_mime(b'Content-Type: application/pkcs7-mime; smime-type=enveloped-data\r\n\r\nsecret', 'x')
+        self.assertIn('加密', doc.text)
+        self.assertNotIn('secret', doc.text)
+
