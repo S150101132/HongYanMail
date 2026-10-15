@@ -13,6 +13,7 @@ class Composer(QDialog):
         for label,field in [('发件人',self.sender),('收件人',self.to),('抄送',self.cc),('密送',self.bcc),('主题',self.subject)]: form.addRow(label,field)
         box.addLayout(form); self.body=QPlainTextEdit(draft.body); self.body.setPlaceholderText('输入纯文本正文…'); box.addWidget(self.body,1)
         self.encryption=QCheckBox('要求证书加密（缺少证书时阻止发送）'); self.encryption.setChecked(draft.encryption_required); box.addWidget(self.encryption)
+        self.guard_label=QLabel(''); self.guard_label.setWordWrap(True); self.guard_label.setVisible(False); box.addWidget(self.guard_label)
         self.state_label=QLabel('本机草稿 · 不同步到服务器'); self.state_label.setWordWrap(True); box.addWidget(self.state_label)
         row=QHBoxLayout(); self.save_button=QPushButton('保存到本机  Ctrl+S'); self.send_button=QPushButton('发送  Ctrl+Enter'); self.send_button.setProperty('primary',True); row.addWidget(self.save_button); row.addStretch(); row.addWidget(self.send_button); box.addLayout(row)
         self.timer=QTimer(self); self.timer.setSingleShot(True); self.timer.setInterval(1000); self.timer.timeout.connect(self.save)
@@ -35,18 +36,22 @@ class Composer(QDialog):
     def _saved(self,revision):
         if revision==self.draft.revision: self.dirty=False; self.state_label.setText('已保存到本机 · 加密草稿')
     def _save_failed(self,_): self.state_label.setText('本机保存失败：内容仍保留在窗口中，请勿关闭。')
+    def set_guard(self,text):
+        """Persistent blocking explanation that autosave status must not overwrite."""
+        self.guard_label.setText(text or ''); self.guard_label.setVisible(bool(text))
     def request_send(self):
         if self.sending: return
         draft=self.snapshot()
         if draft.encryption_required:
-            self.state_label.setText('加密发送接口尚未完成真实互通验证，已阻止发送。草稿会保留加密要求。'); self.save(); return
+            self.set_guard('加密发送接口尚未完成真实互通验证，已阻止发送。草稿保留加密要求，不会改发明文。')
+            self.save(); return
         try:
             from ..compose.recipients import normalize_recipients
             normalize_recipients((draft.from_identity,)); normalize_recipients(draft.to+draft.cc+draft.bcc)
         except Exception: self.state_label.setText('请填写有效的完整发件人和收件人邮箱地址。'); return
         if not draft.to and not draft.cc and not draft.bcc: self.state_label.setText('请填写至少一个收件人。'); return
         if not draft.subject.strip() and QMessageBox.question(self,'空主题','主题为空，仍要发送？')!=QMessageBox.StandardButton.Yes: return
-        self.save(); self.sending=True; self.set_send_state('Preparing'); self.send_requested.emit(draft)
+        self.set_guard(''); self.save(); self.sending=True; self.set_send_state('Preparing'); self.send_requested.emit(draft)
     def set_send_state(self,state):
         state=getattr(state,'value',state); self.sending=state in ('Preparing','Submitting','Unknown','Reconciling','Accepted')
         self.send_button.setEnabled(not self.sending)

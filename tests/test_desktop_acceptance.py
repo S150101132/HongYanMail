@@ -11,7 +11,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 import unittest
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QTextBrowser
 
 from coremail_desktop.errors import AppError
@@ -71,7 +71,10 @@ class RecordingAutosave(QObject):
 def window_with_autosave():
     from coremail_desktop.ui.main_window import MainWindow
     autosave = RecordingAutosave()
-    return MainWindow(Controller(), reader_factory=QTextBrowser, autosave_factory=lambda: autosave), autosave
+    controller = Controller()
+    window = MainWindow(controller, reader_factory=QTextBrowser, autosave_factory=lambda: autosave)
+    window.controller = controller
+    return window, autosave
 
 
 class ShellTests(unittest.TestCase):
@@ -276,6 +279,171 @@ class SessionLossTests(unittest.TestCase):
         for secret in ('newmail.inspur.com', 'sid=', 'secret'):
             self.assertNotIn(secret, message)
         window.close()
+
+
+class KeyboardOnlyTests(unittest.TestCase):
+    """The workbench must stay usable without a mouse."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from coremail_desktop.ui.theme import apply_theme
+        apply_theme(self.app)
+
+    def test_login_is_operable_with_keyboard_only(self):
+        from coremail_desktop.ui.login import LoginPane
+        pane = LoginPane()
+        for widget in (pane.server, pane.account, pane.password, pane.button):
+            self.assertNotEqual(widget.focusPolicy(), Qt.FocusPolicy.NoFocus,
+                                f'{type(widget).__name__} cannot take focus')
+            self.assertTrue(widget.isEnabled())
+
+        requests = []
+        pane.requested.connect(requests.append)
+        pane.account.setText('me@example.test')
+        pane.password.setText('secret')
+        # Enter in the password field must submit, without touching the mouse.
+        pane.password.returnPressed.emit()
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]['username'], 'me@example.test')
+        self.assertFalse(pane.button.isEnabled(), 'button stayed enabled during login')
+
+        # Keyboard focus order must include the password field exactly once.
+        widgets, widget = [], pane.account
+        for _ in range(60):
+            widget = widget.nextInFocusChain()
+            if widget is pane.account:
+                break
+            widgets.append(widget)
+        self.assertIn(pane.password, widgets)
+        self.assertIn(pane.button, widgets)
+        pane.close()
+
+    def test_primary_shortcuts_are_single_strokes_and_do_not_collide(self):
+        window = make_window()
+        sequences = [action.shortcut().toString() for action in window.actions()]
+        self.assertEqual(len(sequences), len(set(sequences)), f'duplicate shortcuts: {sequences}')
+        self.assertIn('Ctrl+S', sequences)
+        self.assertIn('F5', sequences)
+        window.close()
+
+    def test_keyboard_only_send_flow_uses_the_durable_request_path(self):
+        window, _ = window_with_autosave()
+        controller = window.controller
+        window.show()
+
+        window.login.account.setText('me@example.test')
+        window.login.password.setText('secret')
+        window.login.button.click()
+        self.assertEqual([call[0] for call in controller.calls], ['login'])
+        account = controller.calls[0][1]['account']
+        self.assertEqual(account.login_uid, 'me@example.test')
+        self.assertNotIn('secret', repr(account))
+
+        task = next(iter(window.pending))
+        window._completed(task, window.generation, None)
+        self.assertTrue(window.new_button.isEnabled(), 'login success did not enable composing')
+
+        window.compose('new')
+        window.composer.to.setText('you@example.test')
+        window.composer.subject.setText('键盘流程')
+        window.composer.body.setPlainText('仅键盘也能写信')
+        window.composer.send_button.click()
+
+        requests = [call for call in controller.calls if call[0] == 'request_send']
+        self.assertEqual(len(requests), 1)
+        sent = requests[0][1]['draft']
+        self.assertEqual(sent.to, ('you@example.test',))
+        self.assertEqual(sent.subject, '键盘流程')
+        self.assertEqual(sent.body, '仅键盘也能写信')
+        self.assertFalse(sent.encryption_required, 'plain flow must not silently request encryption')
+        window.composer.hide()
+        window.close()
+
+    def test_focus_styles_are_applied_to_the_shell(self):
+        style = self.app.styleSheet()
+        self.assertIn(':focus', style)
+        self.assertIn('border:2px solid', style)
+
+    def test_reply_and_encrypted_send_stay_blocked_without_mouse_escape_hatch(self):
+        window, _ = window_with_autosave()
+        window.open_composer(draft())
+        window.composer.encryption.setChecked(True)
+        window.composer.timer.stop()
+        window.composer.send_button.click()
+
+        # The blocking reason must be visible and must survive the autosave status
+        # that the same click triggers.
+        self.assertTrue(window.composer.guard_label.isVisible(), 'blocking reason is not visible')
+        self.assertIn('阻止发送', window.composer.guard_label.text())
+        self.assertIn('不会改发明文', window.composer.guard_label.text())
+        self.assertNotIn('阻止发送', window.composer.state_label.text())
+        self.assertEqual([call for call in window.controller.calls if call[0] == 'request_send'], [])
+        self.assertFalse(window.composer.sending)
+        window.composer.confirm_unsaved_close = lambda: True
+        window.composer.hide()
+        window.close()
+
+    def test_guard_notice_clears_when_encryption_is_switched_off(self):
+        window, _ = window_with_autosave()
+        window.open_composer(draft())
+        window.composer.encryption.setChecked(True)
+        window.composer.timer.stop()
+        window.composer.send_button.click()
+        self.assertTrue(window.composer.guard_label.isVisible())
+
+        window.composer.encryption.setChecked(False)
+        window.composer.to.setText('you@example.test')
+        window.composer.subject.setText('普通邮件')
+        window.composer.send_button.click()
+
+        self.assertFalse(window.composer.guard_label.isVisible(), 'stale blocking notice left behind')
+        self.assertIn('request_send', [call[0] for call in window.controller.calls])
+        window.composer.hide()
+        window.close()
+
+
+class SessionRecoveryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_expired_session_recovers_the_draft_and_shows_the_login_pane(self):
+        window, autosave = window_with_autosave()
+        window.open_composer(draft())
+        window.composer.body.setPlainText('会话过期前写的内容')
+        window.composer.timer.stop()
+        window.composer.save()
+        self.assertEqual(autosave.written[-1].body, '会话过期前写的内容')
+        self.assertFalse(window.composer.dirty)
+
+        window._auth_required()
+
+        self.assertEqual(window.stack.currentWidget(), window.login)
+        self.assertFalse(window.new_button.isEnabled())
+        self.assertEqual(window.composer.body.toPlainText(), '会话过期前写的内容')
+        self.assertTrue(window.composer.isVisible(), 'draft window was not preserved')
+        window.composer.hide()
+        window.close()
+
+    def test_multiple_expired_requests_prompt_for_login_once(self):
+        from coremail_desktop.errors import AppError
+        from coremail_desktop.session.worker import SessionWorker
+
+        class ExpiredAdapter:
+            def list_folders(self):
+                raise AppError('SESSION_EXPIRED')
+
+        worker = SessionWorker(lambda: ExpiredAdapter())
+        prompts, failures = [], []
+        worker.auth_required.connect(lambda: prompts.append(1))
+        worker.failed.connect(lambda task, generation, error: failures.append(error.code))
+        for _ in range(3):
+            worker.execute('t', 'list_folders', {}, 0)
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(failures, ['SESSION_EXPIRED'] * 3)
 
 
 if __name__ == '__main__':
