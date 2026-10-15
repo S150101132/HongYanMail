@@ -17,4 +17,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Distribution audit found personal or research 
 & $python -u packaging/smoke_check.py
 if ($LASTEXITCODE -ne 0) { throw 'Packaged application exited before the startup window elapsed.' }
 
-Write-Output 'Build verified: WebEngine reader, privacy audit and startup smoke check all passed.'
+& $python -u packaging/verify_neutral_directory.py
+if ($LASTEXITCODE -ne 0) { throw 'Packaged application failed to start from a neutral working directory.' }
+
+Write-Output 'Build verified: WebEngine reader, privacy audit, startup smoke check and neutral-directory launch all passed.'
