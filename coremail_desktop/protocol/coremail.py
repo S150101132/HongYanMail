@@ -51,10 +51,18 @@ class DesktopSession(CoremailSession):
 class CoremailAdapter:
     supports_reply_headers = False
     supports_encrypted_submission = False
+    # Folder roles: the deployment's mbox:getAllFolders returns only
+    # {id, name, flags{system:bool}, keepPeriod} for every read-only parameter
+    # variant, so no role is exposed and none is inferred from names. Folder id 1
+    # is the inbox, which is independently confirmed by listing messages in it.
+    INBOX_FOLDER_ID = '1'
+
     def __init__(self, session_factory=DesktopSession):
         self._session_factory = session_factory
         self._session = None
         self._identities = set()
+        self.last_folder_total = None
+        self.last_folder_id = None
     def login(self, account, password):
         self.close()
         self._session = self._session_factory(account.origin)
@@ -82,13 +90,27 @@ class CoremailAdapter:
         for item in value:
             if not isinstance(item,dict) or 'id' not in item: raise AppError('INVALID_RESPONSE')
             role = item.get('role') or item.get('type')
-            role = role if role in ('inbox','sent','drafts','trash','spam') else None
-            result.append(Folder(str(item['id']),str(item.get('name','')),role, item.get('stats',{})))
+            if role not in ('inbox','sent','drafts','trash','spam'):
+                # The server does not expose a role; only the inbox id is verified,
+                # so everything else stays unclassified rather than guessed.
+                role = 'inbox' if str(item['id']) == self.INBOX_FOLDER_ID else None
+            counts = item.get('stats') if isinstance(item.get('stats'), dict) else {}
+            result.append(Folder(str(item['id']),str(item.get('name','')),role, counts))
         return result
     def list_messages(self, folder_id, offset, limit=50):
         if offset < 0 or limit < 1 or limit > 100: raise AppError('INVALID_PAGE')
-        value = self._call('mbox:listMessages', {'fid':int(folder_id) if str(folder_id).isdigit() else folder_id, 'start':offset,'limit':limit,'mode':'count','order':'date','desc':True,'returnTotal':True,'returnTag':True,'summaryWindowSize':0},True).get('var')
-        if isinstance(value,dict): value = value.get('messages')
+        response = self._call('mbox:listMessages', {'fid':int(folder_id) if str(folder_id).isdigit() else folder_id, 'start':offset,'limit':limit,'mode':'count','order':'date','desc':True,'returnTotal':True,'returnTag':True,'summaryWindowSize':0},True)
+        value = response.get('var')
+        if isinstance(value,dict):
+            total = value.get('total')
+            value = value.get('messages')
+        else:
+            total = response.get('total')
+        if isinstance(total,int) and total >= 0:
+            # The server reports the folder total on the list response, so the
+            # interface can show a real count without inventing one.
+            self.last_folder_total = total
+            self.last_folder_id = str(folder_id)
         if not isinstance(value,list): raise AppError('INVALID_RESPONSE')
         result = []
         for item in value:

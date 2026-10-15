@@ -5,6 +5,29 @@ def value(obj,name,default=''):
     if name=='message_id': name='remote_id'
     return obj.get(name,default) if isinstance(obj,dict) else getattr(obj,name,default)
 
+def is_mapping(value):
+    """True for anything mapping-like.
+
+    The models freeze mappings with MappingProxyType, so isinstance(value, dict) is
+    False even though the value supports .get() and `in`. Testing for dict here
+    silently disabled the unread marker for every real message.
+    """
+    return hasattr(value, 'get') and hasattr(value, '__contains__')
+
+
+def is_unread(flags):
+    """The server marks read messages with flags.read.
+
+    A missing read flag means unread, so the default must be False: defaulting to
+    True made every message without the key render as read.
+    """
+    if not is_mapping(flags):
+        return False
+    if 'unread' in flags:
+        return bool(flags.get('unread'))
+    return not flags.get('read', False)
+
+
 class SummaryModel(QAbstractListModel):
     def __init__(self,parent=None): super().__init__(parent); self.rows=[]
     def rowCount(self,parent=QModelIndex()): return 0 if parent.isValid() else len(self.rows)
@@ -14,8 +37,9 @@ class SummaryModel(QAbstractListModel):
         if role==Qt.ItemDataRole.UserRole: return m
         if role==Qt.ItemDataRole.DisplayRole:
             sender=value(m,'sender') or value(m,'from_address') or '未知发件人'
-            flags=value(m,'flags',{}); status='未读 · ' if flags.get('unread') else ''
-            attachment=' · 含附件' if flags.get('attached') or flags.get('attachment') else ''
+            flags=value(m,'flags',{})
+            status='未读 · ' if is_unread(flags) else ''
+            attachment=' · 含附件' if is_mapping(flags) and (flags.get('attached') or flags.get('attachment')) else ''
             return f"{status}{sender}    {str(value(m,'date_text'))[:16]}\n{value(m,'subject') or '（无主题）'}{attachment}\n{value(m,'snippet') or value(m,'preview')}"
     def replace(self,rows): self.beginResetModel(); self.rows=list(rows); self.endResetModel()
 

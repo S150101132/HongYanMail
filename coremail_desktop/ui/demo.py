@@ -14,7 +14,7 @@ class DemoController(QObject):
             elif operation=='get_account_identities': result={'demo@example.invalid'}
             elif operation=='list_messages':
                 titles=['项目进展与本周计划','关于设计评审的会议纪要','欢迎使用桌面预览版','研发周报 · 第 42 周','文档更新通知']
-                result=[MessageSummary(str(i),params['folder_id'],titles[i%5]+'（演示）',['产品协作组','研发团队','桌面预览'][i%3],'2026-10-15 09:30',{'unread':i%3==0}) for i in range(params['offset'],min(params['offset']+50,1000))]
+                result=[MessageSummary(str(i),params['folder_id'],titles[i%5]+'（演示）',['产品协作组','研发团队','桌面预览'][i%3],'2026-10-15 09:30',{'read':i%3!=0}) for i in range(params['offset'],min(params['offset']+50,1000))]
             elif operation=='fetch_mime': result=b'From: demo@example.invalid\r\nSubject: Synthetic demo\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSynthetic demo data only.'
             elif operation=='parse_message':
                 from ..mime.parser import parse_mime
