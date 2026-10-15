@@ -21,3 +21,5 @@ analysis/web-login/
 analysis/rea-*/
 dist_probe/
 build_probe/
+PASSWD.txt
+runtime/.pfx-pass

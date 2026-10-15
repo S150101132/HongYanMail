@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
 from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import pkcs7
@@ -66,6 +67,12 @@ def decrypt_smime(data: bytes, cert, private_key) -> bytes:
         raise CryptoError('INVALID_ENCRYPTED_MESSAGE')
     try:
         plaintext = pkcs7.pkcs7_decrypt_der(envelope, cert, private_key, [])
+    except UnsupportedAlgorithm:
+        # pyca/cryptography's high-level pkcs7 decrypt only accepts AES-CBC and
+        # rejects the 3DES-CBC (1.2.840.113549.3.7) that this deployment actually
+        # uses. That is a capability gap, not a wrong-owner failure, so it must be
+        # reported distinctly and must never surface as an unhandled exception.
+        raise CryptoError('ENCRYPTED_ALGORITHM_UNSUPPORTED') from None
     except (ValueError, TypeError, NotImplementedError):
         raise CryptoError('DECRYPT_FAILED') from None
     if len(plaintext) > MAX_PLAINTEXT:

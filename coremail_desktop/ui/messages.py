@@ -28,6 +28,7 @@ MESSAGES = {
     'CERT_ALGORITHM_UNSUPPORTED': '证书算法不在当前支持的范围内。',
     'DECRYPT_FAILED': '解密失败：私钥与该加密邮件不匹配或内容已损坏。',
     'UNSUPPORTED_ENCRYPTION_FORMAT': '该加密格式尚未验证支持，未按明文处理。',
+    'ENCRYPTED_ALGORITHM_UNSUPPORTED': '这封邮件使用当前版本还不支持的加密算法（实测为 3DES），已如实报告，不会显示为空正文。',
     'RECIPIENT_CERT_MISSING': '缺少收件人证书，已阻止加密发送，不会降级为明文。',
     'RECIPIENT_CERT_EXPIRED': '收件人证书已过期，已阻止加密发送。',
     'RECIPIENT_CERT_USAGE': '收件人证书用途不允许加密，已阻止发送。',
