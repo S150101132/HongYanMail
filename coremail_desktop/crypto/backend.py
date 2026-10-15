@@ -54,26 +54,59 @@ def validate_recipient(info: CertificateInfo):
 
 
 def decrypt_smime(data: bytes, cert, private_key) -> bytes:
+    """Decrypt an S/MIME enveloped message, tolerating provider variations.
+
+    pyca's high-level pkcs7 decrypt accepts only AES-CBC, but this deployment
+    encrypts with 3DES-CBC and the supplier build wraps content in an explicit
+    context tag, so the same primitives are driven directly as a fallback. Both
+    paths report unsupported algorithms distinctly instead of as a decryption
+    failure.
+    """
     if len(data) > MAX_ENVELOPE:
         raise CryptoError('MESSAGE_TOO_LARGE')
     message = BytesParser(policy=policy.default).parsebytes(data)
     kind = message.get_content_type().lower()
     if kind not in {'application/pkcs7-mime', 'application/x-pkcs7-mime'}:
         raise CryptoError('UNSUPPORTED_ENCRYPTION_FORMAT')
-    if message.get_param('smime-type', '').lower() != 'enveloped-data':
+    smime_type = message.get_param('smime-type', '').lower()
+    if smime_type != 'enveloped-data':
         raise CryptoError('UNSUPPORTED_ENCRYPTION_FORMAT')
     envelope = message.get_payload(decode=True)
     if not isinstance(envelope, bytes) or not envelope:
         raise CryptoError('INVALID_ENCRYPTED_MESSAGE')
+
+    plaintext = None
     try:
         plaintext = pkcs7.pkcs7_decrypt_der(envelope, cert, private_key, [])
     except UnsupportedAlgorithm:
-        # pyca/cryptography's high-level pkcs7 decrypt only accepts AES-CBC and
-        # rejects the 3DES-CBC (1.2.840.113549.3.7) that this deployment actually
-        # uses. That is a capability gap, not a wrong-owner failure, so it must be
-        # reported distinctly and must never surface as an unhandled exception.
-        raise CryptoError('ENCRYPTED_ALGORITHM_UNSUPPORTED') from None
-    except (ValueError, TypeError, NotImplementedError):
+        # The algorithm is not one the high-level helper offers. The direct CMS
+        # path can still handle it (notably 3DES-CBC).
+        pass
+    except (ValueError, TypeError):
+        # pyca reports a wrong key and several provider variants with the same
+        # exception. The envelope's declared algorithm decides the interpretation:
+        # a wrong-key failure on a supported algorithm must stay a decrypt
+        # failure, so that "the private key does not match" is never masked.
+        from . import cms
+        if cms.declared_content_algorithm(envelope) in cms.SUPPORTED_CONTENT_ALGORITHMS:
+            raise CryptoError('DECRYPT_FAILED') from None
+        pass
+    except NotImplementedError:
+        pass
+    if plaintext is None:
+        plaintext = _decrypt_with_cms(envelope, private_key)
+    if len(plaintext) > MAX_PLAINTEXT:
+        raise CryptoError('MESSAGE_TOO_LARGE')
+    return plaintext
+
+
+def _decrypt_with_cms(envelope: bytes, private_key) -> bytes:
+    from . import cms
+    try:
+        plaintext, unused_algorithm = cms.decrypt_message(envelope, private_key)
+    except CryptoError:
+        raise
+    except Exception:
         raise CryptoError('DECRYPT_FAILED') from None
     if len(plaintext) > MAX_PLAINTEXT:
         raise CryptoError('MESSAGE_TOO_LARGE')
