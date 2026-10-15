@@ -81,6 +81,43 @@ class RealMessageTests(unittest.TestCase):
         with self.assertRaises(Exception):
             cms.decrypt_message(der, other_key)
 
+    def test_service_decrypts_and_the_reader_keeps_the_envelope_headers(self):
+        """The displayed document must carry the envelope's From/To/Subject/Date.
+
+        The decrypted content is multipart/related with no headers of its own, so
+        the reader only has those fields if the service result is merged with the
+        outer message headers.
+        """
+        from coremail_desktop.crypto.service import CryptoService
+        from coremail_desktop.mime.parser import parse_mime
+
+        service = CryptoService()
+        service.unlock(str(PFX), pfx_secret())
+        self.addCleanup(service.lock)
+        result = service.decrypt(self.raw)
+        self.assertEqual(result.format, 'smime-enveloped-data+signed-data')
+        self.assertEqual(result.signature_status, 'not_verified',
+                         'a signature is reported, never claimed as verified')
+
+        document = parse_mime(result.mime_bytes, 'real-1')
+        self.assertTrue((document.text or '').strip() or document.html,
+                        'decrypted message must expose readable content')
+
+        outer = BytesParser(policy=policy.default).parsebytes(self.raw)
+        merged = dict(document.headers)
+        for name in ('from', 'to', 'subject', 'date', 'message-id'):
+            values = outer.get_all(name, [])
+            if values:
+                merged[name] = tuple(str(value) for value in values)
+        for expected in ('from', 'to', 'subject', 'date'):
+            self.assertIn(expected, merged,
+                          f'{expected} must survive decryption into the reader')
+
+    def test_decrypted_content_has_no_plaintext_leak_into_headers_of_the_envelope(self):
+        """Sanity: the envelope itself must not carry the decrypted body."""
+        self.assertNotIn(b'multipart/related', self.raw,
+                         'the encrypted envelope must not expose the decrypted structure')
+
 
 if __name__ == '__main__':
     unittest.main()

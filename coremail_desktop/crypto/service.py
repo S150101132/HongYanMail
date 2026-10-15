@@ -49,15 +49,43 @@ class CryptoService:
             self._key = self._certificate = self.certificate_info = None
 
     def decrypt(self, envelope: bytes) -> DecryptionResult:
+        """Decrypt an encrypted message and return readable MIME.
+
+        Real supplier mail decrypts to an inner signed container rather than to
+        plain MIME, so signature layers are peeled. Any further encrypted layer is
+        refused explicitly instead of being presented as though it were the body.
+        """
         with self._lock:
             if self._key is None:
                 raise CryptoError('CERT_LOCKED')
+            from email import policy
+            from email.parser import BytesParser
+            from . import cms
+
             plain = decrypt_smime(envelope, self._certificate, self._key)
             message = BytesParser(policy=policy.default).parsebytes(plain)
             signed = message.get_content_type() == 'multipart/signed'
+            format_name = 'smime-enveloped-data'
+
             if message.get_content_type() in {'application/pkcs7-mime', 'application/x-pkcs7-mime'}:
-                raise CryptoError('NESTED_CRYPTO_UNSUPPORTED')
-            return DecryptionResult(plain, signature_status='not_verified' if signed else 'unsigned')
+                inner_der = message.get_payload(decode=True)
+                if not inner_der:
+                    raise CryptoError('INVALID_ENCRYPTED_MESSAGE')
+                if cms.looks_like_enveloped_data(inner_der):
+                    # Encryption inside encryption is not a supported shape yet.
+                    raise CryptoError('NESTED_CRYPTO_UNSUPPORTED')
+                if cms.looks_like_signed_data(inner_der):
+                    body = cms.signed_data_encapsulated(inner_der)
+                    if not body:
+                        # Detached signature with no content to show.
+                        raise CryptoError('NESTED_CRYPTO_UNSUPPORTED')
+                    plain = body
+                    signed = True
+                    format_name = 'smime-enveloped-data+signed-data'
+                else:
+                    raise CryptoError('UNSUPPORTED_ENCRYPTION_FORMAT')
+            return DecryptionResult(plain, format=format_name,
+                                    signature_status='not_verified' if signed else 'unsigned')
 
     def encrypt(self, mime_bytes: bytes, recipients: tuple[CertificateInfo, ...]) -> bytes:
         return encrypt_smime(mime_bytes, recipients)
