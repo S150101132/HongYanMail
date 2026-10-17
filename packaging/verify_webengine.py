@@ -11,6 +11,8 @@ import sys
 import time
 from pathlib import Path
 
+from verify_data import clean, isolate
+
 ROOT = Path(__file__).resolve().parent.parent
 EXE = ROOT / 'dist' / 'Hongyan' / 'Hongyan.exe'
 LOG = ROOT / 'runtime' / 'packaged-webengine.log'
@@ -21,9 +23,11 @@ FATAL_MARKERS = ('Check failed', 'FATAL', 'DLL load failed', 'ImportError',
 
 environment = dict(os.environ)
 environment['QT_QPA_PLATFORM'] = 'offscreen'
+isolate(environment)
 environment['QTWEBENGINE_CHROMIUM_FLAGS'] = '--enable-logging=stderr --v=0'
 environment['QTWEBENGINE_DISABLE_SANDBOX'] = '1'
 
+LOG.parent.mkdir(parents=True, exist_ok=True)
 with open(LOG, 'w', encoding='utf-8') as stream:
     process = subprocess.Popen([str(EXE), '--demo'], cwd=str(EXE.parent), env=environment,
                                stdout=stream, stderr=subprocess.STDOUT)
@@ -34,6 +38,7 @@ with open(LOG, 'w', encoding='utf-8') as stream:
     if alive:
         process.kill()
     process.wait()
+clean()
 
 text = LOG.read_text(encoding='utf-8', errors='replace')
 problems = sorted({marker for marker in FATAL_MARKERS if marker in text})

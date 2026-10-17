@@ -14,7 +14,7 @@
 .venv\Scripts\python.exe -m coremail_desktop            # 启动鸿雁
 .venv\Scripts\python.exe -m coremail_desktop --demo     # 合成演示数据，不联网
 .venv\Scripts\python.exe -m coremail_desktop --classic  # 旧版 Qt Widgets 界面
-powershell -File packaginguild.ps1                    # 打包 Windows 启动包
+powershell -File packaging\build.ps1                   # 打包、校验，并生成安装包 dist\Hongyan-Setup-<版本>.exe
 ```
 
 2026-10-17 起默认界面重做为 Web 界面（Qt WebEngine 承载，经 QWebChannel 调用已真机验证的 Python 协议层）。架构：
@@ -32,10 +32,13 @@ powershell -File packaginguild.ps1                    # 打包 Windows 启动�
 - **写信**：同事间默认加密发送（公司通讯录证书，缺证书时由你决定，绝不静默降级）、富文本（字号、颜色、高亮、列表、缩进、链接）、签名、收件人补全（最近联系人 + 公司通讯录 `oab:autoMatch`）、拖放/粘贴添加附件、自动保存本机草稿、忘记附件提醒、发送结果不明时不自动重发。
 - **搜索**：输入即显示本机缓存结果，回车合并服务器结果。
 - **会话**：可选“保持登录”（DPAPI 保存密码），会话失效自动重连；离线启动先显示缓存。
+- **常驻**：只运行一个鸿雁（再次启动会激活已有窗口）；设置中可开启“开机自动启动（最小化到托盘）”（写入 `HKCU\...\Run`，以 `--minimized` 启动，后台照常收信）。
 
 快捷键：Ctrl+N / C 写邮件，J/K 或 ↑/↓ 切换，R 回复，A 全部回复，F 转发，Delete 删除，U 标为未读，S 星标，V 移动，/ 或 Ctrl+F 搜索，F5 收信，写信时 Ctrl+Enter 发送、Ctrl+S 保存草稿。
 
-数据目录：`%LOCALAPPDATA%\CoremailDesktopPreview`（缓存、草稿、发送记录均为密文）。真机验证结果见 [日常客户端验证](docs/releases/2026-10-17-daily-client.md)。
+数据目录：`%LOCALAPPDATA%\CoremailDesktopPreview`（缓存、草稿、发送记录均为密文）。
+
+安装包：`packaging/hongyan.iss`（Inno Setup 6，按用户安装、无需管理员，创建开始菜单与桌面快捷方式）。`build.ps1` 在所有检查通过后调用 `ISCC.exe`（依次查找 `$env:ISCC`、PATH、`.tools\InnoSetup`、常见安装位置），找不到时跳过并提示。卸载默认保留本机数据，勾选后才删除。若本机安全策略禁止程序写入用户目录，安装时请选择其他磁盘上的文件夹（例如 `D:\Programs\Hongyan`），数据将保存在程序旁的 `HongyanData`。真机验证结果见 [日常客户端验证](docs/releases/2026-10-17-daily-client.md)。
 
 ## 连接验证原型
 

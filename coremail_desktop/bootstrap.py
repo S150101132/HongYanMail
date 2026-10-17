@@ -8,9 +8,10 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description='鸿雁 · 工作邮箱')
     parser.add_argument('--demo',action='store_true',help='show explicitly synthetic data; no network')
     parser.add_argument('--classic',action='store_true',help='the earlier Qt Widgets interface')
+    parser.add_argument('--minimized',action='store_true',help='start hidden in the tray (used by 开机自动启动)')
     args=parser.parse_args(argv)
     if not args.classic:
-        return run_app(args.demo)
+        return run_app(args.demo,args.minimized)
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QSettings
     from .ui.theme import apply_theme
@@ -100,7 +101,7 @@ def _relaunch_without_sandbox():
     subprocess.Popen(command,env={**os.environ,'HONGYAN_NO_SANDBOX':'1'},close_fds=True)
 
 
-def run_app(demo=False):
+def run_app(demo=False,minimized=False):
     """The daily-use interface: web UI in Qt WebEngine over the verified protocol layer."""
     import time
     # Some managed Windows machines stop Chromium's sandboxed renderer from starting
@@ -117,6 +118,15 @@ def run_app(demo=False):
     app=QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName('鸿雁'); app.setApplicationDisplayName('鸿雁 · 工作邮箱'); app.setOrganizationName('CoremailPreview')
     app.setQuitOnLastWindowClosed(False)
+    # One copy per user: a second launch shows the running window and exits. Demo runs
+    # use their own name so they never hand off to (or block) the real client.
+    from .app.single_instance import SingleInstance
+    guard=SingleInstance('demo' if demo else '')
+    if not guard.acquire():
+        # A sandbox relaunch takes over from its dying parent instead of activating it.
+        if os.environ.get('HONGYAN_NO_SANDBOX')!='1' and guard.activate_existing():
+            return 0
+        guard.listen()  # The owner did not answer (it is exiting): carry on as the new owner.
     from .app.backend import MailBackend
     from .ui.branding import app_icon
     app.setWindowIcon(app_icon())
@@ -139,6 +149,16 @@ def run_app(demo=False):
                                  '\n\n请从“开始”菜单或文件资源管理器启动鸿雁（例如双击 run_desktop.cmd），'
                                  '不要从受限的终端或其他程序中启动。')
             return 1
-    window=shell.AppShell(backend,demo=demo,sandboxed=sandboxed,relaunch_without_sandbox=None if not sandboxed else _relaunch_without_sandbox)
-    window.show()
+        from .app.autostart import Autostart
+        backend.autostart=Autostart()
+        try: backend.autostart.refresh()
+        except OSError: pass
+    def relaunch():
+        # Hand over ownership first, so the relaunched copy does not activate this dying one.
+        guard.release(); _relaunch_without_sandbox()
+    window=shell.AppShell(backend,demo=demo,sandboxed=sandboxed,relaunch_without_sandbox=None if not sandboxed else relaunch)
+    guard.activated.connect(window.bring_to_front)
+    from PySide6.QtWidgets import QSystemTrayIcon
+    if not (minimized and QSystemTrayIcon.isSystemTrayAvailable()):
+        window.show()  # Minimized: only the tray icon; the page still loads, signs in and polls.
     return app.exec()

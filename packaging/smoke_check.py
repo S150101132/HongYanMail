@@ -6,12 +6,15 @@ import sys
 import time
 from pathlib import Path
 
+from verify_data import clean, isolate
+
 ROOT = Path(__file__).resolve().parent.parent
 EXE = ROOT / 'dist' / 'Hongyan' / 'Hongyan.exe'
 WAIT_SECONDS = 25
 
 environment = dict(os.environ)
 environment['QT_QPA_PLATFORM'] = 'offscreen'
+isolate(environment)
 started = time.time()
 process = subprocess.Popen([str(EXE), '--demo'], cwd=str(EXE.parent), env=environment,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -26,6 +29,7 @@ except subprocess.TimeoutExpired:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
+clean()
 elapsed = round(time.time() - started, 2)
 report = {'executable': str(EXE), 'exists': EXE.is_file(),
           'size_bytes': EXE.stat().st_size if EXE.is_file() else None,

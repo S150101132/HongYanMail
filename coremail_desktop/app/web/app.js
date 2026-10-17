@@ -1106,6 +1106,7 @@ function openSettings() {
   $$('#density-seg button').forEach((b) => b.classList.toggle('on', b.dataset.density === p.density));
   $('#pref-poll').value = String(p.pollSeconds);
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
+  $('#pref-autostart').checked = !!p.autostart;
   $('#pref-signature').innerHTML = p.signature || '';
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
   renderCertStatus();
@@ -1124,12 +1125,12 @@ $('#btn-account').onclick = openSettings;
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, pollSeconds: +$('#pref-poll').value,
-    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, signature: $('#pref-signature').innerHTML.replace(/^(<br>)+$/, '') };
+    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, signature: $('#pref-signature').innerHTML.replace(/^(<br>)+$/, '') };
   try {
     S.prefs = await api('setPrefs', { values });
     applyTheme(S.prefs.theme, S.prefs.density);
     api('startSync', { seconds: S.prefs.pollSeconds });
-    $('#settings').classList.add('hidden'); toast('设置已保存');
+    $('#settings').classList.add('hidden'); toast(S.prefs.autostart === values.autostart ? '设置已保存' : '设置已保存，但本机不允许修改开机启动项');
   } catch (err) { fail(err); }
 };
 $('#btn-cert').onclick = () => { $('#settings').classList.add('hidden'); unlockCertificate(); };
