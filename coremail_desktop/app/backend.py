@@ -80,6 +80,7 @@ class MailBackend:
         self._contact_index = None
         self._contact_index_size = -1
         self._docs = {}
+        self._signer_directory = {}  # (sender, signer fingerprint) -> matches the company directory
         self.autostart = None  # Set by the app (not in demo mode): reads and writes the Windows Run key.
 
     # Accounts --------------------------------------------------------------
@@ -250,22 +251,53 @@ class MailBackend:
 
     # Reading ---------------------------------------------------------------
     def _parse(self, raw, mid):
+        from email import policy
+        from email.parser import BytesHeaderParser
         from coremail_desktop.crypto.formats import detect_envelope_format
-        if detect_envelope_format(raw):
-            if self.crypto is None or self.crypto.certificate_info is None:
-                document = parse_mime(raw=raw, message_id=mid, rich=True)
-                return replace(document, encryption_state='locked')
-            from email import policy
-            from email.parser import BytesHeaderParser
-            result = self.crypto.decrypt(raw)
-            document = parse_mime(raw=result.mime_bytes, message_id=mid, rich=True)
-            outer = BytesHeaderParser(policy=policy.default).parsebytes(raw)
+        from coremail_desktop.crypto.models import CryptoError
+        from coremail_desktop.crypto.signature import unwrap_signed
+        outer = BytesHeaderParser(policy=policy.default).parsebytes(raw)
+        sender = parseaddr(str(outer.get('from', '')))[1]
+
+        def inner(content, **changes):
+            document = parse_mime(raw=content, message_id=mid, rich=True)
             headers = dict(document.headers)
             for name in ('from', 'to', 'cc', 'subject', 'reply-to', 'message-id', 'references', 'date'):
                 if outer.get_all(name):
                     headers[name] = tuple(str(v) for v in outer.get_all(name))
-            return replace(document, headers=headers, encryption_state='decrypted')
+            return replace(document, headers=headers, **changes)
+        try:
+            signed = unwrap_signed(raw, sender)
+        except CryptoError:
+            signed = None
+        if signed is not None and signed[0]:
+            return inner(signed[0], signature=signed[1])
+        if detect_envelope_format(raw):
+            if self.crypto is None or self.crypto.certificate_info is None:
+                document = parse_mime(raw=raw, message_id=mid, rich=True)
+                return replace(document, encryption_state='locked')
+            result = self.crypto.decrypt(raw, sender)
+            return inner(result.mime_bytes, encryption_state='decrypted', signature=result.signature)
         return parse_mime(raw=raw, message_id=mid, rich=True)
+
+    def _signature_view(self, document):
+        """The reader's signature badge. A signer certificate identical to the
+        sender's company directory certificate is reported as extra assurance."""
+        report = document.signature
+        if report is None:
+            return None
+        view = report.to_dict()
+        sender = parseaddr(', '.join(document.headers.get('from', ())))[1].casefold()
+        key = (sender, report.fingerprint)
+        if report.status == 'valid' and report.email_match and hasattr(self.adapter, 'public_certificates'):
+            if key not in self._signer_directory:
+                try:
+                    found = self._online(self.adapter.public_certificates, [sender])
+                    self._signer_directory[key] = found.get(sender) == report.certificate_der
+                except AppError:
+                    pass  # Offline: the badge simply leaves the directory out.
+            view['directory'] = self._signer_directory.get(key)
+        return view
 
     def _document(self, mid):
         if mid in self._docs:
@@ -298,7 +330,8 @@ class MailBackend:
                   'from': _people(header('from')), 'to': _people(header('to')), 'cc': _people(header('cc')),
                   'replyTo': _people(header('reply-to')), 'date': summary.get('date') or header('date'),
                   'html': body_html, 'text': document.text, 'hasRemoteImages': remote,
-                  'encryption': document.encryption_state, 'flags': summary.get('flags', {}),
+                  'encryption': document.encryption_state, 'signature': self._signature_view(document),
+                  'flags': summary.get('flags', {}),
                   'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
                                   for a in document.attachments]}
         if mark_read is None:
@@ -368,7 +401,7 @@ class MailBackend:
 
     def certificate_status(self):
         info = self.crypto.certificate_info if self.crypto is not None else None
-        return {'available': self.crypto is not None, 'unlocked': info is not None,
+        return {'available': self.crypto is not None, 'unlocked': info is not None, 'emails': list(info.emails) if info else [],
                 'subject': info.subject if info else '', 'expires': info.not_after.strftime('%Y-%m-%d') if info else '',
                 'remembered': self._certificate_path().exists()}
 
@@ -505,7 +538,7 @@ class MailBackend:
         identity = self.identities[0] if self.identities else (self.account or '')
         base = {'localId': uuid.uuid4().hex, 'revision': 0, 'mode': mode, 'from': identity,
                 'to': [], 'cc': [], 'bcc': [], 'subject': '', 'html': '<p><br></p>' + self._signature_html(),
-                'replySourceId': None, 'referenceHeaders': {}, 'attachments': [], 'encrypt': None}
+                'replySourceId': None, 'referenceHeaders': {}, 'attachments': [], 'encrypt': None, 'sign': None}
         if mode == 'new' or not mid:
             return base
         document = self._document(mid)
@@ -536,7 +569,7 @@ class MailBackend:
                              str(value.get('subject', '')), str(value.get('html', '')),
                              {str(k): str(v) for k, v in dict(value.get('referenceHeaders') or {}).items()},
                              value.get('encrypt') is True, value.get('replySourceId') if mode in ('reply', 'reply_all') else None,
-                             attachments, True)
+                             attachments, True, signature_required=value.get('sign') is True)
 
     def save_draft(self, value):
         draft = self._draft(value)
@@ -554,6 +587,8 @@ class MailBackend:
                 'to': list(draft.to), 'cc': list(draft.cc), 'bcc': list(draft.bcc), 'subject': draft.subject,
                 'html': body, 'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
                 'encrypt': True if draft.encryption_required else None,
+                # Signing follows encryption unless the user chose otherwise.
+                'sign': True if draft.signature_required else False if draft.encryption_required else None,
                 'attachments': [{'name': a.name, 'type': a.media_type, 'size': len(a.payload),
                                  'data': base64.b64encode(a.payload).decode('ascii')} for a in draft.attachments]}
 
@@ -568,6 +603,9 @@ class MailBackend:
             raise AppError('RECIPIENT_REQUIRED')
         # A durable copy first: if sending fails the user loses nothing.
         self.services['save_draft'](draft=draft)
+        if draft.signature_required and (self.crypto is None or self.crypto.certificate_info is None):
+            # Never send unsigned when a signature was asked for: unlock, or turn signing off.
+            return {'state': 'NeedsSigningKey', 'localId': draft.local_id, 'revision': draft.revision}
         if draft.encryption_required:
             missing = self.encryption_check(list(draft.to + draft.cc + draft.bcc))['missing']
             if missing:
@@ -590,12 +628,31 @@ class MailBackend:
         return {'missing': [a for a in addresses if a.casefold() not in found],
                 'covered': [a for a in addresses if a.casefold() in found]}
 
-    def _prepare_encrypted(self, draft):
-        """Outbox hook: build the S/MIME message for every recipient and the sender."""
+    def _signer(self, draft):
+        """The unlocked certificate and key for signing, or a fixed error: never unsigned."""
         from coremail_desktop.compose.recipients import normalize_recipients
-        from coremail_desktop.compose.smime import build_encrypted_message
+        from coremail_desktop.crypto.models import CryptoError
+        if self.crypto is None:
+            raise AppError('CERT_LOCKED')
+        try:
+            signer = self.crypto.signing_identity()
+        except CryptoError as error:
+            raise AppError(error.code) from None
+        emails = self.crypto.certificate_info.emails
+        if emails and normalize_recipients((draft.from_identity,))[0].casefold() not in emails:
+            raise AppError('SIGN_CERT_ADDRESS_MISMATCH')
+        return signer
+
+    def _prepare_encrypted(self, draft):
+        """Outbox hook: build the S/MIME message (signed and/or encrypted for every
+        recipient and the sender)."""
+        from coremail_desktop.compose.recipients import normalize_recipients
+        from coremail_desktop.compose.smime import build_encrypted_message, build_signed_message
         from coremail_desktop.crypto.backend import describe
         from cryptography import x509
+        signer = self._signer(draft) if draft.signature_required else None
+        if not draft.encryption_required:
+            return build_signed_message(draft, signer, self.display_name)
         recipients = list(normalize_recipients(draft.to + draft.cc + draft.bcc))
         sender = normalize_recipients((draft.from_identity,))[0]
         found = self.adapter.public_certificates(recipients + [sender])
@@ -605,7 +662,7 @@ class MailBackend:
             # Without the sender's own key the sent copy could never be read again.
             raise AppError('OWN_CERT_MISSING')
         certificates = [describe(x509.load_der_x509_certificate(der), 'directory') for der in found.values()]
-        return build_encrypted_message(draft, certificates, self.display_name)
+        return build_encrypted_message(draft, certificates, self.display_name, signer)
 
     # Background sync -------------------------------------------------------
     def poll(self):

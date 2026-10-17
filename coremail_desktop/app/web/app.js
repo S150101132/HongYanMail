@@ -522,6 +522,7 @@ function renderMessage(m) {
   const banners = [];
   if (m.encryption === 'locked') banners.push(`<div class="banner"><i data-icon="lock"></i><span>这是一封证书加密邮件，解锁个人证书后即可阅读。</span><span class="spacer"></span><button class="btn primary" id="b-unlock">解锁证书</button></div>`);
   if (m.encryption === 'decrypted') banners.push(`<div class="banner info"><i data-icon="lock"></i><span>此邮件已使用你的证书在本机解密。</span></div>`);
+  const sig = signatureBanner(m.signature); if (sig) banners.push(sig);
   if (m.hasRemoteImages && !S.allowRemote.has(m.id)) banners.push(`<div class="banner"><i data-icon="image"></i><span>为保护隐私，已阻止远程图片。</span><span class="spacer"></span><button class="btn ghost" id="b-images">显示图片</button></div>`);
   $('#r-banners').innerHTML = banners.join('');
   renderIcons($('#r-banners'));
@@ -767,6 +768,23 @@ $('#btn-threads').onclick = async () => {
   try { S.prefs = await api('setPrefs', { values: { threads: S.prefs.threads } }); } catch (err) { fail(err); }
 };
 
+// S/MIME signature badge: valid (with any warnings), invalid, or unverifiable.
+const SIG_REASONS = { SIGNER_CERT_MISSING: '邮件中没有附带签名证书', SIGNATURE_ALGORITHM_UNSUPPORTED: '签名算法暂不支持',
+  SIGNED_CONTENT_MISSING: '签名内容缺失', INVALID_SIGNED_MESSAGE: '签名结构无法识别' };
+function signatureBanner(s) {
+  if (!s) return '';
+  if (s.status === 'invalid') return '<div class="banner bad"><i data-icon="alert"></i><span>签名无效：邮件内容在签名后被修改过，请谨慎对待。</span></div>';
+  if (s.status !== 'valid') return `<div class="banner"><i data-icon="alert"></i><span>邮件带有数字签名，但无法验证（${esc(SIG_REASONS[s.code] || '原因未知')}）。</span></div>`;
+  const warnings = [];
+  if (s.emailMatch === false) warnings.push('签名证书上的邮箱与发件人不一致');
+  if (s.timeValid === false) warnings.push('签名证书不在有效期内');
+  const text = `签名有效，证书由 ${esc(s.issuer || '未知机构')} 签发` + (s.directory ? '，与公司通讯录中的证书一致' : '');
+  const title = esc([s.subject, ...(s.emails || []), s.digest ? '摘要算法 ' + s.digest.toUpperCase() : ''].filter(Boolean).join('\n'));
+  return warnings.length
+    ? `<div class="banner" title="${title}"><i data-icon="alert"></i><span>${text}；但${esc(warnings.join('，'))}。</span></div>`
+    : `<div class="banner ok" title="${title}"><i data-icon="seal"></i><span>${text}。</span></div>`;
+}
+
 async function unlockCertificate() {
   const got = await promptDialog({ title: '解锁个人证书', text: '输入证书密码，然后选择 .pfx 证书文件。',
     body: '<input type="password" id="cert-pw" placeholder="证书密码"><label class="check" style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" id="cert-remember" checked> 记住证书（Windows 加密保存，下次自动解锁）</label>',
@@ -778,6 +796,7 @@ async function unlockCertificate() {
     S.profile.certificate = res;
     toast('证书已解锁');
     if (S.message) selectMessage(S.message.id, { noScroll: true });
+    return true;
   } catch (err) { fail(err); }
 }
 
@@ -829,6 +848,7 @@ async function startCompose(mode, mid, extra = {}) {
 
 function openComposer(draft) {
   C.draft = draft; C.dirty = false; C.encrypt = draft.encrypt === true ? true : draft.encrypt === false ? false : null;
+  C.sign = draft.sign === true ? true : draft.sign === false ? false : null;
   const box = $('#composer');
   box.classList.remove('hidden');
   $('#cmp-title').textContent = { new: '写邮件', reply: '回复', reply_all: '全部回复', forward: '转发' }[draft.mode] || '写邮件';
@@ -889,8 +909,14 @@ function renderEncrypt() {
   $('#cmp-enc-hint').textContent = C.encrypt === null || C.encrypt === undefined
     ? (on ? '收件人均为同事，自动加密' : external.length ? '含外部收件人，默认不加密' : '')
     : '已手动' + (on ? '开启' : '关闭');
+  const sign = signOn();
+  $('#cmp-sign').classList.toggle('on', sign);
+  $('#cmp-sign span').textContent = sign ? '签名' : '不签名';
 }
 $('#cmp-encrypt').onclick = () => { C.encrypt = !encryptOn(); C.dirty = true; renderEncrypt(); };
+// ---- signature: follows encryption unless toggled on its own
+function signOn() { return C.sign === null || C.sign === undefined ? encryptOn() : C.sign; }
+$('#cmp-sign').onclick = () => { C.sign = !signOn(); C.dirty = true; renderEncrypt(); };
 function commitInput(box, input) {
   const list = parseAddressList(input.value);
   for (const p of list) addChip(box, input, p);
@@ -1024,6 +1050,7 @@ function collectDraft() {
   const value = { ...C.draft, from: $('#cmp-from').value || C.draft.from, to: chipsValue('to'), cc: chipsValue('cc'), bcc: chipsValue('bcc'),
     subject: $('#cmp-subject').value, html: $('#cmp-editor').innerHTML };
   value.encrypt = encryptOn();
+  value.sign = signOn();
   return value;
 }
 async function saveDraft(quiet) {
@@ -1060,8 +1087,16 @@ async function sendMail() {
       if (plain) { C.encrypt = false; renderEncrypt(); setTimeout(sendMail, 0); }
       return;
     }
+    if (res.state === 'NeedsSigningKey') {
+      $('#cmp-status').textContent = '签名需要解锁个人证书';
+      const go = await promptDialog({ title: '需要个人证书', text: '这封邮件要求数字签名，需要先解锁你的个人证书。',
+        body: '<p class="muted small">如果不需要签名，可以关闭写信窗口顶部的“签名”后再发送。</p>',
+        okText: '解锁证书…', collect: () => true });
+      if (go && (await unlockCertificate())) setTimeout(sendMail, 0);
+      return;
+    }
     if (res.state === 'Accepted') {
-      closeComposer(true); toast(value.encrypt ? '加密邮件已发送' : '邮件已发送');
+      closeComposer(true); toast(value.encrypt ? (value.sign ? '已签名并加密发送' : '加密邮件已发送') : value.sign ? '已签名发送' : '邮件已发送');
       refreshDraftCount();
       const sent = S.folders.find((f) => f.role === 'sent'); if (sent && S.folderId === sent.id) loadList(true);
     } else if (res.state === 'Unknown') {
@@ -1115,7 +1150,7 @@ function openSettings() {
 }
 function renderCertStatus() {
   const c = S.profile.certificate || {};
-  $('#cert-status').textContent = c.unlocked ? `个人证书已解锁 · 有效期至 ${c.expires}${c.remembered ? ' · 已记住' : ''}` : '个人证书未解锁（不影响加密发送，只影响阅读加密邮件）';
+  $('#cert-status').textContent = c.unlocked ? `个人证书已解锁 · 有效期至 ${c.expires}${c.remembered ? ' · 已记住' : ''}` : '个人证书未解锁（不影响加密发送；阅读加密邮件和签名发送需要解锁）';
   $('#btn-cert-forget').classList.toggle('hidden', !c.remembered && !c.unlocked);
 }
 $('#btn-cert-forget').onclick = async () => { S.profile.certificate = await api('forgetCertificate').catch(() => S.profile.certificate); renderCertStatus(); toast('已忘记证书'); };

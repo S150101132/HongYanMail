@@ -55,6 +55,7 @@ class MessageDocument(_ImmutableMappings):
     cid_resources: dict = field(default_factory=dict)
     encryption_state: str = 'none'
     attachment_payloads: dict[str, bytes] = field(default_factory=dict)
+    signature: object = None  # crypto.signature.SignatureReport for signed mail
 
 @dataclass(frozen=True)
 class DraftAttachment:
@@ -78,6 +79,7 @@ class DraftDocument(_ImmutableMappings):
     reply_source_id: str | None = None
     attachments: tuple[DraftAttachment, ...] = ()
     is_html: bool = False
+    signature_required: bool = False
 
 @dataclass(frozen=True)
 class SendJob:

@@ -141,6 +141,7 @@
   <div class="cmp-head">
     <b id="cmp-title">写邮件</b>
     <button id="cmp-encrypt" class="enc-toggle" title="点击切换加密"><i data-icon="lock"></i><span>加密</span></button>
+    <button id="cmp-sign" class="enc-toggle" title="点击切换数字签名（使用个人证书）"><i data-icon="seal"></i><span>签名</span></button>
     <span id="cmp-enc-hint" class="muted small"></span>
     <span id="cmp-status" class="muted small"></span>
     <span class="spacer"></span>
@@ -202,8 +203,8 @@
         <label class="check"><input type="checkbox" id="pref-notify"> 新邮件桌面通知</label>
         <label class="check"><input type="checkbox" id="pref-markread"> 打开邮件时自动标为已读</label>
         <label class="check"><input type="checkbox" id="pref-autostart"> 开机自动启动（最小化到托盘）</label>
-        <h3>加密邮件</h3>
-        <p class="muted small">发给同事的邮件默认加密（使用公司通讯录中的证书），含外部收件人时默认不加密。阅读加密邮件需要解锁个人证书（.pfx）。</p>
+        <h3>加密与签名</h3>
+        <p class="muted small">发给同事的邮件默认加密（使用公司通讯录中的证书），含外部收件人时默认不加密。加密的邮件默认同时用个人证书数字签名。阅读加密邮件和签名发送需要解锁个人证书（.pfx）。</p>
         <p class="small" id="cert-status"></p>
         <div class="row-gap"><button class="btn ghost" id="btn-cert">解锁个人证书…</button><button class="btn ghost hidden" id="btn-cert-forget">忘记证书</button></div>
         <h3>账号</h3>
