@@ -58,10 +58,62 @@ def main(argv=None):
     return app.exec()
 
 
+SANDBOX_RETRY_SECONDS=7*24*3600
+
+
+def _writable(folder):
+    try:
+        folder.mkdir(parents=True,exist_ok=True)
+        probe=folder / ('.write-test-%d' % os.getpid())
+        probe.write_bytes(b'x'); probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+_DATA_ROOT=None
+
+
+def _data_root():
+    """Per-user data folder. Some managed machines forbid script interpreters from
+    writing anywhere in the user profile; then the data lives beside the program.
+    Everything stored there is ciphertext (DPAPI / AES-GCM), wherever it is."""
+    global _DATA_ROOT
+    if _DATA_ROOT is None:
+        preferred=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'CoremailDesktopPreview'
+        beside=(Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1]) / 'HongyanData'
+        override=os.environ.get('HONGYAN_DATA_DIR')
+        candidates=[Path(override)] if override else [preferred,beside]
+        _DATA_ROOT=next((c for c in candidates if _writable(c)),candidates[0])
+    return _DATA_ROOT
+
+
+def _relaunch_without_sandbox():
+    """Start a fresh copy of this program with the Chromium sandbox off, once."""
+    import subprocess
+    try:
+        marker=_data_root() / 'sandbox-unavailable'
+        marker.parent.mkdir(parents=True,exist_ok=True); marker.write_text('renderer exited before the first page load\n',encoding='utf-8')
+    except OSError:
+        pass
+    command=[sys.executable,*sys.argv[1:]] if getattr(sys,'frozen',False) else [sys.executable,'-m','coremail_desktop',*sys.argv[1:]]
+    subprocess.Popen(command,env={**os.environ,'HONGYAN_NO_SANDBOX':'1'},close_fds=True)
+
+
 def run_app(demo=False):
     """The daily-use interface: web UI in Qt WebEngine over the verified protocol layer."""
+    import time
+    # Some managed Windows machines stop Chromium's sandboxed renderer from starting
+    # (it exits before the first page load). Then the app runs without that sandbox;
+    # mail bodies stay in a script-less, network-blocked, CSP-restricted frame.
+    marker=_data_root() / 'sandbox-unavailable'
+    try: recent=time.time()-marker.stat().st_mtime<SANDBOX_RETRY_SECONDS
+    except OSError: recent=False
+    if os.environ.get('HONGYAN_NO_SANDBOX')=='1' or recent:
+        os.environ['QTWEBENGINE_DISABLE_SANDBOX']='1'
+    sandboxed=os.environ.get('QTWEBENGINE_DISABLE_SANDBOX')!='1'
     from .app import shell  # Registers the private URL scheme before QApplication exists.
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QMessageBox
     app=QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName('鸿雁'); app.setApplicationDisplayName('鸿雁 · 工作邮箱'); app.setOrganizationName('CoremailPreview')
     app.setQuitOnLastWindowClosed(False)
@@ -73,15 +125,20 @@ def run_app(demo=False):
         # Synthetic data only, in a fixed per-user folder that is wiped at start and exit,
         # so demo runs never leave files beside the executable or the working directory.
         import atexit,shutil
-        demo_dir=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'CoremailDesktopPreview' / 'demo'
+        demo_dir=_data_root() / 'demo'
         shutil.rmtree(demo_dir,ignore_errors=True)
         atexit.register(shutil.rmtree,demo_dir,True)
         backend=MailBackend(demo_dir,adapter_factory=DemoAdapter)
         backend.login('https://demo.invalid/coremail/','demo@example.invalid','demo',True)
     else:
         from .crypto.service import CryptoService
-        data=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'CoremailDesktopPreview'
-        backend=MailBackend(data,crypto=CryptoService())
-    window=shell.AppShell(backend,demo=demo)
+        try:
+            backend=MailBackend(_data_root(),crypto=CryptoService())
+        except PermissionError:
+            QMessageBox.critical(None,'鸿雁 · 无法启动','无法写入本机数据目录：\n'+str(_data_root())+
+                                 '\n\n请从“开始”菜单或文件资源管理器启动鸿雁（例如双击 run_desktop.cmd），'
+                                 '不要从受限的终端或其他程序中启动。')
+            return 1
+    window=shell.AppShell(backend,demo=demo,sandboxed=sandboxed,relaunch_without_sandbox=None if not sandboxed else _relaunch_without_sandbox)
     window.show()
     return app.exec()

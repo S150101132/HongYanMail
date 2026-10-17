@@ -46,6 +46,7 @@ MESSAGES = {
     'RECIPIENT_CERT_UNTRUSTED': '收件人证书尚未由你明确信任，已阻止发送。',
     'ENCRYPTION_REQUIRED': '需要可用的收件人证书及已验证的加密提交接口，已阻止发送。',
     'ENCRYPTED_SUBMISSION_UNVERIFIED': '加密邮件不能走明文发送通道，已阻止发送。',
+    'WRITE_DENIED': '没有写入该位置的权限（可能被本机安全策略阻止），请换一个文件夹，例如鸿雁数据目录旁的文件夹或 D 盘。',
     'OWN_CERT_MISSING': '公司通讯录中没有你自己的加密证书，已发送的加密邮件将无法再打开，已阻止发送。',
     'ENCRYPT_FAILED': '无法生成加密载荷，已阻止发送。',
     'CERT_FILE_TOO_LARGE': '证书文件超过大小限制，已停止处理。',

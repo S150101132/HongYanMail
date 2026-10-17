@@ -8,7 +8,7 @@ import base64
 import json
 import mimetypes
 import os
-import tempfile
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -144,8 +144,8 @@ class Bridge(QObject):
                 self._done.emit(request_id, True, json.dumps(result, ensure_ascii=False, default=str))
             except Exception as error:  # Only fixed codes and fixed text reach the page.
                 code = getattr(error, 'code', 'INTERNAL_ERROR') if isinstance(error, AppError) or hasattr(error, 'code') else 'INTERNAL_ERROR'
-                if code == 'INTERNAL_ERROR' and os.environ.get('HONGYAN_DEBUG'):
-                    traceback.print_exc()
+                if code == 'INTERNAL_ERROR':
+                    self.shell.log_internal_error(name, error)
                 text = login_message(code) if name in ('login', 'autoLogin') else user_message(code)
                 if code in ('SESSION_EXPIRED', 'NOT_AUTHENTICATED') and name not in ('login', 'autoLogin'):
                     self.emit_event('authRequired')
@@ -167,8 +167,11 @@ class Bridge(QObject):
             try:
                 result = native(**params)
                 self.reply.emit(request_id, True, json.dumps(result, ensure_ascii=False))
-            except AppError as error:
-                self.reply.emit(request_id, False, json.dumps({'code': error.code, 'message': user_message(error.code)}, ensure_ascii=False))
+            except Exception as error:
+                code = error.code if isinstance(error, AppError) else 'WRITE_DENIED' if isinstance(error, PermissionError) else 'INTERNAL_ERROR'
+                if code == 'INTERNAL_ERROR':
+                    self.shell.log_internal_error(method, error)
+                self.reply.emit(request_id, False, json.dumps({'code': code, 'message': user_message(code)}, ensure_ascii=False))
             return
         if method not in BACKEND_METHODS:
             self.reply.emit(request_id, False, json.dumps({'code': 'OPERATION_NOT_ALLOWED', 'message': user_message('OPERATION_NOT_ALLOWED')}))
@@ -182,10 +185,14 @@ class Bridge(QObject):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, backend, demo=False):
+    def __init__(self, backend, demo=False, sandboxed=True, relaunch_without_sandbox=None):
         super().__init__()
         self.backend = backend
         self.demo = demo
+        self.sandboxed = sandboxed
+        self._relaunch_without_sandbox = relaunch_without_sandbox
+        self._page_loaded = False
+        self._renderer_restarts = 0
         self._quitting = False
         self._unread = 0
         self._poll_busy = False
@@ -209,6 +216,8 @@ class AppShell(QMainWindow):
                                  (QWebEngineSettings.WebAttribute.AutoLoadImages, True)):
             settings.setAttribute(attribute, value)
         self.page.link_requested.connect(self._open_link)
+        self.page.loadFinished.connect(self._load_finished)
+        self.page.renderProcessTerminated.connect(self._renderer_ended)
         self.view = QWebEngineView(self)
         self.view.setPage(self.page)
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
@@ -224,6 +233,39 @@ class AppShell(QMainWindow):
         self.poll_timer.timeout.connect(self.poll_now)
         self._make_tray()
         QShortcut(QKeySequence('Ctrl+Shift+I'), self, activated=self._devtools)
+
+    # Renderer health ---------------------------------------------------------
+    def _load_finished(self, ok):
+        self._page_loaded = self._page_loaded or ok
+
+    def _renderer_ended(self, status, code):
+        if status == QWebEnginePage.RenderProcessTerminationStatus.NormalTerminationStatus:
+            return
+        if not self._page_loaded and self.sandboxed and self._relaunch_without_sandbox:
+            # The sandboxed renderer never came up on this machine: restart once without it.
+            relaunch, self._relaunch_without_sandbox = self._relaunch_without_sandbox, None
+            relaunch()
+            self.quit_app()
+        elif self._renderer_restarts < 3:
+            self._renderer_restarts += 1
+            QTimer.singleShot(500, lambda: self.page.load(QUrl(APP_URL)))
+
+    def log_internal_error(self, method, error):
+        """Local diagnostics: exception type and code locations only. Messages are
+        never written, because they can carry URLs, session ids or file paths."""
+        frames = traceback.extract_tb(error.__traceback__)
+        lines = [f'{time.strftime("%Y-%m-%d %H:%M:%S")} {method}: {type(error).__module__}.{type(error).__name__}']
+        lines += [f'    {Path(f.filename).name}:{f.lineno} in {f.name}' for f in frames[-12:]]
+        if os.environ.get('HONGYAN_DEBUG'):
+            print('\n'.join(lines))
+        try:
+            with open(self.backend.data_dir / 'hongyan-errors.log', 'a', encoding='utf-8') as stream:
+                stream.write('\n'.join(lines) + '\n')
+        except OSError:
+            pass
+
+    def native_runtimeStatus(self):
+        return {'sandboxed': self.sandboxed, 'dataDir': str(self.backend.data_dir)}
 
     # Tray and notifications ------------------------------------------------
     def _make_tray(self):
@@ -384,7 +426,8 @@ class AppShell(QMainWindow):
 
     def native_openAttachment(self, mid='', part=''):
         name, _kind, data = self.backend.attachment(mid, part)
-        folder = Path(tempfile.gettempdir()) / 'hongyan-open' / os.urandom(6).hex()
+        # The data folder is known to be writable; some machines forbid TEMP for scripts.
+        folder = self.backend.data_dir / 'opened' / os.urandom(6).hex()
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / name
         target.write_bytes(data)
