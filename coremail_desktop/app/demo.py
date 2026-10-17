@@ -1,0 +1,122 @@
+"""Synthetic in-memory adapter for --demo and offline tests. Never touches the network."""
+from datetime import datetime, timedelta
+from email.message import EmailMessage
+from coremail_desktop.errors import AppError
+from coremail_desktop.models import Folder, MessageSummary
+
+PEOPLE = [('产品协作组', 'product@example.invalid'), ('研发团队', 'rd@example.invalid'),
+          ('张晓明', 'zhangxm@example.invalid'), ('李华', 'lihua@example.invalid'),
+          ('人力资源部', 'hr@example.invalid'), ('IT 服务台', 'itsupport@example.invalid')]
+SUBJECTS = ['项目进展与本周计划', '关于设计评审的会议纪要', '【通知】办公网络维护安排', '研发周报 · 第 42 周',
+            'Re: 接口联调时间确认', '季度预算申请表（请于周五前反馈）', '新员工入职培训安排', '服务器迁移方案评审']
+BODY = ('<div style="font-family:Microsoft YaHei;font-size:14px"><p>各位同事：</p>'
+        '<p>本周的设计评审已经完成，请查看以下安排：</p>'
+        '<table border="1" cellpadding="6" style="border-collapse:collapse"><tr style="background:#eef4ff">'
+        '<th>事项</th><th>负责人</th><th>截止</th></tr><tr><td>邮箱工作台交互优化</td><td>张晓明</td><td>10-20</td></tr>'
+        '<tr><td>草稿与阅读流程验证</td><td>李华</td><td>10-22</td></tr></table>'
+        '<p style="color:#b42318"><b>请注意：</b>周五下午 3 点进行集中演示。</p><p>谢谢！<br>产品协作组</p>'
+        '<p style="color:#98a2b3;font-size:12px">（以上内容为合成演示数据）</p></div>')
+
+
+class DemoAdapter:
+    supports_reply_headers = True
+    supports_encrypted_submission = False
+
+    def __init__(self):
+        now = datetime(2026, 10, 17, 10, 30)
+        self.folders = {'1': '收件箱', '2': '草稿箱', '3': '已发送', '4': '已删除', '5': '垃圾邮件', '100': '项目归档'}
+        self.rows = {}
+        for i in range(140):
+            name, addr = PEOPLE[i % len(PEOPLE)]
+            fid = '1' if i < 120 else ('3' if i < 132 else '100')
+            when = now - timedelta(hours=i * 5 + (i % 3))
+            self.rows[f'demo{i}'] = {'id': f'demo{i}', 'fid': fid, 'subject': SUBJECTS[i % len(SUBJECTS)] + '（演示）',
+                                     'from': f'"{name}" <{addr}>' if fid != '3' else '"演示用户" <demo@example.invalid>',
+                                     'to': 'demo@example.invalid' if fid != '3' else f'"{name}" <{addr}>',
+                                     'date': when.strftime('%Y-%m-%d %H:%M:%S'),
+                                     'flags': {'read': i % 4 != 0, 'attached': i % 5 == 1, 'flagged': i % 11 == 2}}
+        self.last_folder_total = None
+        self.last_folder_id = None
+        self.signed_in = False
+        self.sent = []
+        self._counter = 0
+
+    def login(self, account, password):
+        self.signed_in = True
+
+    def close(self):
+        self.signed_in = False
+
+    def _need(self):
+        if not self.signed_in:
+            raise AppError('NOT_AUTHENTICATED')
+
+    def get_account_identities(self):
+        return {'demo@example.invalid'}
+
+    def display_name(self):
+        return '演示用户'
+
+    def list_folders(self):
+        self._need()
+        result = []
+        for fid, name in self.folders.items():
+            rows = [r for r in self.rows.values() if r['fid'] == fid]
+            result.append(Folder(fid, name, None, {'messageCount': len(rows),
+                                                   'unreadMessageCount': sum(not r['flags']['read'] for r in rows)}))
+        return result
+
+    def _summary(self, r):
+        return MessageSummary(r['id'], r['fid'], r['subject'], r['from'], r['date'], r['flags'],
+                              preview='本周的设计评审已经完成，请查看以下安排：邮箱工作台交互优化、草稿与阅读流程验证……',
+                              recipients=r['to'], size=24000)
+
+    def list_messages(self, folder_id, offset, limit=50):
+        self._need()
+        rows = sorted((r for r in self.rows.values() if r['fid'] == str(folder_id)), key=lambda r: r['date'], reverse=True)
+        self.last_folder_total, self.last_folder_id = len(rows), str(folder_id)
+        return [self._summary(r) for r in rows[offset:offset + limit]]
+
+    def fetch_mime(self, message_id):
+        self._need()
+        r = self.rows.get(message_id)
+        if r is None:
+            raise AppError('MESSAGE_UNAVAILABLE')
+        message = EmailMessage()
+        message['From'], message['To'], message['Subject'] = r['from'], r['to'], r['subject']
+        message['Date'] = r['date']
+        message['Message-ID'] = f'<{message_id}@example.invalid>'
+        message.set_content('各位同事：本周的设计评审已经完成。（合成演示数据）')
+        message.add_alternative(BODY, subtype='html')
+        if r['flags'].get('attached'):
+            message.add_attachment('演示附件内容\n'.encode('utf-8'), maintype='text', subtype='plain', filename='会议纪要.txt')
+        return bytes(message)
+
+    def search_messages(self, pattern, offset, limit=50):
+        rows = [r for r in self.rows.values() if pattern.casefold() in (r['subject'] + r['from']).casefold()]
+        return {'messages': [self._summary(r) for r in rows[offset:offset + limit]], 'total': len(rows)}
+
+    def move_message(self, message_id, folder_id):
+        self.rows[message_id]['fid'] = folder_id
+        return {'message_id': message_id, 'folder_id': folder_id}
+
+    def set_message_flags(self, message_id, flags):
+        self.rows[message_id]['flags'].update(flags)
+        return {'message_id': message_id, 'flags': flags}
+
+    def match_contacts(self, keyword, limit=8):
+        return [{'name': n, 'email': a} for n, a in PEOPLE if keyword.casefold() in (n + a).casefold()][:limit]
+
+    def create_compose(self, draft):
+        self._counter += 1
+        return f'compose{self._counter}'
+
+    def deliver(self, compose_id, draft):
+        self.sent.append(draft)
+        return {'code': 'S_OK'}
+
+    def submit_encrypted(self, payload, recipients):
+        raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
+
+    def find_sent_candidates(self, job, limit=50):
+        return []

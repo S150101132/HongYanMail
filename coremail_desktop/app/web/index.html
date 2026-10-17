@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>鸿雁 · 工作邮箱</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="boot" class="boot"><div class="boot-logo"></div></div>
+
+<!-- Login -->
+<section id="login" class="login hidden">
+  <div class="login-card">
+    <div class="brand-row"><span class="logo"></span><span class="brand-name">鸿雁</span><span class="brand-sub">工作邮箱</span></div>
+    <h1>欢迎回来</h1>
+    <p class="muted">使用公司邮箱账号登录。密码仅在本机加密保存。</p>
+    <form id="login-form" autocomplete="off">
+      <label>邮箱账号<input id="login-user" type="text" placeholder="name@inspur.com" spellcheck="false" required></label>
+      <label>密码<input id="login-pass" type="password" placeholder="邮箱密码" required></label>
+      <details class="advanced"><summary>服务器设置</summary>
+        <label>服务器地址<input id="login-server" type="text" spellcheck="false"></label>
+      </details>
+      <label class="check"><input id="login-remember" type="checkbox" checked> 保持登录（密码由 Windows 加密保存在本机）</label>
+      <div id="login-error" class="form-error" role="alert"></div>
+      <button id="login-submit" class="btn primary block" type="submit">登录</button>
+    </form>
+  </div>
+</section>
+
+<!-- Main -->
+<section id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="side-head">
+      <span class="logo small"></span><span class="brand-name">鸿雁</span>
+    </div>
+    <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>
+    <nav id="folder-list" class="folders" aria-label="文件夹"></nav>
+    <div class="side-section">本机</div>
+    <nav class="folders">
+      <a id="nav-drafts" class="folder" data-local="drafts"><i data-icon="draft"></i><span class="fname">本机草稿</span><span id="draft-count" class="count"></span></a>
+    </nav>
+    <div class="side-foot">
+      <button id="btn-account" class="account-btn" title="设置">
+        <span id="me-avatar" class="avatar sm"></span>
+        <span class="account-text"><b id="me-name"></b><small id="me-mail"></small></span>
+        <i data-icon="settings"></i>
+      </button>
+    </div>
+  </aside>
+
+  <section class="list-pane">
+    <header class="list-head">
+      <div class="search">
+        <i data-icon="search"></i>
+        <input id="search" type="search" placeholder="搜索邮件（Ctrl+F 或 /）" spellcheck="false">
+      </div>
+      <div class="list-title-row">
+        <h2 id="list-title">收件箱</h2>
+        <span id="list-sub" class="muted small"></span>
+        <span class="spacer"></span>
+        <div class="seg" id="filter-seg">
+          <button data-filter="all" class="on">全部</button><button data-filter="unread">未读</button><button data-filter="flagged">星标</button>
+        </div>
+        <button id="btn-refresh" class="icon-btn" title="收信 (F5)"><i data-icon="refresh"></i></button>
+      </div>
+    </header>
+    <div id="sync-bar" class="sync-bar hidden"></div>
+    <div id="mail-list" class="mail-list" tabindex="0" role="listbox" aria-label="邮件列表"></div>
+  </section>
+
+  <section class="reader-pane" id="reader">
+    <div id="reader-empty" class="empty">
+      <div class="empty-art"></div>
+      <p>选择一封邮件开始阅读</p>
+      <p class="muted small">快捷键：J/K 上下切换 · R 回复 · A 全部回复 · F 转发 · Delete 删除</p>
+    </div>
+    <article id="reader-body" class="hidden">
+      <div class="reader-toolbar">
+        <button class="tb" data-act="reply" title="回复 (R)"><i data-icon="reply"></i><span>回复</span></button>
+        <button class="tb" data-act="reply_all" title="全部回复 (A)"><i data-icon="replyall"></i><span>全部回复</span></button>
+        <button class="tb" data-act="forward" title="转发 (F)"><i data-icon="forward"></i><span>转发</span></button>
+        <span class="tb-sep"></span>
+        <button class="tb" data-act="delete" title="删除 (Delete)"><i data-icon="trash"></i></button>
+        <button class="tb" data-act="move" title="移动到…"><i data-icon="folder"></i></button>
+        <button class="tb" data-act="unread" title="标为未读 (U)"><i data-icon="mail"></i></button>
+        <button class="tb" data-act="flag" title="星标 (S)"><i data-icon="star"></i></button>
+        <span class="spacer"></span>
+        <button class="tb" data-act="find" title="在正文中查找"><i data-icon="search"></i></button>
+      </div>
+      <div class="reader-scroll">
+        <h1 id="r-subject"></h1>
+        <div class="r-meta">
+          <span id="r-avatar" class="avatar"></span>
+          <div class="r-who">
+            <div><b id="r-from-name"></b> <span id="r-from-mail" class="muted"></span></div>
+            <div id="r-to" class="muted small r-recipients"></div>
+          </div>
+          <div id="r-date" class="muted small r-date"></div>
+        </div>
+        <div id="r-banners"></div>
+        <div id="r-attachments" class="attachments hidden"></div>
+        <div class="r-content"><iframe id="r-frame" sandbox="allow-same-origin" title="邮件正文"></iframe></div>
+        <div class="quick-reply">
+          <button class="btn ghost" data-act="reply"><i data-icon="reply"></i>回复</button>
+          <button class="btn ghost" data-act="reply_all"><i data-icon="replyall"></i>全部回复</button>
+          <button class="btn ghost" data-act="forward"><i data-icon="forward"></i>转发</button>
+        </div>
+      </div>
+    </article>
+  </section>
+</section>
+
+<!-- Composer -->
+<div id="composer" class="composer hidden" role="dialog" aria-label="写邮件">
+  <div class="cmp-head">
+    <b id="cmp-title">写邮件</b>
+    <span id="cmp-status" class="muted small"></span>
+    <span class="spacer"></span>
+    <button class="icon-btn" id="cmp-max" title="最大化"><i data-icon="max"></i></button>
+    <button class="icon-btn" id="cmp-close" title="关闭（自动保存草稿）"><i data-icon="close"></i></button>
+  </div>
+  <div class="cmp-fields">
+    <div class="cmp-row" id="row-from"><label>发件人</label><select id="cmp-from"></select></div>
+    <div class="cmp-row"><label>收件人</label><div class="chips" data-field="to"></div><span class="cmp-toggles"><a data-show="cc">抄送</a><a data-show="bcc">密送</a></span></div>
+    <div class="cmp-row hidden" id="row-cc"><label>抄送</label><div class="chips" data-field="cc"></div></div>
+    <div class="cmp-row hidden" id="row-bcc"><label>密送</label><div class="chips" data-field="bcc"></div></div>
+    <div class="cmp-row"><label>主题</label><input id="cmp-subject" type="text" spellcheck="false"></div>
+  </div>
+  <div class="cmp-toolbar" id="cmp-toolbar">
+    <select id="fmt-size" title="字号"><option value="">字号</option><option value="2">小</option><option value="3">正常</option><option value="4">大</option><option value="5">特大</option></select>
+    <button data-cmd="bold" title="加粗 (Ctrl+B)"><b>B</b></button>
+    <button data-cmd="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
+    <button data-cmd="underline" title="下划线 (Ctrl+U)"><u>U</u></button>
+    <button data-cmd="strikeThrough" title="删除线"><s>S</s></button>
+    <label class="color-btn" title="文字颜色">A<input type="color" id="fmt-color" value="#d92d20"></label>
+    <label class="color-btn hl" title="高亮">H<input type="color" id="fmt-hilite" value="#fde68a"></label>
+    <span class="tb-sep"></span>
+    <button data-cmd="insertUnorderedList" title="项目符号"><i data-icon="ul"></i></button>
+    <button data-cmd="insertOrderedList" title="编号"><i data-icon="ol"></i></button>
+    <button data-cmd="outdent" title="减少缩进"><i data-icon="outdent"></i></button>
+    <button data-cmd="indent" title="增加缩进"><i data-icon="indent"></i></button>
+    <button data-cmd="link" title="插入链接"><i data-icon="link"></i></button>
+    <button data-cmd="insertHorizontalRule" title="分隔线">—</button>
+    <button data-cmd="removeFormat" title="清除格式"><i data-icon="eraser"></i></button>
+    <span class="spacer"></span>
+    <button id="cmp-attach" title="添加附件"><i data-icon="clip"></i><span>附件</span></button>
+  </div>
+  <div id="cmp-editor" class="cmp-editor" contenteditable="true" spellcheck="false"></div>
+  <div id="cmp-atts" class="cmp-atts"></div>
+  <div class="cmp-foot">
+    <button id="cmp-send" class="btn primary" title="发送 (Ctrl+Enter)"><i data-icon="send"></i>发送</button>
+    <button id="cmp-save" class="btn ghost" title="保存草稿 (Ctrl+S)">保存草稿</button>
+    <span class="spacer"></span>
+    <span class="muted small" id="cmp-size"></span>
+    <button id="cmp-discard" class="icon-btn" title="丢弃草稿"><i data-icon="trash"></i></button>
+  </div>
+  <div id="cmp-drop" class="drop-hint hidden">松开以添加附件</div>
+</div>
+<div id="suggest" class="suggest hidden" role="listbox"></div>
+
+<!-- Settings -->
+<div id="settings" class="modal hidden" role="dialog" aria-label="设置">
+  <div class="modal-card wide">
+    <div class="modal-head"><b>设置</b><span class="spacer"></span><button class="icon-btn" data-close><i data-icon="close"></i></button></div>
+    <div class="modal-body settings-grid">
+      <section>
+        <h3>外观</h3>
+        <div class="seg" id="theme-seg"><button data-theme="system">跟随系统</button><button data-theme="light">浅色</button><button data-theme="dark">深色</button></div>
+        <h3>列表密度</h3>
+        <div class="seg" id="density-seg"><button data-density="comfortable">舒适</button><button data-density="compact">紧凑</button></div>
+        <h3>收信与提醒</h3>
+        <label class="pref-row">自动收信间隔
+          <select id="pref-poll"><option value="30">30 秒</option><option value="60">1 分钟</option><option value="120">2 分钟</option><option value="300">5 分钟</option><option value="900">15 分钟</option></select></label>
+        <label class="check"><input type="checkbox" id="pref-notify"> 新邮件桌面通知</label>
+        <label class="check"><input type="checkbox" id="pref-markread"> 打开邮件时自动标为已读</label>
+        <h3>加密邮件</h3>
+        <p class="muted small">阅读证书加密邮件需要解锁个人证书（.pfx）。证书只在本次运行的内存中使用。</p>
+        <button class="btn ghost" id="btn-cert">解锁个人证书…</button>
+        <h3>账号</h3>
+        <p class="muted small" id="settings-account"></p>
+        <button class="btn ghost danger" id="btn-logout">退出登录</button>
+      </section>
+      <section>
+        <h3>邮件签名</h3>
+        <p class="muted small">自动添加到新邮件、回复和转发中。</p>
+        <div class="cmp-toolbar mini" id="sig-toolbar">
+          <button data-cmd="bold"><b>B</b></button><button data-cmd="italic"><i>I</i></button>
+          <label class="color-btn" title="文字颜色">A<input type="color" id="sig-color" value="#1d4ed8"></label>
+        </div>
+        <div id="pref-signature" class="sig-editor" contenteditable="true"></div>
+        <div class="row-end"><button class="btn primary" id="btn-save-settings">保存设置</button></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- Generic prompt -->
+<div id="prompt" class="modal hidden" role="dialog">
+  <div class="modal-card">
+    <div class="modal-head"><b id="prompt-title"></b><span class="spacer"></span><button class="icon-btn" data-close><i data-icon="close"></i></button></div>
+    <div class="modal-body"><p id="prompt-text" class="muted"></p><div id="prompt-body"></div></div>
+    <div class="modal-foot"><button class="btn ghost" data-close>取消</button><button class="btn primary" id="prompt-ok">确定</button></div>
+  </div>
+</div>
+
+<div id="menu" class="menu hidden" role="menu"></div>
+<div id="find-bar" class="find-bar hidden"><input id="find-input" placeholder="在正文中查找"><button class="icon-btn" id="find-prev">↑</button><button class="icon-btn" id="find-next">↓</button><button class="icon-btn" id="find-close"><i data-icon="close"></i></button></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="qwebchannel.js"></script>
+<script src="icons.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

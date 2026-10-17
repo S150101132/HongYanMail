@@ -7,7 +7,10 @@ from pathlib import Path
 def main(argv=None):
     parser=argparse.ArgumentParser(description='鸿雁 · 工作邮箱')
     parser.add_argument('--demo',action='store_true',help='show explicitly synthetic data; no network')
+    parser.add_argument('--classic',action='store_true',help='the earlier Qt Widgets interface')
     args=parser.parse_args(argv)
+    if not args.classic:
+        return run_app(args.demo)
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QSettings
     from .ui.theme import apply_theme
@@ -52,4 +55,33 @@ def main(argv=None):
     app.aboutToQuit.connect(controller.close)
     window.show()
     if args.demo: controller.populate(window)
+    return app.exec()
+
+
+def run_app(demo=False):
+    """The daily-use interface: web UI in Qt WebEngine over the verified protocol layer."""
+    from .app import shell  # Registers the private URL scheme before QApplication exists.
+    from PySide6.QtWidgets import QApplication
+    app=QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName('鸿雁'); app.setApplicationDisplayName('鸿雁 · 工作邮箱'); app.setOrganizationName('CoremailPreview')
+    app.setQuitOnLastWindowClosed(False)
+    from .app.backend import MailBackend
+    from .ui.branding import app_icon
+    app.setWindowIcon(app_icon())
+    if demo:
+        from .app.demo import DemoAdapter
+        # Synthetic data only, in a fixed per-user folder that is wiped at start and exit,
+        # so demo runs never leave files beside the executable or the working directory.
+        import atexit,shutil
+        demo_dir=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'CoremailDesktopPreview' / 'demo'
+        shutil.rmtree(demo_dir,ignore_errors=True)
+        atexit.register(shutil.rmtree,demo_dir,True)
+        backend=MailBackend(demo_dir,adapter_factory=DemoAdapter)
+        backend.login('https://demo.invalid/coremail/','demo@example.invalid','demo',True)
+    else:
+        from .crypto.service import CryptoService
+        data=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'CoremailDesktopPreview'
+        backend=MailBackend(data,crypto=CryptoService())
+    window=shell.AppShell(backend,demo=demo)
+    window.show()
     return app.exec()

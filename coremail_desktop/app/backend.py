@@ -1,0 +1,488 @@
+"""Qt-free application backend for the daily-use client.
+
+Every public method takes and returns JSON-compatible values so the web UI can
+call it through the bridge. Calls are made from one worker thread, in order.
+"""
+import base64
+import hashlib
+import html
+import json
+import re
+import uuid
+from dataclasses import replace
+from email.utils import getaddresses, parseaddr
+from pathlib import Path
+
+from coremail_desktop.app.cache import MailCache, date_ts
+from coremail_desktop.compose.attachments import validate_attachments
+from coremail_desktop.compose.service import build_reply
+from coremail_desktop.errors import AppError
+from coremail_desktop.models import AccountConfig, DraftAttachment, DraftDocument
+from coremail_desktop.mime.parser import parse_mime
+
+DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
+                 'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right'}
+# Coremail system folder ids. Used only for icons and ordering; the name shown is
+# always the server's own folder name.
+SYSTEM_ROLES = {'1': 'inbox', '2': 'drafts', '3': 'sent', '4': 'trash', '5': 'spam', '6': 'virus'}
+REAUTH_CODES = ('SESSION_EXPIRED', 'NOT_AUTHENTICATED')
+
+
+def _people(value):
+    result = []
+    for name, addr in getaddresses([value.replace(';', ',')] if isinstance(value, str) else [str(v) for v in value]):
+        if addr or name:
+            result.append({'name': name.strip('"\' ') or '', 'email': addr})
+    return result
+
+
+def _summary_dict(item):
+    name, addr = parseaddr(item.sender)
+    return {'id': item.remote_id, 'fid': item.folder_id, 'subject': item.subject, 'from': item.sender,
+            'fromName': name or addr or item.sender, 'fromEmail': addr, 'to': item.recipients,
+            'date': item.date_text, 'ts': date_ts(item.date_text), 'preview': item.preview,
+            'size': item.size, 'flags': {k: bool(v) for k, v in dict(item.flags).items()}}
+
+
+def _quote_html(document):
+    header = lambda key: ', '.join(document.headers.get(key, ()))
+    rows = ''.join(f'<div><b>{label}：</b>{html.escape(header(key))}</div>'
+                   for label, key in (('发件人', 'from'), ('发送时间', 'date'), ('收件人', 'to'), ('抄送', 'cc'), ('主题', 'subject'))
+                   if header(key))
+    original = document.html or '<div style="white-space:pre-wrap">' + html.escape(document.text) + '</div>'
+    return ('<br><div class="hy-quote" style="border-top:1px solid #d0d5dd;padding-top:8px;margin-top:12px;color:#475467">'
+            '<div style="font-size:12px;margin-bottom:8px">------------------ 原始邮件 ------------------' + rows + '</div>'
+            '<blockquote style="margin:0 0 0 4px;padding-left:12px;border-left:3px solid #d0d5dd">' + original + '</blockquote></div>')
+
+
+class MailBackend:
+    def __init__(self, data_dir, adapter_factory=None, protector=None, crypto=None, services_factory=None):
+        from coremail_desktop.storage.dpapi import DataProtector
+        if adapter_factory is None:
+            from coremail_desktop.protocol.coremail import CoremailAdapter as adapter_factory
+        if services_factory is None:
+            from coremail_desktop.storage.services import local_services as services_factory
+        self.data_dir = Path(data_dir)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.protector = protector or DataProtector()
+        self.crypto = crypto
+        self.adapter = adapter_factory()
+        self._services_factory = services_factory
+        self.services = None
+        self.cache = None
+        self.account = None
+        self.identities = []
+        self.display_name = ''
+        self._password = None  # Kept in memory only when the user chose to stay signed in.
+        self._signed_in = False
+        self._folders = []
+        self._contact_index = None
+        self._contact_index_size = -1
+        self._docs = {}
+
+    # Accounts --------------------------------------------------------------
+    def _accounts_path(self):
+        return self.data_dir / 'account.bin'
+
+    def saved_login(self):
+        try:
+            value = json.loads(self.protector.unprotect(self._accounts_path().read_bytes()).decode('utf-8'))
+        except Exception:
+            return {'server': 'https://newmail.inspur.com/coremail/', 'username': '', 'remember': False}
+        return {'server': value.get('server', ''), 'username': value.get('username', ''),
+                'remember': bool(value.get('password'))}
+
+    def _save_login(self, server, username, password, remember):
+        value = {'server': server, 'username': username, 'password': password if remember else ''}
+        path = self._accounts_path()
+        path.write_bytes(self.protector.protect(json.dumps(value).encode('utf-8')))
+
+    def login(self, server, username, password, remember=False):
+        server = (server or '').strip() or 'https://newmail.inspur.com/coremail/'
+        username = (username or '').strip()
+        if not username or not password:
+            raise AppError('AUTH_REJECTED')
+        self.adapter.login(AccountConfig('primary', server, username), password)
+        self._signed_in = True
+        self._password = (server, username, password) if remember else None
+        self._save_login(server, username, password, remember)
+        self._open_account(server, username)
+        return self.profile()
+
+    def auto_login(self):
+        try:
+            value = json.loads(self.protector.unprotect(self._accounts_path().read_bytes()).decode('utf-8'))
+        except Exception:
+            raise AppError('NOT_AUTHENTICATED') from None
+        if not value.get('password'):
+            raise AppError('NOT_AUTHENTICATED')
+        try:
+            return self.login(value['server'], value['username'], value['password'], True)
+        except AppError as error:
+            if error.code not in ('NETWORK_ERROR', 'TLS_ERROR'):
+                raise
+        # Offline start: show the encrypted cache now and sign in on the next call.
+        self._password = (value['server'], value['username'], value['password'])
+        self._signed_in = False
+        self._open_account(value['server'], value['username'], online=False)
+        return {**self.profile(), 'offline': True}
+
+    def logout(self, forget=False):
+        self.adapter.close()
+        self._password = None
+        self._signed_in = False
+        if forget:
+            saved = self.saved_login()
+            self._save_login(saved['server'], saved['username'], '', False)
+        if self.cache:
+            self.cache.close()
+        self.cache = self.account = None
+        return True
+
+    def _open_account(self, server, username, online=True):
+        account_key = hashlib.sha256((server + '\n' + username.casefold()).encode('utf-8')).hexdigest()[:24]
+        if self.cache is None or self.account != username:
+            if self.cache:
+                self.cache.close()
+            self.cache = MailCache(self.data_dir / 'cache' / (account_key + '.db'), self.protector)
+        self.account = username
+        self.services = self._services_factory(self.adapter, self.data_dir)
+        identity = self.cache.get('identity', {})
+        self.identities, self.display_name = identity.get('identities') or [username], identity.get('name', '')
+        if online:
+            try:
+                self.identities = sorted(self.adapter.get_account_identities()) or [username]
+            except AppError:
+                pass
+            try:
+                self.display_name = self.adapter.display_name() if hasattr(self.adapter, 'display_name') else ''
+            except AppError:
+                pass
+            self.cache.set('identity', {'identities': self.identities, 'name': self.display_name})
+        if username not in self.identities and '@' in username:
+            self.identities.insert(0, username)
+
+    def profile(self):
+        return {'account': self.account, 'name': self.display_name, 'identities': self.identities,
+                'prefs': self.prefs()}
+
+    def _online(self, operation, *args, **kwargs):
+        """Run an adapter call; on an expired session sign in again once if allowed."""
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        if not self._signed_in and self._password:
+            server, username, password = self._password
+            self.adapter.login(AccountConfig('primary', server, username), password)
+            self._signed_in = True
+        try:
+            return operation(*args, **kwargs)
+        except AppError as error:
+            if error.code not in REAUTH_CODES or not self._password:
+                raise
+        server, username, password = self._password
+        self.adapter.login(AccountConfig('primary', server, username), password)
+        return operation(*args, **kwargs)
+
+    # Preferences -----------------------------------------------------------
+    def prefs(self):
+        stored = self.cache.get('prefs', {}) if self.cache else {}
+        return {**DEFAULT_PREFS, **{k: v for k, v in stored.items() if k in DEFAULT_PREFS}}
+
+    def set_prefs(self, values):
+        prefs = self.prefs()
+        for key, value in dict(values).items():
+            if key in DEFAULT_PREFS and type(value) is type(DEFAULT_PREFS[key]):
+                prefs[key] = value
+        prefs['pollSeconds'] = max(30, min(int(prefs['pollSeconds']), 3600))
+        prefs['signature'] = prefs['signature'][:20000]
+        self.cache.set('prefs', prefs)
+        return prefs
+
+    # Folders and lists -----------------------------------------------------
+    def _folder_dict(self, folder):
+        counts = dict(folder.counts)
+        role = folder.role or SYSTEM_ROLES.get(folder.remote_id)
+        return {'id': folder.remote_id, 'name': folder.name, 'role': role,
+                'total': counts.get('messageCount'), 'unread': counts.get('unreadMessageCount', 0)}
+
+    def folders(self, refresh=True):
+        if refresh or not self._folders:
+            try:
+                folders = self._online(self.adapter.list_folders)
+            except AppError as error:
+                cached = self.cache.get('folders') if self.cache else None
+                if cached and error.code in ('NETWORK_ERROR', 'TLS_ERROR'):
+                    return cached
+                raise
+            order = {'inbox': 0, 'drafts': 2, 'sent': 3, 'trash': 8, 'spam': 7, 'virus': 9}
+            self._folders = sorted((self._folder_dict(f) for f in folders),
+                                   key=lambda f: (order.get(f['role'], 5), f['role'] is None, f['name']))
+            self.cache.set('folders', self._folders)
+        return self._folders
+
+    def cached_view(self, folder_id, unread_only=False, limit=50):
+        """Instant first paint from the encrypted cache, before any network call."""
+        rows, total = self.cache.summaries(str(folder_id), 0, limit, unread_only)
+        return {'folders': self.cache.get('folders') or [], 'rows': rows, 'cachedTotal': total}
+
+    def messages(self, folder_id, offset=0, limit=50, unread_only=False):
+        folder_id = str(folder_id)
+        summaries = self._online(self.adapter.list_messages, folder_id, offset, limit)
+        rows = [_summary_dict(item) for item in summaries]
+        self.cache.put_summaries(folder_id, rows, window_complete=(offset == 0))
+        total = self.adapter.last_folder_total if self.adapter.last_folder_id == folder_id else None
+        if unread_only:
+            rows = [r for r in rows if not r['flags'].get('read')]
+        return {'rows': rows, 'total': total, 'offset': offset, 'more': len(summaries) == limit}
+
+    # Reading ---------------------------------------------------------------
+    def _parse(self, raw, mid):
+        from coremail_desktop.crypto.formats import detect_envelope_format
+        if detect_envelope_format(raw):
+            if self.crypto is None or self.crypto.certificate_info is None:
+                document = parse_mime(raw=raw, message_id=mid, rich=True)
+                return replace(document, encryption_state='locked')
+            from email import policy
+            from email.parser import BytesHeaderParser
+            result = self.crypto.decrypt(raw)
+            document = parse_mime(raw=result.mime_bytes, message_id=mid, rich=True)
+            outer = BytesHeaderParser(policy=policy.default).parsebytes(raw)
+            headers = dict(document.headers)
+            for name in ('from', 'to', 'cc', 'subject', 'reply-to', 'message-id', 'references', 'date'):
+                if outer.get_all(name):
+                    headers[name] = tuple(str(v) for v in outer.get_all(name))
+            return replace(document, headers=headers, encryption_state='decrypted')
+        return parse_mime(raw=raw, message_id=mid, rich=True)
+
+    def _document(self, mid):
+        if mid in self._docs:
+            return self._docs[mid]
+        raw = self.cache.get_body(mid)
+        if raw is None:
+            raw = self._online(self.adapter.fetch_mime, mid)
+            self.cache.put_body(mid, raw)
+        document = self._parse(raw, mid)
+        if document.encryption_state != 'locked':
+            self._docs = {mid: document, **dict(list(self._docs.items())[:7])}
+        return document
+
+    def open_message(self, mid, mark_read=None):
+        document = self._document(mid)
+        header = lambda key: ', '.join(document.headers.get(key, ()))
+        body_html = document.html
+        remote = False
+        if body_html:
+            def cid(match):
+                key = match.group(2)
+                found = document.cid_resources.get(key)
+                if not found:
+                    return match.group(0)
+                return f'src={match.group(1)}data:{found[0]};base64,{base64.b64encode(found[1]).decode("ascii")}{match.group(1)}'
+            body_html = re.sub(r'src=(["\'])cid:([^"\']+)\1', cid, body_html)
+            remote = bool(re.search(r'<img[^>]+src=["\']https?://', body_html, re.I))
+        summary = self.cache.summary(mid) or {}
+        result = {'id': mid, 'fid': summary.get('fid'), 'subject': header('subject') or summary.get('subject', ''),
+                  'from': _people(header('from')), 'to': _people(header('to')), 'cc': _people(header('cc')),
+                  'replyTo': _people(header('reply-to')), 'date': summary.get('date') or header('date'),
+                  'html': body_html, 'text': document.text, 'hasRemoteImages': remote,
+                  'encryption': document.encryption_state, 'flags': summary.get('flags', {}),
+                  'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
+                                  for a in document.attachments]}
+        if mark_read is None:
+            mark_read = self.prefs()['markReadOnOpen']
+        if mark_read and summary and not summary.get('flags', {}).get('read'):
+            try:
+                self.set_flags(mid, read=True)
+                result['flags'] = {**result['flags'], 'read': True}
+                result['markedRead'] = True
+            except AppError:
+                pass
+        return result
+
+    def prefetch(self, ids, limit=12):
+        """Download bodies ahead of time so opening is instant. Runs on a background
+        thread beside user actions, so it never signs in and swallows every failure."""
+        fetched = 0
+        for mid in list(ids)[:limit]:
+            if self.cache is None or not self._signed_in:
+                break
+            try:
+                if self.cache.get_body(mid) is None:
+                    self.cache.put_body(mid, self.adapter.fetch_mime(mid))
+                    fetched += 1
+            except Exception:
+                continue
+        return fetched
+
+    def attachment(self, mid, part):
+        document = self._document(mid)
+        data = document.attachment_payloads.get(part)
+        info = next((a for a in document.attachments if a.part_id == part), None)
+        if data is None or info is None:
+            raise AppError('MESSAGE_UNAVAILABLE')
+        return info.name, info.media_type, data
+
+    def unlock_certificate(self, path, password):
+        if self.crypto is None:
+            raise AppError('OPERATION_NOT_ALLOWED')
+        info = self.crypto.unlock(path, password)
+        self._docs.clear()
+        return {'subject': getattr(info, 'subject', ''), 'unlocked': True}
+
+    # Mail actions ----------------------------------------------------------
+    def set_flags(self, mid, read=None, flagged=None):
+        flags = {k: v for k, v in (('read', read), ('flagged', flagged)) if v is not None}
+        self._online(self.adapter.set_message_flags, mid, flags)
+        self.cache.update(mid, flags=flags)
+        return flags
+
+    def move(self, mid, folder_id):
+        self._online(self.adapter.move_message, mid, str(folder_id))
+        self.cache.update(mid, fid=str(folder_id))
+        return True
+
+    def delete(self, mid):
+        summary = self.cache.summary(mid) or {}
+        trash = next((f['id'] for f in self._folders if f['role'] == 'trash'), '4')
+        if summary.get('fid') == trash:
+            # Permanent deletion is deliberately not offered.
+            raise AppError('OPERATION_NOT_ALLOWED')
+        return self.move(mid, trash)
+
+    # Search ----------------------------------------------------------------
+    def search_local(self, query):
+        return self.cache.search(query)
+
+    def search_server(self, query, offset=0):
+        result = self._online(self.adapter.search_messages, query, offset, 50)
+        rows = [_summary_dict(item) for item in result['messages']]
+        return {'rows': rows, 'total': result['total']}
+
+    # Contacts --------------------------------------------------------------
+    def _local_contacts(self):
+        entries = self.cache.addresses()
+        if self._contact_index is not None and self._contact_index_size == len(entries):
+            return self._contact_index
+        sent = {f['id'] for f in self._folders if f['role'] == 'sent'} or {'3'}
+        index = {}
+        for sender, recipients, fid, ts in entries:
+            people = _people(recipients) if fid in sent else _people(sender)
+            for person in people:
+                key = person['email'].casefold()
+                if not key or key in {i.casefold() for i in self.identities}:
+                    continue
+                entry = index.setdefault(key, {'name': '', 'email': person['email'], 'score': 0.0})
+                entry['name'] = entry['name'] or person['name']
+                entry['score'] += (3.0 if fid in sent else 1.0) + ts / 1e10
+        self._contact_index, self._contact_index_size = index, len(entries)
+        return index
+
+    def suggest(self, query, limit=8):
+        query = (query or '').strip()
+        if not query:
+            return []
+        q = query.casefold()
+        local = sorted((c for c in self._local_contacts().values()
+                        if q in c['email'].casefold() or q in c['name'].casefold()),
+                       key=lambda c: -c['score'])[:limit]
+        results = [{'name': c['name'], 'email': c['email'], 'source': 'recent'} for c in local]
+        seen = {c['email'].casefold() for c in results}
+        if hasattr(self.adapter, 'match_contacts') and len(results) < limit:
+            try:
+                for person in self._online(self.adapter.match_contacts, query, limit):
+                    if person['email'].casefold() not in seen:
+                        seen.add(person['email'].casefold())
+                        results.append({**person, 'source': 'directory'})
+            except AppError:
+                pass  # The directory is optional; local suggestions still work.
+        return results[:limit]
+
+    # Compose ---------------------------------------------------------------
+    def _signature_html(self):
+        signature = self.prefs()['signature']
+        return f'<br><br><div class="hy-signature">{signature}</div>' if signature else ''
+
+    def compose(self, mode='new', mid=None):
+        identity = self.identities[0] if self.identities else (self.account or '')
+        base = {'localId': uuid.uuid4().hex, 'revision': 0, 'mode': mode, 'from': identity,
+                'to': [], 'cc': [], 'bcc': [], 'subject': '', 'html': '<p><br></p>' + self._signature_html(),
+                'replySourceId': None, 'referenceHeaders': {}, 'attachments': []}
+        if mode == 'new' or not mid:
+            return base
+        document = self._document(mid)
+        if mode in ('reply', 'reply_all'):
+            draft = build_reply(document, set(self.identities), mode == 'reply_all', identity)
+            return {**base, 'mode': draft.mode, 'to': list(draft.to), 'cc': list(draft.cc), 'subject': draft.subject,
+                    'html': '<p><br></p>' + self._signature_html() + _quote_html(document),
+                    'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers)}
+        if mode == 'forward':
+            subject = next(iter(document.headers.get('subject', ())), '')
+            attachments = [{'name': a.name, 'type': a.media_type, 'size': len(document.attachment_payloads[a.part_id]),
+                            'data': base64.b64encode(document.attachment_payloads[a.part_id]).decode('ascii')}
+                           for a in document.attachments if a.part_id in document.attachment_payloads]
+            return {**base, 'mode': 'forward', 'subject': ('' if subject.lower().startswith('fwd:') else 'Fwd: ') + subject,
+                    'html': '<p><br></p>' + self._signature_html() + _quote_html(document), 'attachments': attachments}
+        raise AppError('INVALID_MAIL_ACTION')
+
+    def _draft(self, value):
+        attachments = tuple(DraftAttachment(str(a['name']), str(a.get('type') or 'application/octet-stream'),
+                                            base64.b64decode(a['data'], validate=True)) for a in value.get('attachments', ()))
+        validate_attachments(attachments)
+        listify = lambda key: tuple(str(v).strip() for v in value.get(key, ()) if str(v).strip())
+        mode = value.get('mode', 'new')
+        return DraftDocument(str(value['localId']), int(value.get('revision', 0)), mode,
+                             str(value.get('from') or self.identities[0]), listify('to'), listify('cc'), listify('bcc'),
+                             str(value.get('subject', '')), str(value.get('html', '')),
+                             {str(k): str(v) for k, v in dict(value.get('referenceHeaders') or {}).items()},
+                             False, value.get('replySourceId') if mode in ('reply', 'reply_all') else None,
+                             attachments, True)
+
+    def save_draft(self, value):
+        draft = self._draft(value)
+        draft = replace(draft, revision=draft.revision + 1)
+        self.services['save_draft'](draft=draft)
+        return {'localId': draft.local_id, 'revision': draft.revision}
+
+    def list_drafts(self):
+        return self.services['list_drafts']()
+
+    def restore_draft(self, local_id):
+        draft = self.services['restore_draft'](local_id=local_id)
+        body = draft.body if draft.is_html else '<div style="white-space:pre-wrap">' + html.escape(draft.body) + '</div>'
+        return {'localId': draft.local_id, 'revision': draft.revision, 'mode': draft.mode, 'from': draft.from_identity,
+                'to': list(draft.to), 'cc': list(draft.cc), 'bcc': list(draft.bcc), 'subject': draft.subject,
+                'html': body, 'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
+                'attachments': [{'name': a.name, 'type': a.media_type, 'size': len(a.payload),
+                                 'data': base64.b64encode(a.payload).decode('ascii')} for a in draft.attachments]}
+
+    def delete_draft(self, local_id):
+        self.services['delete_draft'](local_id=local_id)
+        return True
+
+    def send(self, value):
+        draft = self._draft(value)
+        draft = replace(draft, revision=draft.revision + 1)
+        if not (draft.to or draft.cc or draft.bcc):
+            raise AppError('RECIPIENT_REQUIRED')
+        # A durable copy first: if sending fails the user loses nothing.
+        self.services['save_draft'](draft=draft)
+        job = self._online(self.services['request_send'], draft=draft)
+        if job.state == 'Accepted':
+            self.delete_draft(draft.local_id)
+            if draft.mode in ('reply', 'reply_all') and draft.reply_source_id:
+                self.cache.update(draft.reply_source_id, flags={'replied': True})
+        from coremail_desktop.ui.messages import user_message
+        return {'state': job.state, 'failure': job.failure_code, 'localId': draft.local_id, 'revision': draft.revision,
+                'failureMessage': user_message(job.failure_code) if job.failure_code else None}
+
+    # Background sync -------------------------------------------------------
+    def poll(self):
+        """Refresh folder counts and the newest inbox page; report new unread mail."""
+        inbox = next((f['id'] for f in self._folders if f['role'] == 'inbox'), '1')
+        known = self.cache.known_ids(inbox)
+        first_sync = not known and not self.cache.get('inboxSynced')
+        page = self.messages(inbox, 0, 50)
+        self.cache.set('inboxSynced', True)
+        fresh = [] if first_sync else [r for r in page['rows'] if r['id'] not in known and not r['flags'].get('read')]
+        folders = self.folders(refresh=True)
+        return {'folders': folders, 'inbox': inbox, 'rows': page['rows'], 'total': page['total'], 'new': fresh}

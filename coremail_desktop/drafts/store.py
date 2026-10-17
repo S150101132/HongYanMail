@@ -71,3 +71,5 @@ class DraftStore(ProtectedRecords):
             return draft.revision
     def load(self, local_id):
         with self._lock: return decode_draft(self._read(local_id))
+    def delete(self, local_id):
+        with self._lock: self._path(local_id).unlink(missing_ok=True)

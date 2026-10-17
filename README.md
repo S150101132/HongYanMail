@@ -1,26 +1,41 @@
-# Coremail 独立连接验证与桌面预览版
+# 鸿雁 · 工作邮箱
 
 本仓库包含两件东西：一次性兼容性验证原型（`probe/`）和在其证据上开发的桌面客户端预览版（`coremail_desktop/`）。
 
 **2026-10-15 已完成真实独立登录与自发自收验证**：读取 9 个文件夹、5 条列表和 MIME 邮件，发送到自己后在收件箱下载并核对唯一标记。详见 `analysis/收发可行性验证结果.md` 与 `analysis/connection-probe-result.json`。
 
-**桌面预览版当前状态：中间预览版，不是完整 V0.1。** 界面、协议适配、草稿保护、发送状态机、正文隔离与打包已实现并有 99 项自动化测试通过；真实登录/读取/发送、回复引用头契约与证书双向互通尚未验证。逐项状态见 [V0.1 验收记录](docs/releases/v0.1-acceptance.md)，证书结论见 [证书兼容性报告](analysis/certificate-compatibility.md)。
+**2026-10-17：日常使用版界面。** 默认界面已重做为三栏 Web 工作台，带加密本机缓存、自动收信与托盘通知、富文本写信与签名、公司通讯录补全，并已用本人账号完成只读检查与 HTML 自发自收验证（见下文）。证书加密**发送**仍未开放；旧版界面以 `--classic` 保留。
 
 目标服务器：`https://newmail.inspur.com/coremail/`。`mail.inspur.com` 当前是另一套 Outlook OWA 入口。
 
-## 桌面客户端（预览版）
+## 桌面客户端
 
 ```powershell
-.venv\Scripts\python.exe -m coremail_desktop            # 启动工作台
+.venv\Scripts\python.exe -m coremail_desktop            # 启动鸿雁
 .venv\Scripts\python.exe -m coremail_desktop --demo     # 合成演示数据，不联网
-powershell -File packaging\build.ps1                    # 打包 Windows 启动包
+.venv\Scripts\python.exe -m coremail_desktop --classic  # 旧版 Qt Widgets 界面
+powershell -File packaginguild.ps1                    # 打包 Windows 启动包
 ```
 
-界面为简体中文三栏工作台：登录、文件夹、邮件列表（每页 50 条）、阅读区，外加纯文本写信窗口。快捷键：Ctrl+N 写邮件、Ctrl+S 保存本机草稿、Ctrl+K 筛选已加载邮件、Ctrl+F 正文内查找、F5 刷新、Ctrl+Enter 发送。
+2026-10-17 起默认界面重做为 Web 界面（Qt WebEngine 承载，经 QWebChannel 调用已真机验证的 Python 协议层）。架构：
 
-数据目录：`%LOCALAPPDATA%\CoremailDesktopPreview`（草稿与发送记录均由 Windows 用户级 DPAPI 加密，磁盘上不出现明文主题、正文或收件人）。
+- `coremail_desktop/app/backend.py`：无 Qt 的应用后端（登录、同步、阅读、标记、移动、搜索、通讯录、写信发送、轮询）。
+- `coremail_desktop/app/cache.py`：本机缓存。SQLite 只存 AES-GCM 密文，密钥由 Windows DPAPI 保护；启动先显示缓存，再与服务器同步，断网时可读已缓存邮件。
+- `coremail_desktop/app/shell.py`：窗口、私有 `hongyan://` 页面、系统托盘、新邮件通知、附件打开/另存为、证书解锁。页面除用户逐封允许的远程图片外禁止一切网络请求。
+- `coremail_desktop/app/web/`：界面（三栏工作台、浅色/深色、紧凑密度）。
 
-明确阻止的行为（界面会说明原因，不会静默降级）：缺收件人证书时的加密发送、未验证的加密提交接口、未验证的回复引用头，以及发送结果不明时的自动重发。
+日常功能：
+
+- **收信**：文件夹未读数、按日分组列表与摘要预览、无限滚动、按需自动收信（默认 1 分钟）、托盘新邮件通知、关闭窗口后驻留托盘。
+- **阅读**：保留表格与内联样式的 HTML 正文（无脚本沙箱 + CSP，远程图片默认阻止）、附件打开/另存为/全部保存、证书加密邮件解锁后阅读、正文查找、自动标为已读（可关）、后台预取最新邮件正文。
+- **处理**：回复/全部回复/转发（转发带原附件）、删除到「已删除」并可撤销（不提供彻底删除）、移动（含拖到文件夹）、已读/未读、星标、右键菜单。
+- **写信**：富文本（字号、颜色、高亮、列表、缩进、链接）、签名、收件人补全（最近联系人 + 公司通讯录 `oab:autoMatch`）、拖放/粘贴添加附件、自动保存本机草稿、忘记附件提醒、发送结果不明时不自动重发。
+- **搜索**：输入即显示本机缓存结果，回车合并服务器结果。
+- **会话**：可选“保持登录”（DPAPI 保存密码），会话失效自动重连；离线启动先显示缓存。
+
+快捷键：Ctrl+N / C 写邮件，J/K 或 ↑/↓ 切换，R 回复，A 全部回复，F 转发，Delete 删除，U 标为未读，S 星标，V 移动，/ 或 Ctrl+F 搜索，F5 收信，写信时 Ctrl+Enter 发送、Ctrl+S 保存草稿。
+
+数据目录：`%LOCALAPPDATA%\CoremailDesktopPreview`（缓存、草稿、发送记录均为密文）。真机验证结果见 [日常客户端验证](docs/releases/2026-10-17-daily-client.md)。
 
 ## 连接验证原型
 
@@ -63,7 +78,7 @@ python -m probe --password-dialog --send-self
 .venv\Scripts\python.exe -u -m unittest discover -s tests -v
 ```
 
-当前基线：99 项通过（Python 3.12.10 / PySide6 6.12.0 / cryptography 50.0.2），见 `analysis/unittest-result.json`。
+2026-10-16 最新回归和构建结果见 [鸿雁验收记录](docs/releases/2026-10-16-hongyan-workflow.md)。运行环境：Python 3.12.10 / PySide6 6.12.0 / cryptography 50.0.2；本机 OpenSSL 无法构造的两项 RC2 样本测试仍跳过。
 
 两点执行环境要求：
 

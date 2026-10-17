@@ -56,8 +56,9 @@ a = Analysis(
     [str(root / 'packaging' / 'entry.py')],
     pathex=[str(root)],
     binaries=[],
-    datas=[],
-    hiddenimports=['PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore'],
+    # The daily-use interface is HTML/CSS/JS served from the private hongyan:// scheme.
+    datas=[(str(root / 'coremail_desktop' / 'app' / 'web'), 'coremail_desktop/app/web')],
+    hiddenimports=['PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore', 'PySide6.QtWebChannel'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

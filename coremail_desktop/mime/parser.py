@@ -6,7 +6,7 @@ import quopri
 from email import policy
 from email.parser import BytesParser
 from coremail_desktop.models import AttachmentInfo, MessageDocument
-from .sanitizer import sanitize_html, html_to_text, normalize_cid
+from .sanitizer import sanitize_html, sanitize_rich_html, html_to_text, normalize_cid
 
 # 20 MiB of legal attachments expands to about 28 MiB with MIME base64.
 MAX_RAW_BYTES = 40 * 1024 * 1024
@@ -39,7 +39,7 @@ def _raw_children(raw, boundary):
     return children
 
 
-def parse_mime(raw: bytes, message_id: str) -> MessageDocument:
+def parse_mime(raw: bytes, message_id: str, rich: bool = False) -> MessageDocument:
     # Accept the documented keyword names; remote identity never comes from Message-ID.
     digest = hashlib.sha256(raw).hexdigest()
     def result(text, html=None, attachments=(), headers=None, resources=None, state='none', attachment_payloads=None):
@@ -116,7 +116,7 @@ def parse_mime(raw: bytes, message_id: str) -> MessageDocument:
                 decoded = payload.decode(charset, errors='replace')
             except LookupError:
                 decoded = payload.decode('utf-8', errors='replace')
-            return (decoded, None) if part.get_content_type() == 'text/plain' else ('', sanitize_html(decoded, resources))
+            return (decoded, None) if part.get_content_type() == 'text/plain' else ('', (sanitize_rich_html if rich else sanitize_html)(decoded, resources))
         text, html = body(message)
         return result(text or (html_to_text(html) if html else '此邮件没有可显示的正文。'), html, attachments, headers, resources, attachment_payloads=attachment_payloads)
     except (RecursionError, ValueError, TypeError):

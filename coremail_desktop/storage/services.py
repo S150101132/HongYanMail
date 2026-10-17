@@ -44,6 +44,7 @@ def local_services(adapter, directory):
         'save_draft':save_draft,
         'list_drafts':lambda:drafts().list_summaries(),
         'restore_draft':lambda local_id:drafts().load(local_id),
+        'delete_draft':lambda local_id:drafts().delete(local_id),
         'request_send':send,
         'recover_pending':lambda:sending().recover_pending(),
         'pending_for_review':lambda:sending().recover_pending(),

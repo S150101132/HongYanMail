@@ -33,6 +33,9 @@ class MessageSummary(_ImmutableMappings):
     sender: str
     date_text: str
     flags: dict = field(default_factory=dict)
+    preview: str = ''
+    recipients: str = ''
+    size: int | None = None
 
 @dataclass(frozen=True)
 class AttachmentInfo:
@@ -74,6 +77,7 @@ class DraftDocument(_ImmutableMappings):
     encryption_required: bool = False
     reply_source_id: str | None = None
     attachments: tuple[DraftAttachment, ...] = ()
+    is_html: bool = False
 
 @dataclass(frozen=True)
 class SendJob:
