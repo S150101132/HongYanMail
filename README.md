@@ -38,7 +38,7 @@ powershell -File packaging\build.ps1                   # 打包、校验，并�
 
 数据目录：`%LOCALAPPDATA%\CoremailDesktopPreview`（缓存、草稿、发送记录均为密文）。
 
-安装包：`packaging/hongyan.iss`（Inno Setup 6，按用户安装、无需管理员，可选开始菜单与桌面快捷方式）。`build.ps1` 在所有检查通过后调用 `ISCC.exe`（依次查找 `$env:ISCC`、PATH、`.tools\InnoSetup`、常见安装位置），找不到时跳过并提示。卸载默认保留本机数据，勾选后才删除。**免安装使用（推荐用于受管控的电脑）**：直接运行 `dist\Hongyan\Hongyan.exe`，或把整个 `dist\Hongyan` 文件夹复制到任何可写的位置再运行；数据保存在程序旁的 `HongyanData`（均为密文）。受管控电脑上若程序不能写入 `%TEMP%`、用户目录或磁盘根目录，安装包需用 `dist\Install-Hongyan.cmd` 启动（它把临时目录和默认安装位置都放在脚本旁），卸载用安装目录中的 `Uninstall-Hongyan.cmd`；这类电脑上安装包不写注册表卸载项，开始菜单快捷方式可能无法创建。真机验证结果见 [日常客户端验证](docs/releases/2026-10-17-daily-client.md)。
+安装包：`packaging/hongyan.iss`（Inno Setup 6，按用户安装、无需管理员，可选开始菜单与桌面快捷方式）。`build.ps1` 在所有检查通过后调用 `ISCC.exe`（依次查找 `$env:ISCC`、PATH、`.tools\InnoSetup`、常见安装位置），找不到时跳过并提示。卸载默认保留本机数据，勾选后才删除。**免安装使用（推荐用于受管控的电脑）**：把整个 `dist\Hongyan` 文件夹复制到 `dist` 之外任何可写的位置（例如 `D:\workspace\Hongyan`）再运行其中的 `Hongyan.exe`。不要长期直接使用 `dist\Hongyan`：每次打包都会删除并重建它，`build.ps1` 发现其中有 `HongyanData` 时会拒绝打包；数据保存在程序旁的 `HongyanData`（均为密文）。受管控电脑上若程序不能写入 `%TEMP%`、用户目录或磁盘根目录，安装包需用 `dist\Install-Hongyan.cmd` 启动（它把临时目录和默认安装位置都放在脚本旁），卸载用安装目录中的 `Uninstall-Hongyan.cmd`；这类电脑上安装包不写注册表卸载项，开始菜单快捷方式可能无法创建。真机验证结果见 [日常客户端验证](docs/releases/2026-10-17-daily-client.md)。
 
 ## 连接验证原型
 

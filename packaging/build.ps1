@@ -2,6 +2,15 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location -LiteralPath $taskRoot
 $python = Join-Path $taskRoot '.venv\Scripts\python.exe'
+
+# PyInstaller deletes and recreates dist\Hongyan. When that copy has been used
+# directly (no-install mode), its data lives in dist\Hongyan\HongyanData (saved
+# login, mail cache, drafts) and would be deleted with it. Refuse, never guess.
+$userData = Join-Path $taskRoot 'dist\Hongyan\HongyanData'
+if (Test-Path -LiteralPath $userData) {
+    throw ('dist\Hongyan contains user data (HongyanData). Close Hongyan and move the folder ' +
+           'somewhere else for daily use (e.g. D:\workspace\Hongyan) before building.')
+}
 & $python -m tools.build_brand_icon
 if ($LASTEXITCODE -ne 0) { throw 'Hongyan icon generation failed.' }
 
