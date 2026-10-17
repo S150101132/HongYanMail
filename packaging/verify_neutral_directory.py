@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXE = ROOT / 'dist' / 'CoremailDesktopPreview' / 'CoremailDesktopPreview.exe'
+EXE = ROOT / 'dist' / 'Hongyan' / 'Hongyan.exe'
 ALIVE_SECONDS = 18
 
 

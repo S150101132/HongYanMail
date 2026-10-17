@@ -6,6 +6,17 @@ never display a value the user did not just type.
 """
 
 MESSAGES = {
+    'LOCAL_STORAGE_UNAVAILABLE': '无法访问本机草稿或发送记录。请关闭程序，从文件资源管理器重新启动鸿雁；本机保存和发送需要该目录的访问权限。',
+    'UNSUPPORTED_LOGIN': '服务器未返回受支持的登录表单，请确认服务器地址，或稍后重试。',
+    'ATTACHMENT_UNAVAILABLE': '无法读取所选附件，请检查文件和权限。',
+    'INVALID_ATTACHMENT': '附件名称或类型无效，未上传。',
+    'ATTACHMENT_TOO_LARGE': '最多 20 个附件，单个不超过 10 MiB，总计不超过 20 MiB。',
+    'ATTACHMENT_UPLOAD_FAILED': '附件上传未完整确认，邮件未提交。请检查后重试。',
+    'INVALID_SEARCH': '请输入 1 至 1000 个字符的搜索条件。',
+    'INVALID_MAIL_ACTION': '邮件操作参数无效，未提交修改。',
+    'MAIL_UPDATE_UNCONFIRMED': '邮件状态更新结果未确认，请刷新核对后再操作。',
+    'REPLY_SOURCE_REQUIRED': '这份回复缺少原邮件来源，请从原邮件重新发起回复。',
+    'REPLY_SOURCE_MISMATCH': '原邮件与草稿引用不一致，请从原邮件重新发起回复。',
     'NETWORK_ERROR': '网络连接失败，请检查网络后重试。',
     'TLS_ERROR': '服务器 TLS 证书验证失败，已停止连接。',
     'AUTH_REJECTED': '账号或密码被服务器拒绝。',
@@ -67,3 +78,15 @@ def user_message(code) -> str:
     if isinstance(code, str):
         return MESSAGES.get(code, GENERIC)
     return GENERIC
+
+
+def login_message(code, category='') -> str:
+    if code == 'INTERNAL_ERROR':
+        stages = {'initialize':'本机初始化', 'login':'登录连接', 'operation':'登录处理'}
+        parts = category.split(':') if isinstance(category,str) else []
+        kinds = {'PermissionError','OSError','TypeError','ValueError','AttributeError','ImportError','RuntimeError','Exception'}
+        if len(parts)==2 and parts[0] in stages and parts[1] in kinds:
+            return f'{stages[parts[0]]}失败，请重试。诊断码：{parts[0]}/{parts[1]}（不含密码）。'
+        return '登录未完成，请重试。诊断码：INTERNAL_ERROR。'
+    if code in MESSAGES: return MESSAGES[code]
+    return '登录未完成，服务器返回了尚未识别的错误。请稍后重试。'

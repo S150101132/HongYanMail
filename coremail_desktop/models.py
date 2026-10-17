@@ -6,7 +6,7 @@ class _ImmutableMappings:
     def __post_init__(self):
         for name in ('to','cc','bcc','attachments'):
             if hasattr(self,name): object.__setattr__(self,name,tuple(getattr(self,name)))
-        for name in ('counts', 'flags', 'headers', 'reference_headers', 'cid_resources'):
+        for name in ('counts', 'flags', 'headers', 'reference_headers', 'cid_resources', 'attachment_payloads'):
             if hasattr(self, name):
                 value = dict(getattr(self,name))
                 if name == 'headers': value = {key:tuple(items) for key,items in value.items()}
@@ -51,6 +51,13 @@ class MessageDocument(_ImmutableMappings):
     headers: dict[str, tuple[str, ...]]
     cid_resources: dict = field(default_factory=dict)
     encryption_state: str = 'none'
+    attachment_payloads: dict[str, bytes] = field(default_factory=dict)
+
+@dataclass(frozen=True)
+class DraftAttachment:
+    name: str
+    media_type: str
+    payload: bytes
 
 @dataclass(frozen=True)
 class DraftDocument(_ImmutableMappings):
@@ -65,6 +72,8 @@ class DraftDocument(_ImmutableMappings):
     body: str
     reference_headers: dict[str, str]
     encryption_required: bool = False
+    reply_source_id: str | None = None
+    attachments: tuple[DraftAttachment, ...] = ()
 
 @dataclass(frozen=True)
 class SendJob:
@@ -77,3 +86,4 @@ class SendJob:
     payload_digest: str | None = None
     envelope_recipients: tuple[str, ...] = ()
     encrypted: bool = False
+    failure_code: str | None = None

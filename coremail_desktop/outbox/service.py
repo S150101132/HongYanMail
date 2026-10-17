@@ -37,11 +37,19 @@ class OutboxService:
                     job = replace(job,payload=payload,payload_digest=hashlib.sha256(payload).hexdigest(),encrypted=True,envelope_recipients=envelope)
                 else:
                     job = replace(job,compose_id=self.adapter.create_compose(draft),envelope_recipients=envelope)
-            except Exception:
-                self.journal.persist(replace(job,state='Failed'))
+            except Exception as error:
+                code=error.code if isinstance(error,AppError) else 'INTERNAL_ERROR'
+                # This branch precedes deliver. A user-requested retry is safe;
+                # accepted/unknown/submitting snapshots remain non-replayable.
+                try: self.journal.persist(replace(job,state='Failed',failure_code=code))
+                finally: self._snapshots.pop(key,None)
+                if code in ('SESSION_EXPIRED','NOT_AUTHENTICATED'): raise
                 return job.local_id
             job = replace(job,state='Submitting',submitted_at=datetime.now(timezone.utc).isoformat())
-            self.journal.persist(job)  # Failure here propagates; deliver has not run.
+            try: self.journal.persist(job)
+            except Exception:
+                self._snapshots.pop(key,None)  # deliver has not run.
+                raise
             try:
                 response = self.adapter.submit_encrypted(job.payload,envelope) if job.encrypted else self.adapter.deliver(job.compose_id,draft)
                 if not isinstance(response,dict) or response.get('code') != 'S_OK': raise AppError('INVALID_RESPONSE')

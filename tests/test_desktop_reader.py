@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtWebEngineCore import QWebEngineSettings, QWebEngineProfile
 from PySide6.QtCore import QEventLoop, QTimer, QCoreApplication, QEvent
 from PySide6.QtTest import QSignalSpy
+import qt_test_support
 from coremail_desktop.models import MessageDocument
 from coremail_desktop.reader.resources import ReaderResourceStore
 from coremail_desktop.reader.view import ReaderView
@@ -37,6 +38,36 @@ class ReaderTests(unittest.TestCase):
 
     def tearDown(self):
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def test_reader_page_is_destroyed_before_its_private_profile(self):
+        import shiboken6
+        reader=ReaderView(); order=[]
+        reader.web_view.page().destroyed.connect(lambda:order.append('page'))
+        reader.profile.destroyed.connect(lambda:order.append('profile'))
+        shiboken6.delete(reader)
+        QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+        self.assertEqual(order,['page','profile'],'Qt requires the private profile to outlive every page')
+
+    def test_body_uses_theme_and_readable_typography_without_email_styles(self):
+        from coremail_desktop.ui.theme import apply_theme
+        apply_theme(self.app, True)
+        reader = ReaderView()
+        self.addCleanup(lambda: apply_theme(self.app, False))
+        self.addCleanup(reader.deleteLater)
+        self.addCleanup(reader.close)
+        spy = QSignalSpy(reader.web_view.loadFinished)
+        reader.show_document(MessageDocument('x', 'digest', 'safe', '<p style="color:red">safe</p>', (), {}))
+        self.assertTrue(spy.wait(15000))
+        values = []
+        loop = QEventLoop()
+        reader.web_view.page().runJavaScript(
+            "JSON.stringify([getComputedStyle(document.body).backgroundColor,getComputedStyle(document.body).fontSize,document.querySelector('p').getAttribute('style')])",
+            1, lambda value: (values.append(value), loop.quit()))
+        QTimer.singleShot(5000, loop.quit)
+        loop.exec()
+        import json
+        self.assertTrue(values)
+        self.assertEqual(json.loads(values[0]), ['rgb(31, 41, 55)', '16px', None])
 
     def test_renderer_really_loads_safe_document(self):
         reader = ReaderView()
@@ -88,10 +119,24 @@ class ReaderTests(unittest.TestCase):
         reader.show_document(MessageDocument('x', 'digest', 'large body fallback', '<p>' + '中' * 250000 + '</p>', (), {}))
         self.assertFalse(reader.fallback.isHidden())
         self.assertEqual(reader.fallback.toPlainText(), 'large body fallback')
+        spy=QSignalSpy(reader.web_view.loadFinished)
         reader.show_document(MessageDocument('small', 'digest', 'small', '<p>small</p>', (), {}))
+        self.assertTrue(spy.wait(15000))
+        loop=QEventLoop(); timer=QTimer(); timer.setInterval(10)
+        timer.timeout.connect(lambda: loop.quit() if reader.fallback.isHidden() else None)
+        timer.start(); QTimer.singleShot(5000,loop.quit); loop.exec(); timer.stop()
         self.assertTrue(reader.fallback.isHidden())
         reader.close()
         reader.deleteLater()
+
+    def test_reader_remains_readable_before_renderer_starts_or_when_it_fails(self):
+        reader=ReaderView()
+        self.addCleanup(reader.deleteLater); self.addCleanup(reader.close)
+        reader.show_document(MessageDocument('safe','digest','Readable fallback', '<p>Readable fallback</p>',(),{}))
+        self.assertFalse(reader.fallback.isHidden())
+        self.assertEqual(reader.fallback.toPlainText(),'Readable fallback')
+        reader.web_view.loadFinished.emit(False)
+        self.assertFalse(reader.fallback.isHidden())
 
     def test_webengine_profile_has_no_business_authority(self):
         reader = ReaderView()

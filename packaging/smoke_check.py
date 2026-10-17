@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXE = ROOT / 'dist' / 'CoremailDesktopPreview' / 'CoremailDesktopPreview.exe'
+EXE = ROOT / 'dist' / 'Hongyan' / 'Hongyan.exe'
 WAIT_SECONDS = 25
 
 environment = dict(os.environ)

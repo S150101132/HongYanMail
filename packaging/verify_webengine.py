@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXE = ROOT / 'dist' / 'CoremailDesktopPreview' / 'CoremailDesktopPreview.exe'
+EXE = ROOT / 'dist' / 'Hongyan' / 'Hongyan.exe'
 LOG = ROOT / 'runtime' / 'packaged-webengine.log'
 ALIVE_SECONDS = 20
 

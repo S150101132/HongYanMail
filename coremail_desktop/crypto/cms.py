@@ -451,6 +451,11 @@ def decrypt_message(der: bytes, private_key) -> tuple:
     candidates = unwrap_content_keys(enveloped.recipients, private_key, key_size)
     last_error = None
     for candidate in candidates:
+        if len(candidate)<key_size:
+            # Implicit RSA rejection can yield synthetic short key material.
+            # The envelope parsed correctly; this is a key mismatch.
+            last_error=CryptoError('DECRYPT_FAILED')
+            continue
         try:
             plaintext = decrypt_content(enveloped.ciphertext, candidate,
                                        enveloped.algorithm, enveloped.iv)

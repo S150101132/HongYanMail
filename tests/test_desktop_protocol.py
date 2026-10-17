@@ -68,6 +68,6 @@ class ProtocolTests(unittest.TestCase):
         adapter.deliver(cid,draft)
         calls = [params for op,params in adapter._session.calls if op == '%mbox/compose']
         self.assertEqual([p['action'] for p in calls], ['continue','deliver'])
-        self.assertFalse(adapter.supports_reply_headers)
+        self.assertTrue(adapter.supports_reply_headers)
         from dataclasses import replace
         with self.assertRaises(Exception): adapter.create_compose(replace(draft, reference_headers={'In-Reply-To':'<a>'}))

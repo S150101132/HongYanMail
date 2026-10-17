@@ -12,6 +12,7 @@ class SessionController(QObject):
     def __init__(self,adapter_factory=CoremailAdapter,services=None,parent=None):
         super().__init__(parent)
         self._closed = False
+        self.supports_reply_headers = bool(getattr(adapter_factory,'supports_reply_headers',False))
         self._thread = QThread(self)
         self._worker = SessionWorker(adapter_factory,services)
         self._worker.moveToThread(self._thread)

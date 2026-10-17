@@ -151,6 +151,11 @@ class Handler(BaseHTTPRequestHandler):
         # The transport posts RPC payloads to the s/json endpoint.
         if path.endswith('/s/json'):
             return self._serve_json()
+        if path.endswith('/XT/jsp/mail.jsp'):
+            return self._send(rpc({'code':'S_OK','var':[{'addr':'tester@example.test','name':'Tester'}]}),content_type='text/x-json')
+        if path.endswith('/XT/jsp/compose.jsp'):
+            Handler.reply_form=parse_qs(body)
+            return self._send(rpc({'code':'S_OK','var':{'id':'reply-compose-1'}}),content_type='text/x-json')
         if path.endswith('/common/mbox/compose.jsp'):
             mode = Handler.modes.get('compose')
             if mode == 'transient':
@@ -222,8 +227,7 @@ class AdapterIntegrationTests(unittest.TestCase):
         self.assertEqual(form['password'], ['local-test-password'])
         self.assertEqual(form['locale'], ['zh_CN'])
         self.assertIn('/coremail/s/json', Handler.calls, 'login did not call an authenticated API')
-        self.assertEqual(self.adapter.get_account_identities(), set(),
-                         'identities must stay empty until the attrs schema is verified')
+        self.assertEqual(self.adapter.get_account_identities(), {'tester@example.test'})
 
     def test_folders_and_paged_messages_map_to_typed_models(self):
         self.login()
@@ -241,7 +245,7 @@ class AdapterIntegrationTests(unittest.TestCase):
         self.assertIn(b'LOCAL-ONLY-TEST-BODY', raw)
         self.assertIn(b'Message-ID: <local-1@example.test>', raw)
 
-    def test_compose_continue_then_deliver_and_reply_is_refused(self):
+    def test_compose_continue_then_deliver_and_legacy_reply_without_source_is_refused(self):
         self.login()
         draft = DraftDocument('d1', 1, 'new', 'tester@example.test', ('you@example.test',),
                               (), (), '本地主题', '本地正文', {})
@@ -254,13 +258,23 @@ class AdapterIntegrationTests(unittest.TestCase):
                               {'in-reply-to': '<local-1@example.test>'})
         with self.assertRaises(AppError) as raised:
             self.adapter.create_compose(reply)
-        self.assertEqual(raised.exception.code, 'REPLY_CONTRACT_UNVERIFIED')
+        self.assertEqual(raised.exception.code, 'REPLY_SOURCE_REQUIRED')
 
         encrypted = DraftDocument('d3', 1, 'new', 'tester@example.test', ('you@example.test',),
                                   (), (), '加密', '正文', {}, True)
         with self.assertRaises(AppError) as raised:
             self.adapter.create_compose(encrypted)
         self.assertEqual(raised.exception.code, 'ENCRYPTED_SUBMISSION_UNVERIFIED')
+
+    def test_reply_uses_fixed_jsp_form_before_deliver(self):
+        from coremail_desktop.mime.parser import parse_mime
+        from coremail_desktop.compose.service import build_reply
+        self.login()
+        draft=build_reply(parse_mime(RAW_MESSAGE,'101'),{'tester@example.test'},True)
+        compose_id=self.adapter.create_compose(draft)
+        self.assertEqual(compose_id,'reply-compose-1')
+        self.assertEqual(Handler.reply_form,{'ctype':['replyall'],'mid':['101'],'isHtml':['false']})
+        self.assertEqual(self.adapter.deliver(compose_id,draft)['code'],'S_OK')
 
     def test_expired_session_is_classified_and_not_retried(self):
         self.login()

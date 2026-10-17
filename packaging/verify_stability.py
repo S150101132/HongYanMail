@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXE = ROOT / 'dist' / 'CoremailDesktopPreview' / 'CoremailDesktopPreview.exe'
+EXE = ROOT / 'dist' / 'Hongyan' / 'Hongyan.exe'
 REPORT = ROOT / 'analysis' / 'stability-baseline.json'
 DURATION_SECONDS = int(os.environ.get('COREMAIL_STABILITY_SECONDS', '600'))
 INTERVAL_SECONDS = 30
@@ -24,7 +24,7 @@ GROWTH_TOLERANCE = 0.15
 
 def sample_tree():
     command = ['powershell', '-NoProfile', '-Command',
-               "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*Coremail*' -or $_.Name -like '*QtWebEngine*' } | "
+               "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*Hongyan*' -or $_.Name -like '*QtWebEngine*' } | "
                "Select-Object ProcessId,Name,WorkingSetSize,PrivatePageCount | ConvertTo-Json -Compress"]
     output = subprocess.run(command, capture_output=True, text=True).stdout.strip()
     if not output:

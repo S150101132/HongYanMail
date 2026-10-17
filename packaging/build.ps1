@@ -2,9 +2,23 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location -LiteralPath $taskRoot
 $python = Join-Path $taskRoot '.venv\Scripts\python.exe'
+& $python -m tools.build_brand_icon
+if ($LASTEXITCODE -ne 0) { throw 'Hongyan icon generation failed.' }
 
-& $python -m PyInstaller --noconfirm packaging/desktop.spec
-if ($LASTEXITCODE -ne 0) { throw 'Desktop packaging failed.' }
+# Native tools installed by the host can prepend an incompatible icuuc.dll to
+# PATH. Qt expects the Windows ICU ABI; do not collect a Poppler/LibreOffice ICU.
+# Restore the caller's environment after the build, and invalidate old analysis
+# caches that may already contain the wrong native-library source path.
+$taskOriginalPath = $env:PATH
+try {
+    $env:PATH = (Join-Path $taskRoot '.venv\Scripts') + ';' + (Join-Path $env:WINDIR 'System32') + ';' + $env:WINDIR
+    & $python -m PyInstaller --clean --noconfirm packaging/desktop.spec
+    $taskBuildExit = $LASTEXITCODE
+}
+finally {
+    $env:PATH = $taskOriginalPath
+}
+if ($taskBuildExit -ne 0) { throw 'Desktop packaging failed.' }
 
 # A trimmed bundle can start and still fail to load Qt WebEngine, so verify the
 # reader and the privacy boundary before calling the build good.

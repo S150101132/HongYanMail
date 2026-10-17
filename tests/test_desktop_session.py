@@ -6,6 +6,36 @@ from coremail_desktop.session.controller import SessionController
 from coremail_desktop.errors import AppError
 
 class SessionTests(unittest.TestCase):
+    def test_failed_service_initialization_can_retry_without_partial_adapter(self):
+        from coremail_desktop.session.worker import SessionWorker
+        adapters=[]
+        class Adapter:
+            closed=False
+            def close(self): self.closed=True
+        def factory():
+            adapter=Adapter(); adapters.append(adapter); return adapter
+        def services(adapter):
+            if len(adapters)==1: raise OSError('private local path')
+            return {'ready':lambda:True}
+        worker=SessionWorker(factory,services)
+        with self.assertRaises(OSError): worker._initialize()
+        self.assertIsNone(worker.adapter)
+        self.assertTrue(adapters[0].closed)
+        worker._initialize()
+        self.assertTrue(worker.services['ready']())
+
+    def test_internal_failure_diagnostics_do_not_contain_exception_values(self):
+        from coremail_desktop.session.worker import SessionWorker
+        class Adapter:
+            def login(self): raise ValueError('secret-password-and-cookie')
+            def close(self): pass
+        worker=SessionWorker(Adapter)
+        errors=[]
+        worker.failed.connect(lambda task,generation,error:errors.append(error))
+        worker.execute('task','login',{},0)
+        self.assertEqual(errors[0].code,'INTERNAL_ERROR')
+        self.assertEqual(errors[0].category,'login:ValueError')
+
     def test_crypto_error_code_is_preserved_without_exception_text(self):
         from coremail_desktop.crypto.models import CryptoError
         app = QCoreApplication.instance() or QCoreApplication([])

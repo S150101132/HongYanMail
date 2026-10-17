@@ -3,8 +3,10 @@ from email import policy
 from email.parser import BytesParser
 import json
 import ssl
+import uuid
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
+from urllib.parse import urljoin, urlencode
 from probe.coremail_transport import CoremailSession, CoremailError, _origin, decode_extended_json
 from coremail_desktop.models import Folder, MessageSummary
 from coremail_desktop.errors import AppError
@@ -12,6 +14,7 @@ from coremail_desktop.compose.recipients import normalize_recipients
 
 class DesktopSession(CoremailSession):
     """Retain the verified login/redirect parser, classify production failures."""
+    ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare'}
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -39,6 +42,8 @@ class DesktopSession(CoremailSession):
         if func not in self.ALLOWED: raise AppError('RPC_NOT_ALLOWED')
         request = Request(self._rpc_url(func),data=json.dumps(payload,ensure_ascii=False).encode('utf-8'),headers={'Accept':'text/x-json','Content-Type':'text/x-json; tz="Asia/Riyadh"'})
         raw,_ = self._fetch(request)
+        return self._decode_response(raw)
+    def _decode_response(self,raw):
         try: result = decode_extended_json(raw.decode('utf-8-sig'))
         except (UnicodeError,CoremailError): raise AppError('INVALID_RESPONSE') from None
         if not isinstance(result,dict): raise AppError('INVALID_RESPONSE')
@@ -47,20 +52,59 @@ class DesktopSession(CoremailSession):
         if code in ('FA_NEED_SECOND_AUTH','FA_NEED_VERIFY_CODE','FA_NEED_BIND_DEVICE'): raise AppError('AUTH_CHALLENGE')
         if code != 'S_OK': raise AppError('RPC_REJECTED')
         return result
+    def prepare_reply(self,source_id,reply_all=False):
+        if not self.sid: raise AppError('NOT_AUTHENTICATED')
+        url=urljoin(self.base_url,'XT/jsp/compose.jsp')+'?'+urlencode({'sid':self.sid})
+        data=urlencode({'ctype':'replyall' if reply_all else 'reply','mid':source_id,'isHtml':'false'}).encode('utf-8')
+        raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
+        value=self._decode_response(raw).get('var')
+        if not isinstance(value,dict) or not isinstance(value.get('id'),str) or not value['id']: raise AppError('INVALID_RESPONSE')
+        return value
+    def account_identities(self):
+        if not self.sid: raise AppError('NOT_AUTHENTICATED')
+        url=urljoin(self.base_url,'XT/jsp/mail.jsp')+'?'+urlencode({'func':'getAllAccounts','sid':self.sid})
+        raw,_=self._fetch(Request(url,data=b'{}',headers={'Content-Type':'text/x-json','Accept':'text/x-json'}))
+        value=self._decode_response(raw).get('var')
+        if not isinstance(value,list) or any(not isinstance(item,dict) or not isinstance(item.get('addr'),str) for item in value): raise AppError('INVALID_RESPONSE')
+        return set(normalize_recipients(tuple(item['addr'] for item in value)))
+    def search_messages(self,pattern,offset,limit):
+        if not self.sid: raise AppError('NOT_AUTHENTICATED')
+        url=urljoin(self.base_url,'XT/jsp/mail.jsp')+'?'+urlencode({'func':'searchMessages','sid':self.sid})
+        data=urlencode({'pattern':pattern,'start':offset,'limit':limit,'summaryWindowSize':0}).encode('utf-8')
+        raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
+        return self._decode_response(raw)
+    def upload_attachment(self,compose_id,attachment):
+        if not self.sid: raise AppError('NOT_AUTHENTICATED')
+        from coremail_desktop.compose.attachments import validate_attachments
+        validate_attachments((attachment,))
+        size=len(attachment.payload)
+        value=self.call('upload:prepare',{'composeId':compose_id,'attachmentId':-1,'fileName':attachment.name,'displayName':attachment.name,'contentType':attachment.media_type,'size':size}).get('var')
+        if not isinstance(value,dict) or type(value.get('attachmentId')) is not int or value['attachmentId']<0: raise AppError('ATTACHMENT_UPLOAD_FAILED')
+        attachment_id=value['attachmentId']; chunk_size=2*1024*1024
+        for offset in range(0,max(1,size),chunk_size):
+            chunk=attachment.payload[offset:offset+chunk_size]; boundary='Hongyan'+uuid.uuid4().hex
+            data=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{attachment.name}"\r\nContent-Type: {attachment.media_type}\r\n\r\n'.encode('utf-8')+chunk+f'\r\n--{boundary}--\r\n'.encode('ascii'))
+            url=urljoin(self.base_url,'XT/jsp/upload.jsp')+'?'+urlencode({'func':'directData','sid':self.sid,'composeId':compose_id,'attachmentId':attachment_id,'offset':offset})
+            raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'multipart/form-data; boundary='+boundary,'Accept':'text/x-json'}))
+            uploaded=self._decode_response(raw).get('var')
+            if not isinstance(uploaded,dict) or uploaded.get('attachmentId')!=attachment_id or uploaded.get('size')!=size or uploaded.get('actualSize')!=offset+len(chunk): raise AppError('ATTACHMENT_UPLOAD_FAILED')
+        return {'id':attachment_id,'type':'upload','name':attachment.name,'size':size}
 
 class CoremailAdapter:
-    supports_reply_headers = False
+    supports_reply_headers = True
     supports_encrypted_submission = False
     # Folder roles: the deployment's mbox:getAllFolders returns only
     # {id, name, flags{system:bool}, keepPeriod} for every read-only parameter
     # variant, so no role is exposed and none is inferred from names. Folder id 1
     # is the inbox, which is independently confirmed by listing messages in it.
     INBOX_FOLDER_ID = '1'
+    TRASH_FOLDER_ID = '4'  # Confirmed by deployment folder metadata and reversible self-test.
 
     def __init__(self, session_factory=DesktopSession):
         self._session_factory = session_factory
         self._session = None
         self._identities = set()
+        self._compose_attachments = {}
         self.last_folder_total = None
         self.last_folder_id = None
     def login(self, account, password):
@@ -93,7 +137,7 @@ class CoremailAdapter:
             if role not in ('inbox','sent','drafts','trash','spam'):
                 # The server does not expose a role; only the inbox id is verified,
                 # so everything else stays unclassified rather than guessed.
-                role = 'inbox' if str(item['id']) == self.INBOX_FOLDER_ID else None
+                role = 'inbox' if str(item['id']) == self.INBOX_FOLDER_ID else ('trash' if str(item['id']) == self.TRASH_FOLDER_ID and item.get('flags',{}).get('system') is True else None)
             counts = item.get('stats') if isinstance(item.get('stats'), dict) else {}
             result.append(Folder(str(item['id']),str(item.get('name','')),role, counts))
         return result
@@ -129,21 +173,76 @@ class CoremailAdapter:
         message = BytesParser(policy=policy.default).parsebytes(raw)
         if not message.get('From') or not any(message.get(k) for k in ('To','Subject','Message-ID','Date')): raise AppError('MESSAGE_UNAVAILABLE')
         return raw
+    def search_messages(self,pattern,offset,limit=50):
+        if not isinstance(pattern,str) or not pattern.strip() or len(pattern)>1000: raise AppError('INVALID_SEARCH')
+        if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=100: raise AppError('INVALID_PAGE')
+        if self._session is None: raise AppError('NOT_AUTHENTICATED')
+        response=self._session.search_messages(pattern.strip(),offset,limit)
+        rows=response.get('var'); total=response.get('total')
+        if not isinstance(rows,list) or type(total) is not int or total<0: raise AppError('INVALID_RESPONSE')
+        messages=[]
+        for item in rows:
+            if not isinstance(item,dict) or not isinstance(item.get('id'),str) or not item['id'] or not isinstance(item.get('fid'),(int,str)) or not isinstance(item.get('flags',{}),dict): raise AppError('INVALID_RESPONSE')
+            sender=item.get('from','')
+            if isinstance(sender,list): sender=', '.join(str(x) for x in sender)
+            messages.append(MessageSummary(item['id'],str(item['fid']),str(item.get('subject','')),str(sender),str(item.get('date',item.get('receivedDate',''))),item.get('flags',{})))
+        return {'messages':messages,'total':total}
+    def move_message(self,message_id,folder_id):
+        if not isinstance(message_id,str) or not message_id or not isinstance(folder_id,str) or not folder_id: raise AppError('INVALID_MAIL_ACTION')
+        if folder_id not in {folder.remote_id for folder in self.list_folders()}: raise AppError('INVALID_MAIL_ACTION')
+        response=self._call('mbox:updateMessageInfos',{'ids':[message_id],'attrs':{'fid':int(folder_id) if folder_id.isdigit() else folder_id},'returnOriginalMsgInfos':True})
+        affected=response.get('originalMsgInfos')
+        if not isinstance(affected,list) or not any(isinstance(item,dict) and item.get('id')==message_id for item in affected): raise AppError('MAIL_UPDATE_UNCONFIRMED')
+        return {'message_id':message_id,'folder_id':folder_id}
     def get_account_identities(self):
-        # Identity attrs schema is not yet verified; never invent aliases from uid.
+        if self._session is None: raise AppError('NOT_AUTHENTICATED')
+        getter=getattr(self._session,'account_identities',None)
+        if getter: self._identities=set(getter())
         return set(self._identities)
+    def set_message_flags(self,message_id,flags):
+        if not isinstance(message_id,str) or not message_id or not isinstance(flags,dict) or not flags or set(flags)-{'read','flagged'} or any(type(v) is not bool for v in flags.values()):
+            raise AppError('INVALID_MAIL_ACTION')
+        response=self._call('mbox:updateMessageInfos',{'ids':[message_id],'attrs':{'flags':dict(flags)},'returnOriginalMsgInfos':True})
+        affected=response.get('originalMsgInfos')
+        if not isinstance(affected,list) or not any(isinstance(item,dict) and item.get('id')==message_id for item in affected): raise AppError('MAIL_UPDATE_UNCONFIRMED')
+        return {'message_id':message_id,'flags':dict(flags)}
     def _attrs(self,draft):
-        if draft.reference_headers or draft.mode in ('reply','reply_all'): raise AppError('REPLY_CONTRACT_UNVERIFIED')
+        from coremail_desktop.compose.attachments import validate_attachments
+        validate_attachments(draft.attachments)
+        if draft.mode in ('reply','reply_all'):
+            if not isinstance(draft.reply_source_id,str) or not draft.reply_source_id: raise AppError('REPLY_SOURCE_REQUIRED')
+        elif draft.reference_headers: raise AppError('REPLY_SOURCE_REQUIRED')
         if draft.encryption_required: raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
         if '\r' in draft.subject or '\n' in draft.subject: raise AppError('INVALID_SUBJECT')
         return {'account':normalize_recipients((draft.from_identity,))[0], 'to':list(normalize_recipients(draft.to)), 'cc':list(normalize_recipients(draft.cc)), 'bcc':list(normalize_recipients(draft.bcc)), 'subject':draft.subject,'content':draft.body,'isHtml':False,'saveSentCopy':True,'attachments':[]}
     def create_compose(self, draft):
-        value = self._call('%mbox/compose',{'action':'continue','returnInfo':True,'attrs':self._attrs(draft)}).get('var')
-        value = value.get('id') if isinstance(value,dict) else value
-        if not isinstance(value,str) or not value: raise AppError('INVALID_RESPONSE')
-        return value
+        self._attrs(draft)  # Validate before creating a server-side session.
+        if draft.mode in ('reply','reply_all'):
+            # Restoring a draft under another session must not bind its reply to
+            # an unrelated remote message. The parent Message-ID is the contract.
+            from email.parser import BytesHeaderParser
+            original=BytesHeaderParser(policy=policy.default).parsebytes(self.fetch_mime(draft.reply_source_id))
+            expected=' '.join(str(item) for item in original.get_all('Message-ID',[]))
+            if not expected or expected!=draft.reference_headers.get('In-Reply-To',''): raise AppError('REPLY_SOURCE_MISMATCH')
+            value=self._session.prepare_reply(draft.reply_source_id,draft.mode=='reply_all')
+            if not isinstance(value,dict) or not isinstance(value.get('id'),str) or not value['id']: raise AppError('INVALID_RESPONSE')
+            compose_id=value['id']
+        else:
+            value = self._call('%mbox/compose',{'action':'continue','returnInfo':True,'attrs':self._attrs(draft)}).get('var')
+            compose_id = value.get('id') if isinstance(value,dict) else value
+            if not isinstance(compose_id,str) or not compose_id: raise AppError('INVALID_RESPONSE')
+        if draft.attachments:
+            attachments=[self._session.upload_attachment(compose_id,attachment) for attachment in draft.attachments]
+            self._compose_attachments[compose_id]=(draft,attachments)
+        return compose_id
     def deliver(self, compose_id, draft):
-        return self._call('%mbox/compose', {'action':'deliver','id':compose_id,'returnInfo':True,'autosaveHitCounter':True,'attrs':self._attrs(draft)})
+        attrs=self._attrs(draft)
+        if draft.attachments:
+            prepared=self._compose_attachments.get(compose_id)
+            if prepared is None or prepared[0]!=draft: raise AppError('ATTACHMENT_UPLOAD_FAILED')
+            attrs['attachments']=prepared[1]
+        try: return self._call('%mbox/compose', {'action':'deliver','id':compose_id,'returnInfo':True,'autosaveHitCounter':True,'attrs':attrs})
+        finally: self._compose_attachments.pop(compose_id,None)
     def submit_encrypted(self,payload,envelope_recipients):
         raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
     def find_sent_candidates(self,job,limit=50):
@@ -155,3 +254,4 @@ class CoremailAdapter:
         if self._session is not None: self._session.close()
         self._session = None
         self._identities.clear()
+        self._compose_attachments.clear()

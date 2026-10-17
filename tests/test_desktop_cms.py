@@ -111,6 +111,16 @@ class CmsDecryptionTests(unittest.TestCase):
             cms.decrypt_message(der, self.other_key)
         self.assertEqual(raised.exception.code, 'DECRYPT_FAILED')
 
+    def test_short_wrong_key_unwrap_is_reported_as_decryption_failure(self):
+        # Providers may use implicit rejection and return synthetic short key
+        # material instead of throwing for an unrelated RSA recipient.
+        from unittest.mock import patch
+        envelope=self.envelope('des3')
+        der=BytesParser(policy=policy.default).parsebytes(envelope).get_payload(decode=True)
+        with patch.object(cms,'unwrap_content_keys',return_value=[b'bad']):
+            with self.assertRaises(CryptoError) as raised: cms.decrypt_message(der,self.other_key)
+        self.assertEqual(raised.exception.code,'DECRYPT_FAILED')
+
     def test_multi_recipient_message_decrypts_for_each_holder(self):
         envelope = self.envelope('aes256', extra=self.other_pem)
         der = BytesParser(policy=policy.default).parsebytes(envelope).get_payload(decode=True)

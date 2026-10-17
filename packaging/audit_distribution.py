@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DIST = ROOT / 'dist' / 'CoremailDesktopPreview'
+DIST = ROOT / 'dist' / 'Hongyan'
 REPORT = ROOT / 'analysis' / 'distribution-audit.json'
 
 FORBIDDEN_SUFFIXES = {'.pfx', '.p12', '.key', '.pem', '.eml', '.msg', '.edbx2', '.cmpack'}

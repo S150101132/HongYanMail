@@ -5,29 +5,27 @@ import sys
 from pathlib import Path
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='Coremail desktop preview')
+    parser=argparse.ArgumentParser(description='鸿雁 · 工作邮箱')
     parser.add_argument('--demo',action='store_true',help='show explicitly synthetic data; no network')
     args=parser.parse_args(argv)
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QSettings
     from .ui.theme import apply_theme
     from .ui.main_window import MainWindow
-    app=QApplication.instance() or QApplication(sys.argv); app.setApplicationName('Coremail Desktop Preview'); app.setOrganizationName('CoremailPreview')
+    app=QApplication.instance() or QApplication(sys.argv); app.setApplicationName('鸿雁'); app.setApplicationDisplayName('鸿雁 · 工作邮箱'); app.setOrganizationName('CoremailPreview')
     apply_theme(app,QSettings('CoremailPreview','Desktop').value('dark',False,type=bool))
     if args.demo:
         from .ui.demo import DemoController
         controller=DemoController()
     else:
         from .session.controller import SessionController
-        from .drafts.store import DraftStore
-        from .outbox.journal import SendJournal
-        from .outbox.service import OutboxService
+        from .storage.services import local_services
         from .mime.parser import parse_mime
         from .crypto.service import CryptoService
         crypto=CryptoService()
         data=Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / 'CoremailDesktopPreview'
         def services(adapter):
-            store=DraftStore(data/'drafts'); journal=SendJournal(data/'outbox'); outbox=OutboxService(adapter,journal)
+            local=local_services(adapter,data)
             def parse_message(raw,message_id):
                 from .crypto.formats import detect_envelope_format
                 # Crypto service refuses unverified formats; normal MIME is independent.
@@ -42,9 +40,7 @@ def main(argv=None):
                         if outer.get_all(name): headers[name]=tuple(str(v) for v in outer.get_all(name))
                     return replace(document,headers=headers,encryption_state='decrypted')
                 return parse_mime(raw=raw,message_id=message_id)
-            def save_draft(draft): store.save(draft); return draft.revision
-            def send(draft): return journal.load(outbox.request_send(draft))
-            return {'save_draft':save_draft,'list_drafts':store.list_ids,'restore_draft':store.load,'request_send':send,'recover_pending':outbox.recover_pending,'pending_for_review':outbox.recover_pending,'reconcile':outbox.reconcile,'parse_message':parse_message,'unlock_certificate':crypto.unlock,'lock_certificate':crypto.lock}
+            return {**local,'parse_message':parse_message,'unlock_certificate':crypto.unlock,'lock_certificate':crypto.lock}
         controller=SessionController(services=services)
     window=MainWindow(controller,demo=args.demo)
     if not args.demo:

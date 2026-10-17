@@ -79,6 +79,7 @@ a.binaries = TOC([entry for entry in a.binaries if _keep(entry)])
 a.datas = TOC([entry for entry in a.datas if '/translations/' not in entry[0].replace('\\', '/')])
 
 pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='CoremailDesktopPreview',
-          debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=False)
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='CoremailDesktopPreview')
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='Hongyan',
+          debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=False,
+          icon=str(root / 'packaging' / 'hongyan.ico'))
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Hongyan')

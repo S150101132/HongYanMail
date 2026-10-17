@@ -13,6 +13,7 @@ import unittest
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QTextBrowser
+import qt_test_support  # Shared QApplication must be released before native teardown.
 
 from coremail_desktop.errors import AppError
 from coremail_desktop.models import DraftDocument, MessageSummary

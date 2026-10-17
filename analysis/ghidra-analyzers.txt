@@ -1,0 +1,433 @@
+INFO  Using log config file: jar:file:/D:/workspace/redocoreemail/.tools/ghidra_12.1.4_PUBLIC/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
+INFO  Using log file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\application.log (LoggingInitialization)  
+INFO  Loading user preferences: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\preferences (Preferences)  
+INFO  Searching for classes... (ClassSearcher)  
+INFO  Class search complete (2156 ms) (ClassSearcher)  
+INFO  Initializing SSL Context (DefaultSSLContextInitializer)  
+INFO  Initializing Random Number Generator... (SecureRandomFactory)  
+INFO  Random Number Generator initialization complete: SHA1PRNG (SecureRandomFactory)  
+INFO  Trust manager disabled, cacerts have not been set (DefaultTrustManagerFactory)  
+INFO  Headless startup complete (5911 ms) (AnalyzeHeadless)  
+INFO  Class searcher loaded 59 extension points (20 false positives) (ClassSearcher)  
+INFO  HEADLESS Script Paths:
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\GnuDemangler\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Processors\DATA\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\PyGhidra\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\Decompiler\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\FileFormats\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Processors\PIC\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\Base\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Processors\JVM\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Debug\Debugger-rmi-trace\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\BSim\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\PDB\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Debug\Debugger\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\MicrosoftCodeAnalyzer\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\VersionTracking\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\WildcardAssembler\ghidra_scripts
+    D:\workspace\redocoreemail\tools\ghidra-scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\SwiftDemangler\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Processors\8051\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\FunctionID\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\SystemEmulation\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\BytePatterns\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\DecompilerDependent\ghidra_scripts
+    D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Processors\Atmel\ghidra_scripts (HeadlessAnalyzer)  
+INFO  HEADLESS: execution starts (HeadlessAnalyzer)  
+INFO  Creating temporary project: D:\workspace\redocoreemail\ghidra-proj\ReaAnalyzers (HeadlessAnalyzer)  
+INFO  Creating project: D:\workspace\redocoreemail\ghidra-proj\ReaAnalyzers (DefaultProject)  
+INFO  REPORT: Processing input files:  (HeadlessAnalyzer)  
+INFO       project: D:\workspace\redocoreemail\ghidra-proj\ReaAnalyzers (HeadlessAnalyzer)  
+INFO  IMPORTING: file:///C:/Program Files/cmclient/CMClient.exe (HeadlessAnalyzer)  
+INFO  Using Loader: Portable Executable (PE) (ProgramLoader)  
+INFO  Using Language/Compiler: x86:LE:64:default:windows (ProgramLoader)  
+INFO  Using Library Search Path: [., C:\Windows\SysWOW64, D:\Program Files\Java\jdk-21.0.9\bin, C:\Windows\Sun\Java\bin, C:\Windows\system32, C:\Windows, C:\Users\wangbiao\AppData\Local\Microsoft\WindowsApps\Microsoft.PowerShell_8wekyb3d8bbwe, C:\Windows\System32\Wbem, C:\Windows\System32\WindowsPowerShell\v1.0\, C:\Windows\System32\OpenSSH\, C:\Program Files\nodejs\, C:\Program Files\Git\cmd, C:\Program Files\GitHub CLI\, C:\Users\wangbiao\AppData\Local\Programs\Python\Python312\Scripts\, C:\Users\wangbiao\AppData\Local\Programs\Python\Python312\, C:\Users\wangbiao\AppData\Local\Programs\Python\Launcher\, C:\Users\wangbiao\.local\bin, C:\Users\wangbiao\bin, D:\Maven\apache-maven-3.9.16\bin, C:\Users\wangbiao\AppData\Local\Microsoft\WindowsApps, C:\Users\wangbiao\AppData\Roaming\npm, C:\Users\wangbiao\AppData\Local\Programs\DockerDesktop\resources\bin, C:\Users\wangbiao\AppData\Local\Microsoft\WinGet\Packages\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe, C:\Users\wangbiao\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc, C:\Users\wangbiao\AppData\Local\Microsoft\WinGet\Packages\jqlang.jq_Microsoft.Winget.Source_8wekyb3d8bbwe, C:\Program Files\LibreOffice\program, C:\Users\wangbiao\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin] (ProgramLoader)  
+INFO  TLS callbacks at 141c2d460 (TLSDirectory)  
+WARN  Invalid or missing function at 180097100 (ExportDataDirectory)  
+INFO  TLS callbacks at 1800c0370 (TLSDirectory)  
+WARN  Invalid or missing function at 18003fe24 (ExportDataDirectory)  
+INFO  TLS callbacks at 1801422e0 (TLSDirectory)  
+WARN  Invalid or missing function at 180157b10 (ExportDataDirectory)  
+INFO  TLS callbacks at 18b1ce118 (TLSDirectory)  
+INFO  TLS callbacks at 1800e2880 (TLSDirectory)  
+INFO  TLS callbacks at 1800ad9c8 (TLSDirectory)  
+WARN  Invalid or missing function at 1800c1388 (ExportDataDirectory)  
+INFO  TLS callbacks at 1805f7e30 (TLSDirectory)  
+WARN  Invalid or missing function at 1806d58d8 (ExportDataDirectory)  
+WARN  Invalid or missing function at 1800c0888 (ExportDataDirectory)  
+INFO  TLS callbacks at 18008a940 (TLSDirectory)  
+INFO  TLS callbacks at 180070288 (TLSDirectory)  
+WARN  Invalid or missing function at 18008a504 (ExportDataDirectory)  
+WARN  Invalid or missing function at 180056554 (ExportDataDirectory)  
+INFO  Additional info:
+Loading file:///C:/Program Files/cmclient/CMClient.exe?MD5=179fb996d1f69fe448c30a4b5d5c4336...
+------------------------------------------------
+
+Searching 26 paths for library ADVAPI32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/advapi32.dll
+Loading file:///C:/Windows/System32/advapi32.dll?MD5=ee2cefb4b9f730b3fa8f85c7567b7ed9...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\advapi32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library BCRYPT.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/bcrypt.dll
+Loading file:///C:/Windows/System32/bcrypt.dll?MD5=e21e916fe537897a35014e4367b8e939...
+[bcrypt.dll]: failed to create WEVTResource at 1800284d0: Failed to resolve data length for WEVTResource
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\bcrypt.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library COMCTL32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/comctl32.dll
+Loading file:///C:/Windows/System32/comctl32.dll?MD5=79b6e5e9770adf52d78a1b2fe61034f5...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\comctl32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library COMDLG32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/comdlg32.dll
+Loading file:///C:/Windows/System32/comdlg32.dll?MD5=1565b2fba76b74a92e912ad9edbd730e...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\comdlg32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library CRASHRPT1403.DLL...
+Loading file:///C:/Program Files/cmclient/CrashRpt1403.dll?MD5=0cf4df3f0e39825b3b676a276be4f01b...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\crashrpt1403.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library CRYPT32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/crypt32.dll
+Loading file:///C:/Windows/System32/crypt32.dll?MD5=3c90f908135db9942789c5a377c429b7...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\crypt32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library GDI32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/gdi32.dll
+Loading file:///C:/Windows/System32/gdi32.dll?MD5=16785efee8300012efe53f530ea399e6...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\gdi32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library IMM32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/imm32.dll
+Loading file:///C:/Windows/System32/imm32.dll?MD5=ccdc8a28360181f260a320b0aba8fae1...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\imm32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library KERNEL32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/kernel32.dll
+Loading file:///C:/Windows/System32/kernel32.dll?MD5=a4ceaf0979e5e714288b431f6f2015d7...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\kernel32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library LIBCEF.DLL...
+Loading file:///C:/Program Files/cmclient/libcef.dll?MD5=cba87876ce1127fb595c99de9fb466b6...
+[libcef.dll]: failed to create WEVTResource at 18ba8bdb0: Failed to resolve data length for WEVTResource
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\libcef.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library MSIMG32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/msimg32.dll
+Loading file:///C:/Windows/System32/msimg32.dll?MD5=50d90d6930b84401479ea4fd98e0fa04...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\msimg32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library MSWSOCK.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/mswsock.dll
+Loading file:///C:/Windows/System32/mswsock.dll?MD5=1b7fb16696b10fad33268c4a98564a7e...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\mswsock.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library OLE32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/ole32.dll
+Loading file:///C:/Windows/System32/ole32.dll?MD5=296a55131653f785cbb4a067f6ec4ad5...
+[ole32.dll]: failed to create WEVTResource at 180181740: Failed to resolve data length for WEVTResource
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\ole32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library OLEACC.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/oleacc.dll
+Loading file:///C:/Windows/System32/oleacc.dll?MD5=d0c58d24544dbfcb7ac2d0721f90e763...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\oleacc.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library OLEAUT32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/oleaut32.dll
+Loading file:///C:/Windows/System32/oleaut32.dll?MD5=ea21b8119d333b40772eba5b54f6cc16...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\oleaut32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library RPCRT4.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/rpcrt4.dll
+Loading file:///C:/Windows/System32/rpcrt4.dll?MD5=cbb32208d0f495c8a75690923b9ce1b8...
+Index 10 out of bounds for length 10
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\rpcrt4.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library SHELL32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/shell32.dll
+Loading file:///C:/Windows/System32/shell32.dll?MD5=bd2c384ec031b7f1cc0279f886cf99c9...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\shell32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library SHLWAPI.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/shlwapi.dll
+Loading file:///C:/Windows/System32/shlwapi.dll?MD5=2dbb730303218bcfd339ba90474ca22b...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\shlwapi.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library USER32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/user32.dll
+Loading file:///C:/Windows/System32/user32.dll?MD5=70dee7319768f1a567c504a825e3a7b3...
+[user32.dll]: failed to create WEVTResource at 1800dfa70: Failed to resolve data length for WEVTResource
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\user32.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library UXTHEME.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/uxtheme.dll
+Loading file:///C:/Windows/System32/uxtheme.dll?MD5=c42be0d02c57e458523af016584f01e7...
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\uxtheme.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library WINMM.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/winmm.dll
+Loading file:///C:/Windows/System32/winmm.dll?MD5=7e9e53ab1cdcabac5d0ddb7af2765c00...
+[winmm.dll]: failed to create WEVTResource at 18002f310: Failed to resolve data length for WEVTResource
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\winmm.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library WINSPOOL.DRV...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/winspool.drv
+Loading file:///C:/Windows/System32/winspool.drv?MD5=76c85bb37947aa06d0ff71a291acec46...
+[winspool.drv]: failed to create WEVTResource at 1800984b8: Failed to resolve data length for WEVTResource
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\winspool.exports
+Library not saved to project.
+------------------------------------------------
+
+Searching 26 paths for library WS2_32.DLL...
+Skipping library which is the wrong architecture: file:///C:/Windows/SysWOW64/ws2_32.dll
+Loading file:///C:/Windows/System32/ws2_32.dll?MD5=a32cf2f0e79082da833845ce0c8a6f1a...
+[ws2_32.dll]: failed to create WEVTResource at 18005f4b8: Failed to resolve data length for WEVTResource
+Created exports file: D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\ws2_32.exports
+Library not saved to project.
+------------------------------------------------
+
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\libcef.exports
+Applying cached symbols from RPCRT4.DLL
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\crashrpt1403.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\crypt32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\imm32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\kernel32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\user32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\gdi32.exports
+Applying cached symbols from WINSPOOL.DRV
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\comdlg32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\advapi32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\shell32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\ole32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\oleaut32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\ws2_32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\winmm.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\comctl32.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\oleacc.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\uxtheme.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\shlwapi.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\mswsock.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\bcrypt.exports
+Applying D:\workspace\redocoreemail\.tools\appdata\ghidra\ghidra_12.1.4_PUBLIC\symbols\win64\msimg32.exports
+Linking the External Programs of 'CMClient.exe' to imported libraries...
+  [LIBCEF.DLL] -> not found in project
+  [RPCRT4.DLL] -> not found in project
+  [CRASHRPT1403.DLL] -> not found in project
+  [CRYPT32.DLL] -> not found in project
+  [IMM32.DLL] -> not found in project
+  [KERNEL32.DLL] -> not found in project
+  [USER32.DLL] -> not found in project
+  [GDI32.DLL] -> not found in project
+  [WINSPOOL.DRV] -> not found in project
+  [COMDLG32.DLL] -> not found in project
+  [ADVAPI32.DLL] -> not found in project
+  [SHELL32.DLL] -> not found in project
+  [OLE32.DLL] -> not found in project
+  [OLEAUT32.DLL] -> not found in project
+  [WS2_32.DLL] -> not found in project
+  [WINMM.DLL] -> not found in project
+  [COMCTL32.DLL] -> not found in project
+  [OLEACC.DLL] -> not found in project
+  [UXTHEME.DLL] -> not found in project
+  [SHLWAPI.DLL] -> not found in project
+  [MSWSOCK.DLL] -> not found in project
+  [BCRYPT.DLL] -> not found in project
+  [MSIMG32.DLL] -> not found in project
+------------------------------------------------
+
+ (ProgramLoader)  
+INFO  IMPORTING: Loaded 0 additional files (HeadlessAnalyzer)  
+INFO  ANALYZING all memory and code: file:///C:/Program Files/cmclient/CMClient.exe (HeadlessAnalyzer)  
+WARN  Ignoring leading '_' chars on no-return name '___raise_securityfailure' specified in file: D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\Base\data\PEFunctionsThatDoNotReturn (NoReturnFunctionAnalyzer)  
+WARN  Ignoring leading '_' chars on no-return name '___report_rangecheckfailure' specified in file: D:\workspace\redocoreemail\.tools\ghidra_12.1.4_PUBLIC\Ghidra\Features\Base\data\PEFunctionsThatDoNotReturn (NoReturnFunctionAnalyzer)  
+INFO  Skipping PDB processing: failed to locate PDB file in configured locations (PdbUniversalAnalyzer)  
+INFO  Use a script to set the PDB file location. I.e.,
+    PdbAnalyzer.setPdbFileOption(currentProgram, new File("/path/to/pdb/file.pdb")); or
+    PdbUniversalAnalyzer.setPdbFileOption(currentProgram, new File("/path/to/pdb/file.pdb"));
+Or set the symbol server search configuration using:    PdbPlugin.saveSymbolServerServiceConfig(...);
+ This must be done using a pre-script (prior to analysis). (PdbUniversalAnalyzer)  
+INFO  Packed database cache: D:\workspace\redocoreemail\.tools\localappdata\ghidra\packed-db-cache (PackedDatabaseCache)  
+INFO  -----------------------------------------------------
+    Non-Returning Functions - Known            0.332 secs
+    PDB Universal                              0.030 secs
+    Windows x86 PE Exception Handling          2.632 secs
+-----------------------------------------------------
+     Total Time   2 secs
+-----------------------------------------------------
+ (AutoAnalysisManager)  
+ERROR REPORT: Analysis timed out at 1 seconds. Processing not completed for file: file:///C:/Program Files/cmclient/CMClient.exe (HeadlessAnalyzer)  
+INFO  REPORT: Execute script: ListAnalyzers.java  (HeadlessAnalyzer)  
+INFO  SCRIPT: D:\workspace\redocoreemail\tools\ghidra-scripts\ListAnalyzers.java (HeadlessAnalyzer)  
+INFO  ListAnalyzers.java> REA-ANALYZERS-BEGIN count=122 (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Scalar Operand References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	false	Variadic Function Signature Override (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Windows x86 PE RTTI Analyzer (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	x86 Constant Reference Analyzer (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Data Reference.Relocation Table Guide (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	ASCII Strings (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Shared Return Calls.Allow Conditional Jumps (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	PDB Universal (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Create Address Tables.Allow Offcut References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Reference.Unicode String References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	60	Decompiler Parameter ID.Analysis Decompiler Timeout (sec) (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Function ID.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Create Address Tables (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	PDB Universal.Import Source Line Info (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Disassemble Entry Points.Respect Execute Flag (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	false	Aggressive Instruction Finder (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	2	Reference.Address Table Minimum Size (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	LEN_5	ASCII Strings.Minimum String Length (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	PDB Universal.Search untrusted symbol servers (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	5	Reference.Minimum String Length (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Function ID (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Non-Returning Functions - Known.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Reference.Ascii String References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Reference.Relocation Table Guide (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Variadic Function Signature Override.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Function Start Search (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	2	Stack.Max Threads (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	4	x86 Constant Reference Analyzer.Min absolute reference (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	1	Data Reference.Address Table Alignment (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	false	Decompiler Parameter ID (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Non-Returning Functions - Discovered.Repair Flow Damage (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Apply Data Archives.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Create Address Tables.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	false	WindowsPE x86 Propagate External Parameters (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Reference.References to Pointers (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Windows x86 Thread Environment Block (TEB) Analyzer (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	[Auto-Detect]	Apply Data Archives.Archive Chooser (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Non-Returning Functions - Discovered (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only		Apply Data Archives.User Project Archive Path (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Create Address Tables.Relocation Table Guide (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	1	Reference.Address Table Alignment (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Data Reference.Align End of Strings (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Function ID.Always Apply FID Labels (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Apply Data Archives (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	ASCII Strings.Create Strings Containing Existing Strings (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Data Reference.Create Address Tables (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	ASCII Strings.Force Model Reload (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	30.0	Function ID.Multiple Match Threshold (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	x86 Constant Reference Analyzer.Function parameter/return Pointer analysis (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Data Reference.Ascii String References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Data Reference.Respect Execute Flag (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	PDB MSDIA.Search untrusted symbol servers (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Data Reference.Subroutine References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	14.6	Function ID.Instruction Count Threshold (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Shared Return Calls (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Data Reference (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	false	Condense Filler Bytes (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Reference (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Subroutine References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	x86 Constant Reference Analyzer.Create Data from pointer (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	ASCII Strings.Create Strings Containing References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Disassemble Entry Points (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Aggressive Instruction Finder.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Windows x86 PE Exception Handling (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Shared Return Calls.Assume Contiguous Functions Only (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Data Reference.Switch Table References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	Auto	Condense Filler Bytes.Filler Value (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Stack.Create Local Variables (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	60	Call Convention ID.Analysis Decompiler Timeout (sec) (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	2	Data Reference.Address Table Minimum Size (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	4	Create Address Tables.Table Alignment (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Data Reference.Unicode String References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Embedded Media.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only		Windows x86 Thread Environment Block (TEB) Analyzer.Starting Address of the TEB (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	__fastcall	Decompiler Parameter ID.Prototype Evaluation (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	ALIGN_1	ASCII Strings.String Start Alignment (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	ANALYSIS	Decompiler Parameter ID.Analysis Clear Level (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Scalar Operand References.Relocation Table Guide (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	60	Decompiler Switch Analysis.Analysis Decompiler Timeout (sec) (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	ASCII Strings.Require Null Termination for String (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Decompiler Parameter ID.Commit Data Types (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	x86 Constant Reference Analyzer.Trust values read from writable memory (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	2	Create Address Tables.Minimum Table Size (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Data Reference.References to Pointers (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	Windows 7	Windows x86 Thread Environment Block (TEB) Analyzer.Windows OS Version (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Non-Returning Functions - Discovered.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	1	Create Address Tables.Pointer Alignment (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	External Entry References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Reference.Respect Execute Flag (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	x86 Constant Reference Analyzer.Require pointer param data type (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	4	ASCII Strings.String end alignment (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	false	PDB MSDIA (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	x86 Constant Reference Analyzer.Stored Value Pointer analysis (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Non-Returning Functions - Known (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Stack (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Reference.Align End of Strings (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	3	Non-Returning Functions - Discovered.Function Non-return Threshold (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Reference.Subroutine References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Subroutine References.Create Thunks Early (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Call Convention ID (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	WindowsResourceReference.Create Analysis Bookmarks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	ASCII Strings.Search Only in Accessible Memory Blocks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	true	Reference.Create Address Tables (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	StringModel.sng	ASCII Strings.Model File (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	256	x86 Constant Reference Analyzer.Speculative reference max (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Embedded Media (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Reference.Switch Table References (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	5	Data Reference.Minimum String Length (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	2	x86 Constant Reference Analyzer.Max Threads (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	WindowsResourceReference (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	4132	Create Address Tables.Minimum Pointer Address (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Decompiler Switch Analysis (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Decompiler Parameter ID.Commit Void Return Values (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Function Start Search.Search Data Blocks (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	1024	x86 Constant Reference Analyzer.Speculative reference min (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Call-Fixup Installer (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Create Address Tables.Auto Label Table (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	16777215	Create Address Tables.Maxmimum Pointer Distance (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Stack.Create Param Variables (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	registered	true	Demangler Microsoft (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	false	Function Start Search.Bookmark Functions (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZER	options-only	1	Condense Filler Bytes.Minimum number of sequential bytes (GhidraScript)  
+INFO  ListAnalyzers.java> REA-ANALYZERS-END (GhidraScript)  
+INFO  ANALYZING changes made by post scripts: file:///C:/Program Files/cmclient/CMClient.exe (HeadlessAnalyzer)  
+INFO  REPORT: Post-analysis succeeded for file: file:///C:/Program Files/cmclient/CMClient.exe (HeadlessAnalyzer)  
+INFO  /CMClient.exe: file created (wangbiao) (LocalFileSystem)  
+INFO  REPORT: Save succeeded for: /CMClient.exe (ReaAnalyzers:/CMClient.exe) (HeadlessAnalyzer)  
+INFO  REPORT: Import succeeded (HeadlessAnalyzer)  

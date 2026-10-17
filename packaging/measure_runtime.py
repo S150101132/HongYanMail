@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXE_NAME = 'CoremailDesktopPreview.exe'
+EXE_NAME = 'Hongyan.exe'
 REPORT = ROOT / 'analysis' / 'runtime-baseline.json'
 SAMPLE_SECONDS = 8
 STEP_SECONDS = 2
@@ -20,7 +20,7 @@ STEP_SECONDS = 2
 
 def process_table():
     command = ['powershell', '-NoProfile', '-Command',
-               "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*Coremail*' -or $_.Name -like '*QtWebEngine*' -or $_.Name -like '*Qt*Process*' } | "
+               "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*Hongyan*' -or $_.Name -like '*QtWebEngine*' -or $_.Name -like '*Qt*Process*' } | "
                "Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize,PrivatePageCount | ConvertTo-Json -Compress"]
     output = subprocess.run(command, capture_output=True, text=True).stdout.strip()
     if not output:
@@ -53,7 +53,7 @@ def wait_until_memory_settles(process, timeout_seconds=60):
 
 
 def main():
-    executable = ROOT / 'dist' / 'CoremailDesktopPreview' / EXE_NAME
+    executable = ROOT / 'dist' / 'Hongyan' / EXE_NAME
     if not executable.is_file():
         print(json.dumps({'status': 'missing', 'executable': str(executable)}, ensure_ascii=False))
         return 1

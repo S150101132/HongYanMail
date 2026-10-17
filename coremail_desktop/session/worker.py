@@ -8,7 +8,7 @@ class SessionWorker(QObject):
     completed = Signal(str,int,object)
     failed = Signal(str,int,object)
     auth_required = Signal()
-    ADAPTER_OPERATIONS = frozenset({'login','list_folders','list_messages','fetch_mime','get_account_identities'})
+    ADAPTER_OPERATIONS = frozenset({'login','list_folders','list_messages','search_messages','move_message','fetch_mime','get_account_identities','set_message_flags'})
     def __init__(self,adapter_factory,services=None):
         super().__init__()
         self.factory, self.service_factory = adapter_factory,services
@@ -17,12 +17,19 @@ class SessionWorker(QObject):
         self._auth_prompted = False
     def _initialize(self):
         if self.adapter is None:
-            self.adapter = self.factory()
-            self.services = self.service_factory(self.adapter) if callable(self.service_factory) else (self.service_factory or {})
+            adapter = self.factory()
+            try:
+                services = self.service_factory(adapter) if callable(self.service_factory) else (self.service_factory or {})
+            except Exception:
+                adapter.close()
+                raise
+            self.adapter, self.services = adapter, services
     @Slot(str,str,object,int)
     def execute(self,task_id,operation,params,generation):
+        stage = 'initialize'
         try:
             self._initialize()
+            stage = 'login' if operation == 'login' else 'operation'
             if operation in self.ADAPTER_OPERATIONS:
                 result = getattr(self.adapter,operation)(**params)
             elif operation in self.services:
@@ -32,7 +39,12 @@ class SessionWorker(QObject):
         except Exception as exception:
             code = exception.code if isinstance(exception,AppError) else 'INTERNAL_ERROR'
             if isinstance(exception,CryptoError) and exception.code in CRYPTO_ERROR_CODES: code = exception.code
-            error = AppError(code,task_id,getattr(exception,'category','') if isinstance(exception,AppError) else '')
+            category = getattr(exception,'category','') if isinstance(exception,AppError) else ''
+            if code == 'INTERNAL_ERROR':
+                # Only fixed type labels cross the worker boundary, never exception text.
+                kind = next((name for cls,name in ((PermissionError,'PermissionError'),(OSError,'OSError'),(TypeError,'TypeError'),(ValueError,'ValueError'),(AttributeError,'AttributeError'),(ImportError,'ImportError'),(RuntimeError,'RuntimeError')) if isinstance(exception,cls)), 'Exception')
+                category = stage + ':' + kind
+            error = AppError(code,task_id,category)
             if code in ('NOT_AUTHENTICATED','SESSION_EXPIRED') and not self._auth_prompted:
                 self._auth_prompted = True
                 self.auth_required.emit()

@@ -19,7 +19,7 @@ class DemoController(QObject):
             elif operation=='parse_message':
                 from ..mime.parser import parse_mime
                 result=parse_mime(raw=params['raw'],message_id=params['message_id'])
-            elif operation in ('save_draft','request_send'):
+            elif operation in ('save_draft','request_send','set_message_flags','move_message','search_messages'):
                 from ..errors import AppError
                 self.failed.emit(task,view_generation,AppError('DEMO_WRITE_DISABLED')); return
             self.completed.emit(task,view_generation,result)

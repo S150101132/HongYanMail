@@ -14,6 +14,7 @@ __pycache__/
 *.msg
 build/
 dist/
+dist-login-fix/
 *.egg-info/
 runtime/
 analysis/*.json
