@@ -40,6 +40,20 @@ class EncryptedSendTest(unittest.TestCase):
         draft.update(subject='季度预算', html='<p>内部资料 <b>请勿外传</b></p>', **values)
         return draft
 
+    def test_signature_schedule_and_receipt_keep_their_own_fields(self):
+        # v0.2 merged signing (signature_required) with scheduling/receipts (schedule_at,
+        # request_receipt); all three must survive the draft round trip in their own fields.
+        at = 1893456000000  # 2030-01-01T00:00:00Z
+        draft = self.backend._draft(self.draft(to=['zhangxm@example.invalid'], encrypt=True, sign=True,
+                                               scheduleAt=at, receipt=True))
+        self.assertTrue(draft.signature_required)
+        self.assertEqual(draft.schedule_at, '2030-01-01T00:00:00Z')
+        self.assertTrue(draft.request_receipt)
+        self.assertTrue(draft.is_html)
+        saved = self.backend.save_draft(self.draft(to=['zhangxm@example.invalid'], sign=True, scheduleAt=at, receipt=True))
+        restored = self.backend.restore_draft(saved['localId'])
+        self.assertEqual((restored['sign'], restored['scheduleAt'], restored['receipt']), (True, at, True))
+
     def test_internal_domains_come_from_the_account(self):
         self.assertEqual(self.backend.profile()['internalDomains'], ['example.invalid'])
 
