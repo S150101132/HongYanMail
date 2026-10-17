@@ -34,3 +34,4 @@
 - **Real received colleague mail (read-only):** the signature is valid (SHA-256), the signer matches From, and the certificate was within its validity dates.
 - **Send-to-self, signed and encrypted:** Accepted. The inbox copy and the sent copy both decrypt. Both signatures are valid, the signer matches From, and the signer certificate equals the directory certificate.
 - **Send-to-self, signed only:** Accepted. The inbox copy and the sent copy are both valid, and `smime.p7s` is not shown as an attachment.
+- Official CMClient (checked by the user): it opens the signed and encrypted 鸿雁 签名验证 message as signed and valid.
