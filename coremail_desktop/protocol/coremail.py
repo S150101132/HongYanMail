@@ -1,7 +1,9 @@
 """Typed production boundary around the independently verified HTTPS transport."""
+from datetime import datetime, timedelta, timezone
 from email import policy
 from email.parser import BytesParser
 import json
+import re
 import ssl
 import uuid
 from urllib.error import HTTPError, URLError
@@ -14,7 +16,8 @@ from coremail_desktop.compose.recipients import normalize_recipients
 
 class DesktopSession(CoremailSession):
     """Retain the verified login/redirect parser, classify production failures."""
-    ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare','oab:autoMatch','pab:searchContacts','cert:listPublicKey','cert:get'}
+    ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare','oab:autoMatch','pab:searchContacts','cert:listPublicKey','cert:get',
+                                       'user:listDeliveryHistory','mbox:recallMessage2','mbox:cancelDeliver','mbox:getMessageInfos'}
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -43,11 +46,19 @@ class DesktopSession(CoremailSession):
         request = Request(self._rpc_url(func),data=json.dumps(payload,ensure_ascii=False).encode('utf-8'),headers={'Accept':'text/x-json','Content-Type':'text/x-json; tz="Asia/Riyadh"'})
         raw,_ = self._fetch(request)
         return self._decode_response(raw)
+    _last_code=None
+    def call_code(self,func,payload):
+        """Like call, but a refusal comes back as its fixed FA_* code instead of RPC_REJECTED."""
+        try: return self.call(func,payload)
+        except AppError as error:
+            if error.code!='RPC_REJECTED' or not self._last_code: raise
+            return {'code':self._last_code}
     def _decode_response(self,raw):
         try: result = decode_extended_json(raw.decode('utf-8-sig'))
         except (UnicodeError,CoremailError): raise AppError('INVALID_RESPONSE') from None
         if not isinstance(result,dict): raise AppError('INVALID_RESPONSE')
         code = result.get('code')
+        self._last_code = code if isinstance(code,str) and re.fullmatch(r'F[AS]_[A-Z0-9_]{1,60}',code) else None
         if code == 'FA_UNAUTHORIZED': raise AppError('SESSION_EXPIRED')
         if code in ('FA_NEED_SECOND_AUTH','FA_NEED_VERIFY_CODE','FA_NEED_BIND_DEVICE'): raise AppError('AUTH_CHALLENGE')
         if code != 'S_OK': raise AppError('RPC_REJECTED')
@@ -82,6 +93,18 @@ class DesktopSession(CoremailSession):
         if not self.sid: raise AppError('NOT_AUTHENTICATED')
         url=urljoin(self.base_url,'XT/jsp/compose.jsp')+'?'+urlencode({'sid':self.sid})
         data=urlencode({'ctype':'replyall' if reply_all else 'reply','mid':source_id,'isHtml':'true' if is_html else 'false'}).encode('utf-8')
+        raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
+        value=self._decode_response(raw).get('var')
+        if not isinstance(value,dict) or not isinstance(value.get('id'),str) or not value['id']: raise AppError('INVALID_RESPONSE')
+        return value
+    def open_draft(self,message_id):
+        """Reopen a server draft as a compose session (webmail's ctype=draft).
+
+        Verified 2026-10-17 on a scheduled send-to-self: var carries id, the
+        message attrs and, for a scheduled draft, scheduleDate."""
+        if not self.sid: raise AppError('NOT_AUTHENTICATED')
+        url=urljoin(self.base_url,'XT/jsp/compose.jsp')+'?'+urlencode({'sid':self.sid})
+        data=urlencode({'ctype':'draft','mid':message_id,'stringifyScheduleDate':'true'}).encode('utf-8')
         raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
         value=self._decode_response(raw).get('var')
         if not isinstance(value,dict) or not isinstance(value.get('id'),str) or not value['id']: raise AppError('INVALID_RESPONSE')
@@ -131,11 +154,39 @@ class DesktopSession(CoremailSession):
                                   headers={'Content-Type':'multipart/form-data; boundary='+boundary,'Accept':'text/x-json'}))
         return self._decode_response(raw)
 
+# Dates in responses are written in the zone named by the request's tz header
+# (Asia/Riyadh, UTC+3, no DST): a scheduled draft's sentDate read this way equals
+# the requested moment exactly (verified 2026-10-17).
+RESPONSE_ZONE = timezone(timedelta(hours=3))
+# scheduleDate, however, is read in the account's own time_zone attribute (Asia/Shanghai
+# on the deployment; a UTC+3 string was refused as a past date). Only zones with a
+# fixed offset are listed: without tz data a zone with daylight saving cannot be
+# converted safely, so scheduling is refused there instead of guessed.
+FIXED_ZONES = {'Asia/Shanghai':8,'Asia/Chongqing':8,'Asia/Harbin':8,'Asia/Urumqi':6,'Asia/Hong_Kong':8,'Asia/Macau':8,'Asia/Taipei':8,
+               'Asia/Singapore':8,'Asia/Kuala_Lumpur':8,'Asia/Manila':8,'Asia/Tokyo':9,'Asia/Seoul':9,'Asia/Riyadh':3,'Asia/Dubai':4,
+               'Asia/Karachi':5,'Asia/Kolkata':5.5,'Asia/Calcutta':5.5,'Asia/Dhaka':6,'Asia/Bangkok':7,'Asia/Jakarta':7,'Asia/Ho_Chi_Minh':7,
+               'Europe/Moscow':3,'Africa/Nairobi':3,'UTC':0,'Etc/UTC':0,'GMT':0,'Etc/GMT':0}
+
+def account_zone(name):
+    if isinstance(name,str) and name in FIXED_ZONES: return timezone(timedelta(hours=FIXED_ZONES[name]))
+    match=re.fullmatch(r'(?:GMT|UTC)?([+-])(\d{1,2})(?::?(\d\d))?',name.strip()) if isinstance(name,str) else None
+    if match and int(match.group(2))<=14:
+        hours=int(match.group(2))+int(match.group(3) or 0)/60
+        return timezone(timedelta(hours=hours if match.group(1)=='+' else -hours))
+    raise AppError('SCHEDULE_ZONE_UNSUPPORTED')
+
+def _schedule_at(item,flags):
+    if not flags.get('scheduleDelivery'): return None
+    try: moment=datetime.strptime(str(item.get('sentDate','')),'%Y-%m-%d %H:%M:%S').replace(tzinfo=RESPONSE_ZONE)
+    except ValueError: return None
+    return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
 def _summary(item,folder_id,sender):
     flags=item.get('flags',{}) if isinstance(item.get('flags',{}),dict) else {}
     size=item.get('size') if type(item.get('size')) is int else None
     return MessageSummary(item['id'],folder_id,str(item.get('subject','')),str(sender),str(item.get('date',item.get('receivedDate',''))),flags,
-                          preview=str(item.get('summary','') or '')[:300],recipients=str(item.get('to','') or ''),size=size)
+                          preview=str(item.get('summary','') or '')[:300],recipients=str(item.get('to','') or ''),size=size,
+                          schedule_at=_schedule_at(item,flags))
 
 class CoremailAdapter:
     supports_reply_headers = True
@@ -150,6 +201,11 @@ class CoremailAdapter:
     # Multi-id mbox:updateMessageInfos verified (2026-10-17, read/unread on two inbox
     # messages, restored): each id comes back in originalMsgInfos and is applied.
     batch_updates = True
+    DRAFTS_FOLDER_ID = '2'  # Scheduled mail waits here with flags.scheduleDelivery (verified 2026-10-17).
+    # mbox:composeF refused action=schedule with FA_INVALID_DATE for every date
+    # encoding tried (analysis/send-features-shape3/4-2026-10-17.json), and webmail
+    # never schedules pre-encoded mail: encrypted mail can only be sent now.
+    supports_scheduled_encrypted = False
 
     def __init__(self, session_factory=DesktopSession):
         self._session_factory = session_factory
@@ -158,6 +214,7 @@ class CoremailAdapter:
         self._compose_attachments = {}
         self.last_folder_total = None
         self.last_folder_id = None
+        self._zone = None
     def login(self, account, password):
         self.close()
         self._session = self._session_factory(account.origin)
@@ -283,7 +340,16 @@ class CoremailAdapter:
         # An encrypted draft must never reach the plaintext compose path.
         if (draft.encryption_required or draft.signature_required) and not encrypted: raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
         if '\r' in draft.subject or '\n' in draft.subject: raise AppError('INVALID_SUBJECT')
-        return {'account':normalize_recipients((draft.from_identity,))[0], 'to':list(normalize_recipients(draft.to)), 'cc':list(normalize_recipients(draft.cc)), 'bcc':list(normalize_recipients(draft.bcc)), 'subject':draft.subject,'content':draft.body,'isHtml':bool(getattr(draft,'is_html',False)),'saveSentCopy':True,'attachments':[]}
+        return {'account':normalize_recipients((draft.from_identity,))[0], 'to':list(normalize_recipients(draft.to)), 'cc':list(normalize_recipients(draft.cc)), 'bcc':list(normalize_recipients(draft.bcc)), 'subject':draft.subject,'content':draft.body,'isHtml':bool(getattr(draft,'is_html',False)),'saveSentCopy':True,'attachments':[],
+                # Verified 2026-10-17: given on continue and deliver, the message carries Disposition-Notification-To.
+                **({'requestReadReceipt':True} if getattr(draft,'request_receipt',False) else {})}
+    def _schedule_text(self,draft):
+        """The draft's UTC moment as scheduleDate text in the account's zone."""
+        if self._zone is None:
+            value=self._call('user:getAttrs',{'optionalAttrIds':['time_zone']},True).get('var')
+            self._zone=account_zone(value.get('time_zone') if isinstance(value,dict) else None)
+        moment=datetime.strptime(draft.schedule_at,'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+        return moment.astimezone(self._zone).strftime('%Y-%m-%d %H:%M:%S')
     def create_compose(self, draft):
         self._attrs(draft)  # Validate before creating a server-side session.
         compose_id=self._compose_session(draft)
@@ -315,8 +381,16 @@ class CoremailAdapter:
             prepared=self._compose_attachments.get(compose_id)
             if prepared is None or prepared[0]!=draft: raise AppError('ATTACHMENT_UPLOAD_FAILED')
             attrs['attachments']=prepared[1]
-        try: return self._call('%mbox/compose', {'action':'deliver','id':compose_id,'returnInfo':True,'autosaveHitCounter':True,'attrs':attrs})
+        action='deliver'
+        if getattr(draft,'schedule_at',None):
+            # Verified 2026-10-17: action 'schedule' keeps the message in the drafts
+            # folder (flags.scheduleDelivery) and the server sends it at that time.
+            action,attrs['scheduleDate']='schedule',self._schedule_text(draft)
+        try: response=self._call('%mbox/compose', {'action':action,'id':compose_id,'returnInfo':True,'autosaveHitCounter':True,'attrs':attrs})
         finally: self._compose_attachments.pop(compose_id,None)
+        # A scheduled save is confirmed by the stored copy the server reports back.
+        if action=='schedule' and not isinstance(response.get('scheduledSent'),dict): raise AppError('INVALID_RESPONSE')
+        return response
     def match_contacts(self,keyword,limit=8):
         """Organization directory autocomplete; shape verified read-only 2026-10-17."""
         if not isinstance(keyword,str) or not keyword.strip() or len(keyword)>100: return []
@@ -361,6 +435,70 @@ class CoremailAdapter:
         fields={'returnInfo':'true','account':attrs['account'],'to':','.join(attrs['to']),'cc':','.join(attrs['cc']),'bcc':','.join(attrs['bcc']),
                 'subject':attrs['subject'],'isHtml':'false','saveSentCopy':'true'}
         return self._session.deliver_preencoded(compose_id,fields,payload.decode('ascii'))
+    def delivery_history(self,message_id):
+        """Per-recipient delivery records of a sent message.
+
+        user:listDeliveryHistory {mid} verified on the deployment 2026-10-17
+        (analysis/send-features-shape-2026-10-17.json): var is a list of
+        {to, to_name, result, rclResult, recallable, modtime, ...}. A send-to-self
+        went result 100 (delivered) -> 509 after the copy was read (x % 100 == 9)."""
+        if not isinstance(message_id,str) or not message_id: raise AppError('INVALID_MAIL_ACTION')
+        rows=self._call('user:listDeliveryHistory',{'mid':message_id},True).get('var')
+        if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
+        result=[]
+        for row in rows:
+            if not isinstance(row,dict) or not isinstance(row.get('to'),str): continue
+            result.append({'to':row['to'],'name':str(row.get('to_name') or ''),
+                           'result':row['result'] if type(row.get('result')) is int else None,
+                           'recall':row['rclResult'] if type(row.get('rclResult')) is int else None,
+                           'recallable':row.get('recallable') is True,'time':str(row.get('modtime') or row.get('rectime') or '')})
+        return result
+    def scheduled_messages(self,limit=100):
+        return [m for m in self.list_messages(self.DRAFTS_FOLDER_ID,0,limit) if m.flags.get('scheduleDelivery')]
+    def unschedule(self,message_id):
+        """Cancel a scheduled send the way webmail does: reopen the draft and save it unscheduled.
+
+        Verified 2026-10-17 (send-to-self): the draft stays in the drafts folder
+        without flags.scheduleDelivery. Success is claimed only when a fresh list
+        no longer shows the message as scheduled."""
+        if not isinstance(message_id,str) or not message_id: raise AppError('INVALID_MAIL_ACTION')
+        if self._session is None: raise AppError('NOT_AUTHENTICATED')
+        if not any(m.remote_id==message_id for m in self.scheduled_messages()): raise AppError('NOT_SCHEDULED')
+        try: value=self._session.open_draft(message_id)
+        except CoremailError as error: raise AppError(error.code) from None
+        keep={k:value[k] for k in ('account','to','cc','bcc','subject','content','isHtml','saveSentCopy','priority','requestReadReceipt','attachments','charset') if k in value}
+        response=self._call('%mbox/compose',{'action':'save','id':value['id'],'returnInfo':True,'attrs':{**keep,'scheduleDate':None}})
+        if not isinstance(response.get('draftId'),str): raise AppError('SCHEDULE_UNCONFIRMED')
+        if any(m.remote_id==message_id for m in self.scheduled_messages()): raise AppError('SCHEDULE_UNCONFIRMED')
+        return {'message_id':message_id,'draft_id':response['draftId']}
+    RECALL_CODES = {'FA_UNSUPPORT_RECALL':'RECALL_UNSUPPORTED','FA_MAIL_EXPIRED':'RECALL_EXPIRED','FA_MAIL_NOT_FOUND':'RECALL_NOT_FOUND',
+                    'FS_MTA7504':'RECALL_LATER','FS_DA0106':'RECALL_LATER','FS_MTA_N11':'RECALL_LATER'}
+    def recall_message(self,message_id):
+        """Recall a sent message, following webmail (analysis/web-login 173.03931.js, module 5524).
+
+        Webmail first asks mbox:cancelDeliver {tinfo, mid} (stops delivery still in
+        the queue); on FA_MAIL_NOT_FOUND it calls mbox:recallMessage2 {mid, tid},
+        whose var maps each recipient to a mail_rcl_state code. Verified on the
+        deployment only as far as send-to-self allows: such a message is
+        recallable:false and both calls answer FA_MAIL_NOT_FOUND / FA_UNSUPPORT_RECALL.
+        Nothing is reported as recalled without the server's per-recipient answer."""
+        if not isinstance(message_id,str) or not message_id: raise AppError('INVALID_MAIL_ACTION')
+        if self._session is None: raise AppError('NOT_AUTHENTICATED')
+        infos=self._call('mbox:getMessageInfos',{'ids':[message_id]},True).get('var')
+        info=next((i for i in infos if isinstance(i,dict) and i.get('id')==message_id),None) if isinstance(infos,list) else None
+        if info is None: raise AppError('RECALL_NOT_FOUND')
+        tinfo=info.get('tinfo') if isinstance(info.get('tinfo'),str) and info.get('tinfo') else None
+        params={'mid':message_id}
+        if tinfo:
+            cancelled=self._session.call_code('mbox:cancelDeliver',{'tinfo':tinfo,'mid':message_id})
+            if cancelled.get('code')=='S_OK': return {'cancelled':True,'states':{}}
+            if cancelled.get('code')!='FA_MAIL_NOT_FOUND': raise AppError(self.RECALL_CODES.get(cancelled.get('code'),'RECALL_UNCONFIRMED'))
+            params['tid']=tinfo.rsplit(':',1)[-1]
+        response=self._session.call_code('mbox:recallMessage2',params)
+        if response.get('code')!='S_OK': raise AppError(self.RECALL_CODES.get(response.get('code'),'RECALL_UNCONFIRMED'))
+        states=response.get('var')
+        if not isinstance(states,dict) or not states: raise AppError('RECALL_UNCONFIRMED')
+        return {'cancelled':False,'states':{str(k):v for k,v in states.items() if isinstance(k,str) and '@' in k}}
     def find_sent_candidates(self,job,limit=50):
         results = []
         for folder in self.list_folders():

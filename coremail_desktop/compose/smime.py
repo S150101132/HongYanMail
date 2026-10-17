@@ -62,6 +62,8 @@ def _headers(draft, display_name):
         value = draft.reference_headers.get(name)
         if value:
             outer[name] = value
+    if getattr(draft, 'request_receipt', False):
+        outer['Disposition-Notification-To'] = sender  # What the server adds for requestReadReceipt.
     return outer
 
 

@@ -37,6 +37,10 @@ const ICONS = {
   alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
   thread: '<path d="M21 11.5a7.5 7.5 0 0 1-11 6.6L4 20l1.6-4.6A7.5 7.5 0 1 1 21 11.5Z"/><path d="M8.5 10h7M8.5 13.5h4.5"/>',
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  receipt: '<path d="M2 12.5 6.5 17 15 8.5"/><path d="m11 16 1 1 10-10"/>',
+  route: '<circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H17a3.5 3.5 0 0 0 0-7H7a3.5 3.5 0 0 1 0-7h8.5"/>',
 };
 function iconSvg(name) {
   const body = ICONS[name] || ICONS.folder;

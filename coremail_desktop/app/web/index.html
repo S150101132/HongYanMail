@@ -36,6 +36,7 @@
     </div>
     <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>
     <nav id="folder-list" class="folders" aria-label="文件夹"></nav>
+    <nav class="folders"><a id="nav-scheduled" class="folder" data-local="scheduled" title="服务器上等待发出的定时邮件"><i data-icon="clock"></i><span class="fname">定时发送</span><span id="scheduled-count" class="count"></span></a></nav>
     <div class="side-section">本机</div>
     <nav class="folders">
       <a id="nav-drafts" class="folder" data-local="drafts"><i data-icon="draft"></i><span class="fname">本机草稿</span><span id="draft-count" class="count"></span></a>
@@ -105,6 +106,10 @@
         <button class="tb" data-act="move" title="移动到…"><i data-icon="folder"></i></button>
         <button class="tb" data-act="unread" title="标为未读 (U)"><i data-icon="mail"></i></button>
         <button class="tb" data-act="flag" title="星标 (S)"><i data-icon="star"></i></button>
+        <span class="tb-sep sent-only hidden"></span>
+        <button class="tb sent-only hidden" data-act="recall" title="撤回这封已发送邮件"><i data-icon="undo"></i><span>撤回</span></button>
+        <button class="tb sent-only hidden" data-act="status" title="查看每位收件人的投递和阅读状态"><i data-icon="route"></i><span>投递状态</span></button>
+        <button class="tb sched-only hidden" data-act="unschedule" title="取消定时，邮件转为普通草稿"><i data-icon="clock"></i><span>取消定时</span></button>
         <span class="spacer"></span>
         <button class="tb" data-act="find" title="在正文中查找"><i data-icon="search"></i></button>
       </div>
@@ -179,6 +184,9 @@
   <div class="cmp-foot">
     <button id="cmp-send" class="btn primary" title="发送 (Ctrl+Enter)"><i data-icon="send"></i>发送</button>
     <button id="cmp-save" class="btn ghost" title="保存草稿 (Ctrl+S)">保存草稿</button>
+    <button id="cmp-schedule" class="btn ghost" title="定时发送"><i data-icon="clock"></i><span>定时发送</span></button>
+    <span id="cmp-schedule-chip" class="sched-chip hidden"><i data-icon="clock"></i><span></span><button title="取消定时">×</button></span>
+    <label class="check small" title="收件人打开邮件时，请求对方回复已读回执"><input type="checkbox" id="cmp-receipt"> 请求已读回执</label>
     <span class="spacer"></span>
     <span class="muted small" id="cmp-size"></span>
     <button id="cmp-discard" class="icon-btn" title="丢弃草稿"><i data-icon="trash"></i></button>

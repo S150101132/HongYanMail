@@ -48,6 +48,15 @@ STEPS = [
     (700, "S.prefs.threads = false; renderThreadToggle(); renderList(); selectMessage(S.rows[1].id); "
           "toggleItem(S.rows[2].id); toggleItem(S.rows[4].id); toggleItem(S.rows[5].id)", 'batch'),
     (700, "batchMove(null, { delete: true })", 'batch-undo'),
+    (900, "clearSelection(false); startCompose('new', null, { to: ['rd@example.invalid'], subject: '周会材料' })", None),
+    (600, "C.draft.scheduleAt = new Date(2026, 9, 18, 9, 0).getTime(); $('#cmp-receipt').checked = true; renderSchedule()", 'compose-schedule'),
+    (600, "pickSchedule()", 'schedule-picker'),
+    (600, "$('#prompt').classList.add('hidden'); closeComposer(true); selectFolder('3')", None),
+    (1200, "selectMessage(S.rows[0].id)", None),
+    (900, "loadDeliveryStatus(S.message, true)", 'sent-status'),
+    (900, "recallMessage(S.message); setTimeout(() => $('#prompt-ok').click(), 200)", 'recall-result'),
+    (900, "$('#prompt').classList.add('hidden'); $('#nav-scheduled').click()", None),
+    (1000, "selectMessage(S.rows[0].id)", 'scheduled'),
     (900, "S.message && writeFrame && 0; document.body.offsetWidth", None),
 ]
 

@@ -16,7 +16,7 @@ def draft_dict(draft):
     return result
 
 def decode_draft(value):
-    value = dict(value)
+    value = {k: v for k, v in dict(value).items() if k in DraftDocument.__dataclass_fields__}
     for key in ('to', 'cc', 'bcc'): value[key] = tuple(value[key])
     value['attachments']=tuple(DraftAttachment(item['name'],item['media_type'],base64.b64decode(item['payload'],validate=True)) for item in value.get('attachments',()))
     return DraftDocument(**value)

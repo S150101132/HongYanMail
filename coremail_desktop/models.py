@@ -36,6 +36,7 @@ class MessageSummary(_ImmutableMappings):
     preview: str = ''
     recipients: str = ''
     size: int | None = None
+    schedule_at: str | None = None  # UTC 'YYYY-MM-DDTHH:MM:SSZ' for a scheduled draft.
 
 @dataclass(frozen=True)
 class AttachmentInfo:
@@ -80,6 +81,9 @@ class DraftDocument(_ImmutableMappings):
     attachments: tuple[DraftAttachment, ...] = ()
     is_html: bool = False
     signature_required: bool = False
+    # UTC instant 'YYYY-MM-DDTHH:MM:SSZ' for scheduled send; None sends now.
+    schedule_at: str | None = None
+    request_receipt: bool = False
 
 @dataclass(frozen=True)
 class SendJob:
