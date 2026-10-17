@@ -62,6 +62,7 @@
         <div class="seg" id="filter-seg">
           <button data-filter="all" class="on">全部</button><button data-filter="unread">未读</button><button data-filter="flagged">星标</button>
         </div>
+        <button id="btn-threads" class="icon-btn" title="按会话分组"><i data-icon="thread"></i></button>
         <button id="btn-refresh" class="icon-btn" title="收信 (F5)"><i data-icon="refresh"></i></button>
       </div>
     </header>
@@ -74,6 +75,25 @@
       <div class="empty-art"></div>
       <p>选择一封邮件开始阅读</p>
       <p class="muted small">快捷键：J/K 上下切换 · R 回复 · A 全部回复 · F 转发 · Delete 删除</p>
+    </div>
+    <div id="reader-multi" class="multi hidden">
+      <div class="reader-toolbar">
+        <b class="multi-title">已选择 <span id="multi-count">0</span> 封</b>
+        <span class="tb-sep"></span>
+        <button class="tb" data-batch="read" title="标为已读"><i data-icon="check"></i><span>标为已读</span></button>
+        <button class="tb" data-batch="unread" title="标为未读 (U)"><i data-icon="mail"></i><span>标为未读</span></button>
+        <button class="tb" data-batch="flag" title="星标 (S)"><i data-icon="star"></i><span id="multi-flag">添加星标</span></button>
+        <button class="tb" data-batch="move" title="移动到… (V)"><i data-icon="folder"></i><span>移动</span></button>
+        <button class="tb" data-batch="delete" title="删除 (Delete)"><i data-icon="trash"></i><span>删除</span></button>
+        <span class="spacer"></span>
+        <button class="tb" data-batch="clear" title="取消选择 (Esc)"><i data-icon="close"></i></button>
+      </div>
+      <div class="multi-body">
+        <div id="multi-stack" class="multi-stack"></div>
+        <h2>已选择 <span id="multi-count-big"></span> 封邮件</h2>
+        <p id="multi-sub" class="muted"></p>
+        <p class="muted small">Ctrl+点击 增减 · Shift+点击 连选 · Ctrl+A 全选 · X 选择当前 · Esc 取消</p>
+      </div>
     </div>
     <article id="reader-body" class="hidden">
       <div class="reader-toolbar">
@@ -90,6 +110,9 @@
       </div>
       <div class="reader-scroll">
         <h1 id="r-subject"></h1>
+        <div id="r-thread-info" class="t-info muted small hidden"></div>
+        <div id="r-thread-newer" class="t-list"></div>
+        <div class="r-message">
         <div class="r-meta">
           <span id="r-avatar" class="avatar"></span>
           <div class="r-who">
@@ -101,6 +124,8 @@
         <div id="r-banners"></div>
         <div id="r-attachments" class="attachments hidden"></div>
         <div class="r-content"><iframe id="r-frame" sandbox="allow-same-origin" title="邮件正文"></iframe></div>
+        </div>
+        <div id="r-thread-older" class="t-list"></div>
         <div class="quick-reply">
           <button class="btn ghost" data-act="reply"><i data-icon="reply"></i>回复</button>
           <button class="btn ghost" data-act="reply_all"><i data-icon="replyall"></i>全部回复</button>

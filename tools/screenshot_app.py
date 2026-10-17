@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault('HONGYAN_DEBUG', '1')
+os.environ.setdefault('QTWEBENGINE_DISABLE_SANDBOX', '1')  # Demo data only; the sandbox fails on this machine.
 
 from coremail_desktop.app import shell  # noqa: E402
 from PySide6.QtCore import QTimer  # noqa: E402
@@ -41,6 +42,12 @@ STEPS = [
     (700, "closeComposer(true); openSettings()", "settings"),
     (600, "$('#settings').classList.add('hidden'); startCompose('new')", "compose-new"),
     (600, "$('#settings').classList.add('hidden'); runSearch('预算')", 'search'),
+    (600, "closeComposer(true); clearSearch(); S.prefs.threads = true; renderThreadToggle()", None),
+    (900, "selectMessage(S.items[0].id)", 'threads'),
+    (700, "$('#r-thread-older .t-card:nth-child(2)').click()", 'thread-expanded'),
+    (700, "S.prefs.threads = false; renderThreadToggle(); renderList(); selectMessage(S.rows[1].id); "
+          "toggleItem(S.rows[2].id); toggleItem(S.rows[4].id); toggleItem(S.rows[5].id)", 'batch'),
+    (700, "batchMove(null, { delete: true })", 'batch-undo'),
     (900, "S.message && writeFrame && 0; document.body.offsetWidth", None),
 ]
 

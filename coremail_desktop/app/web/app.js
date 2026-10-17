@@ -25,7 +25,7 @@ const S = {
   profile: null, prefs: {}, folders: [], folderId: null, local: null,
   rows: [], total: null, more: false, loading: false, listToken: 0,
   selected: null, message: null, filter: 'all', search: null,
-  allowRemote: new Set(), drafts: [],
+  allowRemote: new Set(), drafts: [], items: [], multi: new Set(), anchor: null,
 };
 
 // ---------------------------------------------------------------- helpers
@@ -187,6 +187,7 @@ $('#login-form').addEventListener('submit', async (e) => {
 async function enterApp(profile) {
   S.profile = profile; S.prefs = profile.prefs;
   applyTheme(S.prefs.theme, S.prefs.density);
+  renderThreadToggle();
   $('#login').classList.add('hidden'); $('#boot').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#me-name').textContent = profile.name || profile.account;
   $('#me-mail').textContent = profile.account;
@@ -211,7 +212,11 @@ function renderFolders() {
     a.onclick = () => selectFolder(a.dataset.id);
     a.ondragover = (e) => { if (e.dataTransfer.types.includes('text/x-hongyan-mid')) { e.preventDefault(); a.classList.add('drop'); } };
     a.ondragleave = () => a.classList.remove('drop');
-    a.ondrop = (e) => { e.preventDefault(); a.classList.remove('drop'); moveMessage(e.dataTransfer.getData('text/x-hongyan-mid'), a.dataset.id); };
+    a.ondrop = (e) => {
+      e.preventDefault(); a.classList.remove('drop');
+      const many = e.dataTransfer.getData('text/x-hongyan-mids');
+      if (many) batchMove(a.dataset.id, { ids: JSON.parse(many) }); else moveMessage(e.dataTransfer.getData('text/x-hongyan-mid'), a.dataset.id);
+    };
   });
   $('#nav-drafts').classList.toggle('on', S.local === 'drafts');
   const current = folderById(S.folderId);
@@ -223,7 +228,7 @@ const folderById = (id) => S.folders.find((f) => f.id === String(id));
 
 function selectFolder(id) {
   S.folderId = String(id); S.local = null; S.search = null; $('#search').value = '';
-  S.rows = []; S.total = null; S.more = false;
+  S.rows = []; S.total = null; S.more = false; S.multi.clear(); renderSelection();
   renderFolders();
   const f = folderById(id);
   $('#list-title').textContent = f ? f.name : '邮件';
@@ -263,17 +268,50 @@ function visibleRows() {
   return S.rows;
 }
 
-function rowHtml(r) {
+// ---------------------------------------------------------------- conversations (client-side, loaded rows only)
+const SUBJECT_PREFIX = /^\s*(?:re|fwd?|fw|回复|转发|答复)\s*(?:\[\d+\])?\s*[:：]\s*/i;
+function threadKey(subject) {
+  let s = String(subject || '').trim();
+  for (let prev = null; prev !== s;) { prev = s; s = s.replace(SUBJECT_PREFIX, '').trim(); }
+  return s.replace(/\s+/g, ' ').toLowerCase();
+}
+// The list shows items: one per message, or one per conversation (newest first).
+function listItems() {
+  const rows = visibleRows();
+  if (!S.prefs.threads || S.local) return rows.map((r) => ({ id: r.id, ids: [r.id], rows: [r] }));
+  const byKey = new Map(); const items = [];
+  for (const r of rows) {
+    const key = threadKey(r.subject);
+    const item = key && byKey.get(key);
+    if (item) { item.ids.push(r.id); item.rows.push(r); continue; }
+    const fresh = { id: r.id, ids: [r.id], rows: [r] };
+    if (key) byKey.set(key, fresh);
+    items.push(fresh);
+  }
+  for (const it of items) if (it.rows.length > 1) { it.rows.sort((a, b) => (b.ts || 0) - (a.ts || 0)); it.ids = it.rows.map((r) => r.id); it.id = it.ids[0]; }
+  return items;
+}
+function itemOf(id) { return S.items.find((it) => it.ids.includes(id)) || { id, ids: [id], rows: S.rows.filter((r) => r.id === id) }; }
+function participants(item) {
+  const names = [...new Map(item.rows.map((r) => [r.fromEmail || r.fromName, r.fromName || r.fromEmail])).values()].filter(Boolean);
+  return names.slice(0, 3).join('、') + (names.length > 3 ? ` 等 ${names.length} 人` : '');
+}
+
+function rowHtml(r, item = { ids: [r.id], rows: [r] }) {
   const d = parseTs(r);
+  const thread = item.ids.length > 1;
   const sentLike = ['sent', 'drafts'].includes((folderById(r.fid) || {}).role);
-  const who = sentLike ? '致 ' + (parseAddressList(r.to).map((p) => p.name || p.email).join('、') || '（无收件人）') : (r.fromName || r.fromEmail || '（未知发件人）');
+  const who = thread ? participants(item) : sentLike ? '致 ' + (parseAddressList(r.to).map((p) => p.name || p.email).join('、') || '（无收件人）') : (r.fromName || r.fromEmail || '（未知发件人）');
   const folderTag = S.search && folderById(r.fid) && r.fid !== S.folderId ? `<span class="tag">${esc(folderById(r.fid).name)}</span>` : '';
-  const marks = (r.flags.attached ? '<i data-icon="clip"></i>' : '') + (r.flags.flagged ? '<i class="star" data-icon="star"></i>' : '') +
+  const any = (flag) => item.rows.some((x) => x.flags[flag]);
+  const marks = (any('attached') ? '<i data-icon="clip"></i>' : '') + (any('flagged') ? '<i class="star" data-icon="star"></i>' : '') +
     (r.flags.encrypted ? '<i data-icon="lock"></i>' : '') + (r.flags.replied ? '<i data-icon="reply"></i>' : '');
-  return `<div class="row${r.flags.read ? '' : ' unread'}${r.id === S.selected ? ' sel' : ''}" data-id="${esc(r.id)}" draggable="true" role="option">
+  const unread = item.rows.some((x) => !x.flags.read);
+  const msel = S.multi.size && item.ids.every((id) => S.multi.has(id));
+  return `<div class="row${unread ? ' unread' : ''}${item.ids.includes(S.selected) ? ' sel' : ''}${msel ? ' msel' : ''}" data-id="${esc(r.id)}" draggable="true" role="option">
     ${avatarHtml(r.fromName, sentLike ? r.to : r.fromEmail)}
     <div class="main">
-      <div class="line1"><span class="who">${esc(who)}</span>${folderTag}<span class="marks">${marks}</span><span class="when">${esc(shortDate(d))}</span></div>
+      <div class="line1"><span class="who">${esc(who)}</span>${thread ? `<span class="tcount" title="${item.ids.length} 封邮件">${item.ids.length}</span>` : ''}${folderTag}<span class="marks">${marks}</span><span class="when">${esc(shortDate(d))}</span></div>
       <div class="subj">${esc(r.subject || '（无主题）')}</div>
       ${r.preview ? `<div class="prev">${esc(r.preview)}</div>` : ''}
     </div></div>`;
@@ -282,12 +320,14 @@ function rowHtml(r) {
 function renderList() {
   const list = $('#mail-list');
   const rows = visibleRows();
+  S.items = listItems();
   let html = '';
   let group = null;
-  for (const r of rows) {
+  for (const it of S.items) {
+    const r = it.rows[0];
     const g = S.search ? null : groupOf(parseTs(r));
     if (g && g !== group) { group = g; html += `<div class="group-head">${g}</div>`; }
-    html += rowHtml(r);
+    html += rowHtml(r, it);
   }
   if (!rows.length) {
     html = `<div class="list-foot">${S.search ? '没有找到匹配的邮件' : S.filter === 'unread' ? '没有未读邮件 🎉' : S.filter === 'flagged' ? '没有星标邮件' : '这个文件夹是空的'}</div>`;
@@ -313,6 +353,10 @@ $('#mail-list').addEventListener('scroll', () => {
 $('#mail-list').addEventListener('click', (e) => {
   const row = e.target.closest('.row'); if (!row) return;
   if (S.local === 'drafts') { openLocalDraft(row.dataset.id); return; }
+  if (e.ctrlKey || e.metaKey) { toggleItem(row.dataset.id); return; }
+  if (e.shiftKey) { selectRange(row.dataset.id); return; }
+  clearSelection(false);
+  S.anchor = row.dataset.id;
   selectMessage(row.dataset.id);
 });
 $('#mail-list').addEventListener('dblclick', (e) => {
@@ -320,7 +364,9 @@ $('#mail-list').addEventListener('dblclick', (e) => {
 });
 $('#mail-list').addEventListener('dragstart', (e) => {
   const row = e.target.closest('.row'); if (!row || S.local) return;
+  const ids = S.multi.size > 1 && itemOf(row.dataset.id).ids.every((id) => S.multi.has(id)) ? [...S.multi] : itemOf(row.dataset.id).ids;
   e.dataTransfer.setData('text/x-hongyan-mid', row.dataset.id); e.dataTransfer.effectAllowed = 'move';
+  if (ids.length > 1) e.dataTransfer.setData('text/x-hongyan-mids', JSON.stringify(ids));
 });
 $('#mail-list').addEventListener('contextmenu', (e) => {
   const row = e.target.closest('.row'); if (!row) return;
@@ -331,6 +377,18 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
     return;
   }
   const r = S.rows.find((x) => x.id === row.dataset.id); if (!r) return;
+  if (S.multi.size > 1 && itemOf(r.id).ids.every((id) => S.multi.has(id))) {
+    showMenu(e.clientX, e.clientY, [
+      { label: `标为已读（${S.multi.size} 封）`, icon: 'check', run: () => batchFlags({ read: true }) },
+      { label: '标为未读', icon: 'mail', run: () => batchFlags({ read: false }) },
+      { label: '添加星标', icon: 'star', run: () => batchFlags({ flagged: true }) },
+      { label: '取消星标', icon: 'star', run: () => batchFlags({ flagged: false }) },
+      { label: '移动到…', icon: 'folder', run: () => pickBatchFolder() },
+      '-',
+      { label: '删除', icon: 'trash', run: () => batchMove(null, { delete: true }) },
+    ]);
+    return;
+  }
   showMenu(e.clientX, e.clientY, [
     { label: '回复', icon: 'reply', run: () => startCompose('reply', r.id) },
     { label: '全部回复', icon: 'replyall', run: () => startCompose('reply_all', r.id) },
@@ -356,7 +414,7 @@ async function runSearch(q) {
   q = q.trim();
   if (!q) { clearSearch(); return; }
   const token = ++searchToken;
-  S.search = q; S.local = null; S.filter = 'all';
+  S.search = q; S.local = null; S.filter = 'all'; S.multi.clear(); renderSelection();
   $$('#filter-seg button').forEach((x) => x.classList.toggle('on', x.dataset.filter === 'all'));
   $('#list-title').textContent = '搜索结果';
   S.rows = await api('searchLocal', { query: q }).catch(() => []);
@@ -395,9 +453,11 @@ $('#search').addEventListener('input', (e) => {
 let openToken = 0;
 async function selectMessage(id, opts = {}) {
   S.selected = id;
-  $$('#mail-list .row').forEach((r) => r.classList.toggle('sel', r.dataset.id === id));
-  const row = $(`#mail-list .row[data-id="${CSS.escape(id)}"]`);
+  const item = itemOf(id);
+  $$('#mail-list .row').forEach((r) => r.classList.toggle('sel', item.ids.includes(r.dataset.id)));
+  const row = $(`#mail-list .row[data-id="${CSS.escape(item.id)}"]`);
   if (row && !opts.noScroll) row.scrollIntoView({ block: 'nearest' });
+  if (S.multi.size >= 2) return;  // The selection toolbar stays; J/K only move the cursor.
   const token = ++openToken;
   const summary = S.rows.find((r) => r.id === id);
   $('#reader-empty').classList.add('hidden'); $('#reader-body').classList.remove('hidden');
@@ -409,6 +469,7 @@ async function selectMessage(id, opts = {}) {
     $('#r-attachments').classList.add('hidden'); $('#r-banners').innerHTML = '';
     writeFrame('<div style="color:#98a2b3">正在加载…</div>');
   }
+  renderThread(id);
   api('allowRemoteImages', { allow: S.allowRemote.has(id) });
   try {
     const m = await api('openMessage', { mid: id });
@@ -417,7 +478,8 @@ async function selectMessage(id, opts = {}) {
     renderMessage(m);
     if (m.markedRead && summary) {
       summary.flags.read = true;
-      row && row.classList.remove('unread');
+      row && row.classList.toggle('unread', itemOf(id).rows.some((r) => !r.flags.read));
+      renderThread(id);
       const f = folderById(summary.fid); if (f && f.unread > 0) { f.unread--; renderFolders(); }
     }
   } catch (err) {
@@ -426,6 +488,24 @@ async function selectMessage(id, opts = {}) {
     writeFrame(`<div style="color:#d92d20">${esc(err.message)}</div>`);
   }
 }
+
+// The open conversation: newer messages above the open one, older below, all collapsed.
+function renderThread(id) {
+  const item = S.prefs.threads ? itemOf(id) : null;
+  const on = !!item && item.ids.length > 1;
+  $('.reader-scroll').classList.toggle('threaded', on);
+  $('#r-thread-info').classList.toggle('hidden', !on);
+  if (!on) { $('#r-thread-newer').innerHTML = $('#r-thread-older').innerHTML = ''; return; }
+  const i = Math.max(0, item.ids.indexOf(id));
+  const card = (r) => `<div class="t-card${r.flags.read ? '' : ' unread'}" data-mid="${esc(r.id)}" title="展开这封邮件">${avatarHtml(r.fromName, r.fromEmail, 'sm')}
+    <span class="t-who">${esc(r.fromName || r.fromEmail)}</span><span class="t-prev">${esc(r.preview || r.subject || '')}</span><span class="t-when">${esc(shortDate(parseTs(r)))}</span></div>`;
+  $('#r-thread-info').textContent = `会话 · 共 ${item.ids.length} 封 · ${participants(item)}`;
+  $('#r-thread-newer').innerHTML = item.rows.slice(0, i).map(card).join('');
+  $('#r-thread-older').innerHTML = item.rows.slice(i + 1).map(card).join('');
+}
+$('.reader-scroll').addEventListener('click', (e) => {
+  const card = e.target.closest('.t-card'); if (card) selectMessage(card.dataset.mid);
+});
 
 function people(list) { return list.map((p) => `<a title="${esc(p.email)}" data-mailto="${esc(p.email)}">${esc(p.name || p.email)}</a>`).join('、'); }
 function renderMessage(m) {
@@ -564,6 +644,129 @@ async function pickFolder(id) {
     onOpen: (d, done) => $$('[data-fid]', d).forEach((b) => (b.onclick = () => { done(true); moveMessage(id, b.dataset.fid); })) });
 }
 
+// ---------------------------------------------------------------- multi-select and batch actions
+function toggleItem(id) {
+  if (!S.multi.size && S.selected && S.selected !== id) itemOf(S.selected).ids.forEach((m) => S.multi.add(m));
+  const ids = itemOf(id).ids;
+  const on = ids.every((m) => S.multi.has(m));
+  ids.forEach((m) => (on ? S.multi.delete(m) : S.multi.add(m)));
+  S.anchor = id; renderSelection();
+}
+function selectRange(id) {
+  const a = S.items.findIndex((it) => it.ids.includes(S.anchor || S.selected));
+  const b = S.items.findIndex((it) => it.ids.includes(id));
+  if (b < 0) return;
+  const [lo, hi] = a < 0 ? [b, b] : [Math.min(a, b), Math.max(a, b)];
+  S.multi = new Set(S.items.slice(lo, hi + 1).flatMap((it) => it.ids));
+  renderSelection();
+}
+function selectAll() { S.multi = new Set(S.items.flatMap((it) => it.ids)); renderSelection(); }
+function clearSelection(reopen = true) {
+  if (!S.multi.size) return false;
+  const many = S.multi.size >= 2;
+  S.multi.clear(); renderSelection();
+  if (reopen && many && S.selected && (!S.message || S.message.id !== S.selected)) selectMessage(S.selected, { noScroll: true });
+  return true;
+}
+function selectedRows() { return S.rows.filter((r) => S.multi.has(r.id)); }
+function renderSelection() {
+  $$('#mail-list .row').forEach((el) => el.classList.toggle('msel', S.multi.size > 0 && itemOf(el.dataset.id).ids.every((m) => S.multi.has(m))));
+  const n = S.multi.size, many = n >= 2;
+  $('#reader-multi').classList.toggle('hidden', !many);
+  $('#reader-body').classList.toggle('hidden', many || !S.selected);
+  $('#reader-empty').classList.toggle('hidden', many || !!S.selected);
+  if (!many) return;
+  const rows = selectedRows();
+  const senders = [...new Map(rows.map((r) => [r.fromEmail || r.fromName, r])).values()];
+  $('#multi-count').textContent = $('#multi-count-big').textContent = n;
+  $('#multi-stack').innerHTML = senders.slice(0, 5).map((r) => avatarHtml(r.fromName, r.fromEmail, '')).join('') +
+    (senders.length > 5 ? `<span class="avatar more">+${senders.length - 5}</span>` : '');
+  const unread = rows.filter((r) => !r.flags.read).length, flagged = rows.filter((r) => r.flags.flagged).length;
+  $('#multi-sub').textContent = [`来自 ${senders.length} 位发件人`, unread ? `${unread} 封未读` : '', flagged ? `${flagged} 封星标` : ''].filter(Boolean).join(' · ');
+  $('#multi-flag').textContent = rows.length && flagged === rows.length ? '取消星标' : '添加星标';
+}
+$('#reader-multi').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-batch]'); if (!b) return;
+  const rows = selectedRows();
+  ({
+    read: () => batchFlags({ read: true }), unread: () => batchFlags({ read: false }),
+    flag: () => batchFlags({ flagged: !(rows.length && rows.every((r) => r.flags.flagged)) }),
+    move: () => pickBatchFolder(), delete: () => batchMove(null, { delete: true }), clear: () => clearSelection(),
+  }[b.dataset.batch] || (() => {}))();
+});
+
+async function batchFlags(flags) {
+  const ids = [...S.multi]; const rows = selectedRows();
+  const before = new Map(rows.map((r) => [r.id, { ...r.flags }]));
+  const redraw = () => { renderList(); renderSelection(); };
+  rows.forEach((r) => Object.assign(r.flags, flags)); redraw();
+  if (S.message && S.multi.has(S.message.id)) Object.assign(S.message.flags, flags);
+  try {
+    const res = await api('setFlags', { mid: ids, read: flags.read ?? null, flagged: flags.flagged ?? null });
+    for (const id of res.failed) { const r = rows.find((x) => x.id === id); if (r) r.flags = before.get(id); }
+    if (res.folders.length) { S.folders = res.folders; renderFolders(); }
+    redraw();
+    const what = 'read' in flags ? (flags.read ? '标为已读' : '标为未读') : (flags.flagged ? '添加星标' : '取消星标');
+    if (res.failed.length) toast(`${res.done.length} 封已${what}，${res.failed.length} 封未完成，请稍后重试`, { error: true });
+    else toast(`已将 ${res.done.length} 封${what}`);
+  } catch (err) { rows.forEach((r) => (r.flags = before.get(r.id))); redraw(); fail(err); }
+}
+function removeRows(ids) {
+  const gone = new Set(ids);
+  S.rows = S.rows.filter((r) => !gone.has(r.id));
+  if (gone.has(S.selected)) { S.selected = null; S.message = null; }
+  renderList();
+}
+async function batchMove(folderId, opts = {}) {
+  const ids = opts.ids || [...S.multi];
+  const trash = S.folders.find((f) => f.role === 'trash');
+  const target = opts.delete ? (trash ? trash.id : '4') : String(folderId);
+  const rows = S.rows.filter((r) => ids.includes(r.id));
+  const origin = new Map(rows.map((r) => [r.id, r.fid]));
+  const moving = rows.filter((r) => r.fid !== target).map((r) => r.id);
+  if (!moving.length) { toast(opts.delete ? '所选邮件已在已删除文件夹中。为避免误删，本应用不提供彻底删除。' : '所选邮件已在该文件夹中'); return; }
+  S.multi.clear();
+  if (S.search) { rows.forEach((r) => moving.includes(r.id) && (r.fid = target)); renderList(); } else removeRows(moving);
+  renderSelection();
+  try {
+    const res = opts.delete ? await api('delete', { mid: moving }) : await api('move', { mid: moving, folder_id: target });
+    if (res.folders.length) { S.folders = res.folders; renderFolders(); }
+    const name = (folderById(target) || {}).name || (opts.delete ? '已删除' : '文件夹');
+    toast(`已将 ${res.done.length} 封移到「${name}」` + (res.failed.length ? `，${res.failed.length} 封未完成` : ''),
+      { ms: 8000, error: !!res.failed.length, action: res.done.length ? { label: '撤销', run: () => undoMove(res.done, origin) } : null });
+    if (res.failed.length) loadList(true);
+  } catch (err) { fail(err); loadList(true); }
+}
+async function undoMove(ids, origin) {
+  const groups = new Map();
+  for (const id of ids) { const fid = origin.get(id); if (fid) groups.set(fid, [...(groups.get(fid) || []), id]); }
+  try {
+    for (const [fid, group] of groups) { const res = await api('move', { mid: group, folder_id: fid }); if (res.folders.length) S.folders = res.folders; }
+    renderFolders(); toast('已撤销');
+  } catch (err) { fail(err); }
+  if (S.search) runSearch(S.search); else loadList(true);
+}
+async function pickBatchFolder() {
+  const n = S.multi.size;
+  await promptDialog({ title: `移动 ${n} 封邮件到文件夹`,
+    body: '<div class="pick-list">' + S.folders.filter((f) => f.role !== 'virus').map((f) =>
+      `<button data-fid="${esc(f.id)}"><i data-icon="${ROLE_ICON[f.role] || 'folder'}"></i>${esc(f.name)}</button>`).join('') + '</div>',
+    onOpen: (d, done) => $$('[data-fid]', d).forEach((b) => (b.onclick = () => { done(true); batchMove(b.dataset.fid); })) });
+}
+
+// ---------------------------------------------------------------- conversation toggle
+function renderThreadToggle() {
+  const b = $('#btn-threads');
+  b.classList.toggle('on', !!S.prefs.threads);
+  b.title = S.prefs.threads ? '按会话分组：已开启' : '按会话分组：已关闭';
+}
+$('#btn-threads').onclick = async () => {
+  S.prefs.threads = !S.prefs.threads;
+  renderThreadToggle(); renderList(); renderSelection();
+  if (S.selected) selectMessage(S.selected, { noScroll: true });
+  try { S.prefs = await api('setPrefs', { values: { threads: S.prefs.threads } }); } catch (err) { fail(err); }
+};
+
 async function unlockCertificate() {
   const got = await promptDialog({ title: '解锁个人证书', text: '输入证书密码，然后选择 .pfx 证书文件。',
     body: '<input type="password" id="cert-pw" placeholder="证书密码"><label class="check" style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" id="cert-remember" checked> 记住证书（Windows 加密保存，下次自动解锁）</label>',
@@ -594,7 +797,7 @@ async function refreshDraftCount() {
   try { S.drafts = await api('listDrafts'); $('#draft-count').textContent = S.drafts.length || ''; } catch (e) { /* local storage optional */ }
 }
 $('#nav-drafts').onclick = async () => {
-  S.local = 'drafts'; S.search = null; S.listToken++;
+  S.local = 'drafts'; S.search = null; S.listToken++; S.multi.clear(); renderSelection();
   renderFolders();
   $('#list-title').textContent = '本机草稿'; $('#list-sub').textContent = '仅保存在这台电脑，已加密';
   await refreshDraftCount();
@@ -944,19 +1147,27 @@ function handleKey(e) {
     if (e.key === 'Escape') { $$('#prompt [data-close], #settings [data-close]').forEach((b) => !b.closest('.hidden') && b.click()); }
     return;
   }
-  if (e.key === 'Escape') { hideMenu(); closeFind(); }
+  if (e.key === 'Escape') { hideMenu(); closeFind(); if (!isTyping(t)) clearSelection(); }
+  if (e.ctrlKey && (e.key === 'a' || e.key === 'A') && !isTyping(t) && t.ownerDocument === document && !(t.closest && t.closest('.reader-scroll, #composer'))
+      && !$('#app').classList.contains('hidden') && !S.local) { e.preventDefault(); selectAll(); return; }
   if (e.ctrlKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); startCompose('new'); return; }
   if (e.key === 'F5') { e.preventDefault(); $('#btn-refresh').click(); return; }
   if ((e.ctrlKey && (e.key === 'f' || e.key === 'F')) || (e.key === '/' && !isTyping(t))) { e.preventDefault(); $('#search').focus(); $('#search').select(); return; }
   if (isTyping(t) || e.ctrlKey || e.altKey || $('#app').classList.contains('hidden')) return;
   const m = S.message;
-  const rows = visibleRows();
-  const i = rows.findIndex((r) => r.id === S.selected);
+  const items = S.items;
+  const i = items.findIndex((it) => it.ids.includes(S.selected));
   const k = e.key;
-  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); const n = rows[Math.min(rows.length - 1, i + 1)]; if (n) selectMessage(n.id); }
-  else if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); const n = rows[Math.max(0, i - 1)]; if (n) selectMessage(n.id); }
+  const many = S.multi.size >= 2;
+  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); const n = items[Math.min(items.length - 1, i + 1)]; if (n) selectMessage(n.id); }
+  else if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); const n = items[Math.max(0, i - 1)]; if (n) selectMessage(n.id); }
   else if (k === 'c') startCompose('new');
-  else if (!m) return;
+  else if (k === 'x') { if (S.selected && !S.local) toggleItem(S.selected); }
+  else if (many && (k === 'Delete' || k === '#')) batchMove(null, { delete: true });
+  else if (many && k === 'u') batchFlags({ read: false });
+  else if (many && k === 's') batchFlags({ flagged: !selectedRows().every((r) => r.flags.flagged) });
+  else if (many && k === 'v') pickBatchFolder();
+  else if (many || !m) return;
   else if (k === 'r') startCompose('reply', m.id);
   else if (k === 'a') startCompose('reply_all', m.id);
   else if (k === 'f') startCompose('forward', m.id);

@@ -153,6 +153,97 @@ class BackendTest(unittest.TestCase):
         with self.assertRaises(AppError):
             self.backend.delete(row['id'])
 
+    def _counting(self):
+        adapter, calls = self.backend.adapter, {'many': 0, 'single': 0}
+        many, single = adapter.set_flags_many, adapter.set_message_flags
+
+        def count_many(ids, flags):
+            calls['many'] += 1
+            return many(ids, flags)
+
+        def count_single(mid, flags):
+            calls['single'] += 1
+            return single(mid, flags)
+        adapter.set_flags_many, adapter.set_message_flags = count_many, count_single
+        return calls
+
+    def test_batch_flags_use_one_call_and_update_cache_and_counts(self):
+        self.backend.folders()
+        unread = [r['id'] for r in self.backend.messages('1', 0, 50)['rows'] if not r['flags']['read']][:3]
+        calls = self._counting()
+        result = self.backend.set_flags(unread, read=True)
+        self.assertEqual(calls, {'many': 1, 'single': 0})
+        self.assertEqual(result['done'], unread)
+        self.assertEqual(result['failed'], [])
+        self.assertEqual(next(f for f in result['folders'] if f['id'] == '1')['unread'], 27)
+        for mid in unread:
+            self.assertTrue(self.backend.adapter.rows[mid]['flags']['read'])
+            self.assertTrue(self.backend.cache.summary(mid)['flags']['read'])
+        self.backend.set_flags(unread, read=True)  # Already read: the count does not drift.
+        self.assertEqual(next(f for f in self.backend.cache.get('folders') if f['id'] == '1')['unread'], 27)
+        self.backend.set_flags(unread[:2], flagged=True)
+        self.assertTrue(all(self.backend.adapter.rows[m]['flags']['flagged'] for m in unread[:2]))
+
+    def test_batch_retries_unconfirmed_ids_one_by_one(self):
+        self.backend.folders()
+        ids = [r['id'] for r in self.backend.messages('1', 0, 50)['rows'][:3]]
+        calls = self._counting()
+        many = self.backend.adapter.set_flags_many
+        self.backend.adapter.set_flags_many = lambda mids, flags: many(mids[:1], flags)  # Server confirms only the first.
+        result = self.backend.set_flags(ids, read=False)
+        self.assertEqual(result['done'], ids)
+        self.assertEqual(calls['single'], 2)
+        self.assertTrue(all(not self.backend.adapter.rows[m]['flags']['read'] for m in ids))
+
+    def test_batch_without_server_support_goes_per_id_and_reports_failures(self):
+        self.backend.folders()
+        ids = [r['id'] for r in self.backend.messages('1', 0, 50)['rows'][:3]]
+        self.backend.adapter.batch_updates = False
+        calls = self._counting()
+        single = self.backend.adapter.set_message_flags
+
+        def flaky(mid, flags):
+            if mid == ids[1]:
+                raise AppError('MAIL_UPDATE_UNCONFIRMED')
+            return single(mid, flags)
+        self.backend.adapter.set_message_flags = flaky
+        result = self.backend.set_flags(ids, flagged=True)
+        self.assertEqual(calls['many'], 0)
+        self.assertEqual(result['done'], [ids[0], ids[2]])
+        self.assertEqual(result['failed'], [ids[1]])
+        self.backend.adapter.set_message_flags = lambda mid, flags: (_ for _ in ()).throw(AppError('NETWORK_ERROR'))
+        with self.assertRaises(AppError):  # Nothing done at all is an error, not an empty success.
+            self.backend.set_flags(ids, read=True)
+
+    def test_batch_move_and_undo_keep_folder_counts(self):
+        self.backend.folders()
+        rows = self.backend.messages('1', 0, 50)['rows'][:4]
+        ids = [r['id'] for r in rows]
+        unread = sum(not r['flags']['read'] for r in rows)
+        result = self.backend.move(ids, '100')
+        self.assertEqual(result['done'], ids)
+        folders = {f['id']: f for f in result['folders']}
+        self.assertEqual(folders['1']['unread'], 30 - unread)
+        self.assertEqual(folders['100']['total'], 12)
+        self.assertTrue(all(self.backend.adapter.rows[m]['fid'] == '100' for m in ids))
+        self.assertEqual(self.backend.cache.summary(ids[0])['fid'], '100')
+        self.backend.move(ids, '1')  # Undo.
+        self.assertEqual({f['id']: f for f in self.backend.folders(refresh=False)}['1']['unread'], 30)
+        self.assertEqual({f['id']: f for f in self.backend.folders()}['1']['unread'], 30)
+
+    def test_batch_delete_moves_to_trash_and_skips_mail_already_there(self):
+        self.backend.folders()
+        ids = [r['id'] for r in self.backend.messages('1', 0, 50)['rows'][:3]]
+        self.backend.delete(ids[:1])
+        result = self.backend.delete(ids)
+        self.assertEqual(result['done'], ids[1:])
+        self.assertEqual(result['skipped'], ids[:1])
+        self.assertTrue(all(self.backend.adapter.rows[m]['fid'] == '4' for m in ids))
+        self.assertIn(ids[0], self.backend.adapter.rows)  # Never purged.
+        with self.assertRaises(AppError) as raised:
+            self.backend.delete(ids)
+        self.assertEqual(raised.exception.code, 'OPERATION_NOT_ALLOWED')
+
     def test_poll_reports_only_new_unread_mail(self):
         self.backend.folders()
         self.assertEqual(self.backend.poll()['new'], [])  # The first sync never floods notifications.
@@ -207,6 +298,42 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(prefs['theme'], 'dark')
         self.assertTrue(prefs['notify'])
         self.assertNotIn('unknown', prefs)
+
+
+class BatchSession:
+    def __init__(self, confirm):
+        self.calls, self.confirm = [], confirm
+
+    def call(self, op, params):
+        self.calls.append((op, params))
+        if op == 'mbox:getAllFolders':
+            return {'code': 'S_OK', 'var': [{'id': 1, 'name': 'Inbox'}, {'id': 4, 'name': 'Trash', 'flags': {'system': True}}]}
+        return {'code': 'S_OK', 'originalMsgInfos': [{'id': i} for i in params['ids'] if i in self.confirm]}
+
+
+class AdapterBatchTest(unittest.TestCase):
+    def adapter(self, confirm):
+        from coremail_desktop.protocol.coremail import CoremailAdapter
+        adapter = CoremailAdapter()
+        adapter._session = BatchSession(confirm)
+        return adapter
+
+    def test_one_call_returns_only_confirmed_ids(self):
+        adapter = self.adapter({'a', 'c'})
+        self.assertEqual(adapter.set_flags_many(['a', 'b', 'c', 'a'], {'read': True}), ['a', 'c'])
+        self.assertEqual(adapter._session.calls[-1], ('mbox:updateMessageInfos', {'ids': ['a', 'b', 'c'], 'attrs': {'flags': {'read': True}}, 'returnOriginalMsgInfos': True}))
+        self.assertEqual(adapter.move_many(['a', 'b'], '4'), ['a'])
+        self.assertEqual(adapter._session.calls[-1][1]['attrs'], {'fid': 4})
+
+    def test_invalid_batches_are_refused_before_the_network(self):
+        adapter = self.adapter(set())
+        for ids, flags in (([], {'read': True}), (['a'], {'deleted': True}), (['a'], {'read': 1}), ([''], {'read': True}),
+                           ([str(i) for i in range(101)], {'read': True})):
+            with self.assertRaises(AppError):
+                adapter.set_flags_many(ids, flags)
+        with self.assertRaises(AppError):
+            adapter.move_many(['a'], '999')
+        self.assertFalse(any(op == 'mbox:updateMessageInfos' for op, _ in adapter._session.calls))
 
 
 class CacheTest(unittest.TestCase):

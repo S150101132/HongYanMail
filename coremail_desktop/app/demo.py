@@ -131,6 +131,18 @@ class DemoAdapter:
         self.rows[message_id]['flags'].update(flags)
         return {'message_id': message_id, 'flags': flags}
 
+    batch_updates = True
+
+    def set_flags_many(self, message_ids, flags):
+        for mid in message_ids:
+            self.rows[mid]['flags'].update(flags)
+        return list(message_ids)
+
+    def move_many(self, message_ids, folder_id):
+        for mid in message_ids:
+            self.rows[mid]['fid'] = folder_id
+        return list(message_ids)
+
     def match_contacts(self, keyword, limit=8):
         return [{'name': n, 'email': a} for n, a in PEOPLE if keyword.casefold() in (n + a).casefold()][:limit]
 

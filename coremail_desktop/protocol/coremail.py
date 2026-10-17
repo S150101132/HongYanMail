@@ -121,6 +121,9 @@ class CoremailAdapter:
     INBOX_FOLDER_ID = '1'
     SUMMARY_WINDOW = 120  # Verified: adds a plain-text 'summary' preview per row.
     TRASH_FOLDER_ID = '4'  # Confirmed by deployment folder metadata and reversible self-test.
+    # Multi-id mbox:updateMessageInfos verified (2026-10-17, read/unread on two inbox
+    # messages, restored): each id comes back in originalMsgInfos and is applied.
+    batch_updates = True
 
     def __init__(self, session_factory=DesktopSession):
         self._session_factory = session_factory
@@ -230,6 +233,21 @@ class CoremailAdapter:
         affected=response.get('originalMsgInfos')
         if not isinstance(affected,list) or not any(isinstance(item,dict) and item.get('id')==message_id for item in affected): raise AppError('MAIL_UPDATE_UNCONFIRMED')
         return {'message_id':message_id,'flags':dict(flags)}
+    def _update_many(self,message_ids,attrs):
+        """One mbox:updateMessageInfos for many ids; returns only the ids the server confirmed."""
+        ids=list(dict.fromkeys(message_ids))
+        if not ids or len(ids)>100 or any(not isinstance(i,str) or not i for i in ids): raise AppError('INVALID_MAIL_ACTION')
+        response=self._call('mbox:updateMessageInfos',{'ids':ids,'attrs':attrs,'returnOriginalMsgInfos':True})
+        affected=response.get('originalMsgInfos')
+        if not isinstance(affected,list): raise AppError('MAIL_UPDATE_UNCONFIRMED')
+        return [i for i in ids if any(isinstance(item,dict) and item.get('id')==i for item in affected)]
+    def set_flags_many(self,message_ids,flags):
+        if not isinstance(flags,dict) or not flags or set(flags)-{'read','flagged'} or any(type(v) is not bool for v in flags.values()):
+            raise AppError('INVALID_MAIL_ACTION')
+        return self._update_many(message_ids,{'flags':dict(flags)})
+    def move_many(self,message_ids,folder_id):
+        if not isinstance(folder_id,str) or folder_id not in {folder.remote_id for folder in self.list_folders()}: raise AppError('INVALID_MAIL_ACTION')
+        return self._update_many(message_ids,{'fid':int(folder_id) if folder_id.isdigit() else folder_id})
     def _attrs(self,draft,encrypted=False):
         from coremail_desktop.compose.attachments import validate_attachments
         validate_attachments(draft.attachments)
