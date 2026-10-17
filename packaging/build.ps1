@@ -53,7 +53,9 @@ if ($iscc) {
     $version = (Select-String -LiteralPath (Join-Path $taskRoot 'pyproject.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
     & $iscc /Q "/DAppVersion=$version" (Join-Path $taskRoot 'packaging\hongyan.iss')
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
-    Write-Output "Installer: dist\Hongyan-Setup-$version.exe"
+    # Machines that forbid writing %TEMP% need this wrapper to run the installer.
+    Copy-Item -LiteralPath (Join-Path $taskRoot 'packaging\Install-Hongyan.cmd') -Destination (Join-Path $taskRoot 'dist') -Force
+    Write-Output "Installer: dist\Hongyan-Setup-$version.exe (run dist\Install-Hongyan.cmd on locked-down machines)"
 }
 else {
     Write-Warning 'Inno Setup 6 (ISCC.exe) not found; installer not built. See packaging/hongyan.iss.'

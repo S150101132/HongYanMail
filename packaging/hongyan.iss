@@ -37,12 +37,17 @@ WizardStyle=modern
 ; The running client holds this mutex (coremail_desktop/app/single_instance.py).
 AppMutex=Hongyan.SingleInstance
 CloseApplications=yes
+; Managed machines may refuse registry writes, and a failed uninstall key aborts the
+; whole install. Uninstall instead via {app}\Uninstall-Hongyan.cmd (or the Start-menu
+; entry when shortcuts could be created).
+CreateUninstallRegKey=no
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
 DirNote=如果本机安全策略禁止程序写入用户目录（AppData），请选择其他磁盘上的文件夹，例如 D:\Programs\Hongyan。
+StartMenuIcon=创建开始菜单快捷方式（本机若禁止写入用户目录会跳过）
 DesktopIcon=创建桌面快捷方式
 LaunchNow=立即启动鸿雁
 RemoveDataTitle=卸载鸿雁
@@ -51,14 +56,18 @@ RemoveDataBox=同时删除本机的鸿雁数据（不可恢复）
 RemoveDataOk=确定
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:DesktopIcon}"
+Name: "startmenuicon"; Description: "{cm:StartMenuIcon}"
+Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Flags: unchecked
 
 [Files]
 Source: "..\dist\Hongyan\*"; DestDir: "{app}"; Excludes: "HongyanData\*,debug.log"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The uninstaller copies itself to %TEMP% first; this wrapper redirects TEMP for locked-down machines.
+Source: "Uninstall-Hongyan.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\鸿雁"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"
+Name: "{autoprograms}\鸿雁"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Tasks: startmenuicon
 Name: "{autodesktop}\鸿雁"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\卸载鸿雁"; Filename: "{app}\Uninstall-Hongyan.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExe}"; Tasks: startmenuicon
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchNow}"; Flags: nowait postinstall skipifsilent
