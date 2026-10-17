@@ -34,6 +34,7 @@ const ICONS = {
   image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+  thread: '<path d="M21 11.5a7.5 7.5 0 0 1-11 6.6L4 20l1.6-4.6A7.5 7.5 0 1 1 21 11.5Z"/><path d="M8.5 10h7M8.5 13.5h4.5"/>',
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
 };
 function iconSvg(name) {

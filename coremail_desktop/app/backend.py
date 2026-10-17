@@ -21,7 +21,7 @@ from coremail_desktop.models import AccountConfig, DraftAttachment, DraftDocumen
 from coremail_desktop.mime.parser import parse_mime
 
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
-                 'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right'}
+                 'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'threads': False}
 # Coremail system folder ids. Used only for icons and ordering; the name shown is
 # always the server's own folder name.
 SYSTEM_ROLES = {'1': 'inbox', '2': 'drafts', '3': 'sent', '4': 'trash', '5': 'spam', '6': 'virus'}
@@ -366,24 +366,80 @@ class MailBackend:
                 'remembered': self._certificate_path().exists()}
 
     # Mail actions ----------------------------------------------------------
+    # Each action takes one id or a list of ids. A list goes to the server in one
+    # call where the adapter supports it; any id the server did not confirm is
+    # retried on its own, so a partial batch never goes unnoticed.
+    def _apply(self, ids, single, many, *args):
+        done = []
+        if len(ids) > 1 and getattr(self.adapter, 'batch_updates', False):
+            try:
+                done = list(self._online(many, ids, *args))
+            except AppError as error:
+                if error.code != 'MAIL_UPDATE_UNCONFIRMED':
+                    raise
+        failed, last = [], None
+        for mid in ids:
+            if mid in done:
+                continue
+            try:
+                self._online(single, mid, *args)
+                done.append(mid)
+            except AppError as error:
+                if len(ids) == 1:
+                    raise
+                failed.append(mid)
+                last = error
+        if not done and last:
+            raise last
+        return [m for m in ids if m in done], failed
+
+    def _count(self, fid, delta_unread=0, delta_total=0):
+        folder = next((f for f in self._folders if f['id'] == fid), None)
+        if folder:
+            folder['unread'] = max(0, (folder['unread'] or 0) + delta_unread)
+            if folder['total'] is not None:
+                folder['total'] = max(0, folder['total'] + delta_total)
+
     def set_flags(self, mid, read=None, flagged=None):
         flags = {k: v for k, v in (('read', read), ('flagged', flagged)) if v is not None}
-        self._online(self.adapter.set_message_flags, mid, flags)
-        self.cache.update(mid, flags=flags)
-        return flags
+        ids = [mid] if isinstance(mid, str) else [str(m) for m in mid]
+        before = {m: self.cache.summary(m) or {} for m in ids}
+        done, failed = self._apply(ids, self.adapter.set_message_flags, getattr(self.adapter, 'set_flags_many', None), flags)
+        for m in done:
+            was = before[m].get('flags', {}).get('read')
+            if 'read' in flags and was is not None and bool(was) != read:
+                self._count(before[m].get('fid'), -1 if read else 1)
+            self.cache.update(m, flags=flags)
+        if self._folders:
+            self.cache.set('folders', self._folders)
+        return flags if isinstance(mid, str) else {'flags': flags, 'done': done, 'failed': failed, 'folders': self._folders}
 
     def move(self, mid, folder_id):
-        self._online(self.adapter.move_message, mid, str(folder_id))
-        self.cache.update(mid, fid=str(folder_id))
-        return True
+        folder_id = str(folder_id)
+        ids = [mid] if isinstance(mid, str) else [str(m) for m in mid]
+        before = {m: self.cache.summary(m) or {} for m in ids}
+        done, failed = self._apply(ids, self.adapter.move_message, getattr(self.adapter, 'move_many', None), folder_id)
+        for m in done:
+            unread = 0 if before[m].get('flags', {}).get('read', True) else 1
+            if before[m].get('fid') and before[m]['fid'] != folder_id:
+                self._count(before[m]['fid'], -unread, -1)
+                self._count(folder_id, unread, 1)
+            self.cache.update(m, fid=folder_id)
+        if self._folders:
+            self.cache.set('folders', self._folders)
+        return True if isinstance(mid, str) else {'done': done, 'failed': failed, 'folders': self._folders}
 
     def delete(self, mid):
-        summary = self.cache.summary(mid) or {}
+        ids = [mid] if isinstance(mid, str) else [str(m) for m in mid]
         trash = next((f['id'] for f in self._folders if f['role'] == 'trash'), '4')
-        if summary.get('fid') == trash:
-            # Permanent deletion is deliberately not offered.
+        # Permanent deletion is deliberately not offered: mail already in the
+        # trash stays there.
+        movable = [m for m in ids if (self.cache.summary(m) or {}).get('fid') != trash]
+        if not movable:
             raise AppError('OPERATION_NOT_ALLOWED')
-        return self.move(mid, trash)
+        if isinstance(mid, str):
+            return self.move(mid, trash)
+        return {**self.move(movable, trash), 'skipped': [m for m in ids if m not in movable]}
 
     # Search ----------------------------------------------------------------
     def search_local(self, query):
