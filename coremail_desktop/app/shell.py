@@ -185,6 +185,10 @@ class Bridge(QObject):
 
 
 class AppShell(QMainWindow):
+    push_changed = Signal(str)
+    push_state = Signal(str, str)
+    PUSH_FALLBACK_SECONDS = 300  # Polling interval while the push channel is up.
+
     def __init__(self, backend, demo=False, sandboxed=True, relaunch_without_sandbox=None):
         super().__init__()
         self.backend = backend
@@ -231,6 +235,15 @@ class AppShell(QMainWindow):
 
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll_now)
+        self._poll_seconds = 60
+        self.push = None
+        self._push_pending = False
+        self._push_debounce = QTimer(self)
+        self._push_debounce.setSingleShot(True)
+        self._push_debounce.setInterval(1500)  # One refresh for a burst of events.
+        self._push_debounce.timeout.connect(self.poll_now)
+        self.push_changed.connect(self._push_event, Qt.ConnectionType.QueuedConnection)
+        self.push_state.connect(self._push_state_changed, Qt.ConnectionType.QueuedConnection)
         self._make_tray()
         QShortcut(QKeySequence('Ctrl+Shift+I'), self, activated=self._devtools)
 
@@ -309,6 +322,7 @@ class AppShell(QMainWindow):
 
     def closeEvent(self, event):
         if self._quitting or not self.tray.isVisible() or self.demo:
+            self._stop_push()
             self.bridge.shutdown()
             event.accept()
             QApplication.instance().quit()
@@ -331,7 +345,45 @@ class AppShell(QMainWindow):
 
     # Polling -----------------------------------------------------------------
     def start_polling(self, seconds):
-        self.poll_timer.start(max(30, int(seconds)) * 1000)
+        self._poll_seconds = max(30, int(seconds))
+        pushed = self.push is not None and self.push.state == 'connected'
+        self.poll_timer.start(max(self._poll_seconds, self.PUSH_FALLBACK_SECONDS if pushed else 0) * 1000)
+
+    def start_push(self):
+        """Real-time refresh over the mail server's socket.io channel; polling stays as the fallback."""
+        if self.demo:
+            return
+        from coremail_desktop.protocol.push import PushClient
+        self._stop_push()
+        adapter = self.backend.adapter
+        self.push = PushClient(lambda: getattr(adapter, 'push_credentials', lambda: None)(), self.push_changed.emit,
+                               lambda state, code=None: self.push_state.emit(state, code or ''))
+        self.push.start()
+
+    def _stop_push(self):
+        if self.push is not None:
+            self.push.stop()
+            self.push = None
+
+    def _push_log(self, line):
+        # States, failure codes and event arrival times only.
+        try:
+            with open(self.backend.data_dir / 'hongyan-push.log', 'a', encoding='utf-8') as stream:
+                stream.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {line}\n')
+        except OSError:
+            pass
+
+    def _push_event(self, name):
+        self._push_log('event -> refresh')
+        self._push_pending = self._poll_busy
+        self._push_debounce.start()
+
+    def _push_state_changed(self, state, code):
+        self._push_log(f'{state} {code}'.rstrip())
+        if state in ('connected', 'waiting'):
+            self.start_polling(self._poll_seconds)
+        if state == 'connected':
+            self._push_debounce.start()  # Catch up on anything missed while disconnected.
 
     def poll_now(self):
         if self._poll_busy or self.backend.cache is None:
@@ -342,6 +394,9 @@ class AppShell(QMainWindow):
     def internal_result(self, request_id, ok, payload):
         if request_id == 'internal:poll':
             self._poll_busy = False
+            if self._push_pending:  # A push arrived while this poll was running.
+                self._push_pending = False
+                self._push_debounce.start()
             if not ok:
                 self.bridge.emit_event('syncError', json.loads(payload))
                 return
@@ -361,6 +416,7 @@ class AppShell(QMainWindow):
     # Native calls from the page (run on the UI thread) ---------------------
     def native_startSync(self, seconds=60):
         self.start_polling(seconds)
+        self.start_push()
         QTimer.singleShot(200, self.poll_now)
         return True
 
