@@ -25,9 +25,6 @@ if ($taskBuildExit -ne 0) { throw 'Desktop packaging failed.' }
 & $python -u packaging/verify_webengine.py
 if ($LASTEXITCODE -ne 0) { throw 'Packaged Qt WebEngine reader failed to initialize.' }
 
-& $python -u packaging/audit_distribution.py
-if ($LASTEXITCODE -ne 0) { throw 'Distribution audit found personal or research data.' }
-
 & $python -u packaging/smoke_check.py
 if ($LASTEXITCODE -ne 0) { throw 'Packaged application exited before the startup window elapsed.' }
 
@@ -37,4 +34,27 @@ if ($LASTEXITCODE -ne 0) { throw 'Packaged application failed to start from a ne
 & $python -u packaging/verify_scaling.py
 if ($LASTEXITCODE -ne 0) { throw 'Shell layout failed at one of the required display scale factors.' }
 
-Write-Output 'Build verified: WebEngine reader, privacy audit, startup smoke check, neutral-directory launch and display scaling all passed.'
+# Audit after every launch check, so nothing a demo run left in dist can ship.
+& $python -u packaging/audit_distribution.py
+if ($LASTEXITCODE -ne 0) { throw 'Distribution audit found personal or research data.' }
+
+Write-Output 'Build verified: WebEngine reader, startup smoke check, neutral-directory launch, display scaling and privacy audit all passed.'
+
+# Per-user installer (Inno Setup 6, packaging/hongyan.iss). Optional: skipped with a
+# note when ISCC.exe is not installed. Set $env:ISCC to point at a specific copy.
+$iscc = @($env:ISCC,
+          (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source),
+          (Join-Path $taskRoot '.tools\InnoSetup\ISCC.exe'),
+          (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+          (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+          (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')) |
+        Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if ($iscc) {
+    $version = (Select-String -LiteralPath (Join-Path $taskRoot 'pyproject.toml') -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+    & $iscc /Q "/DAppVersion=$version" (Join-Path $taskRoot 'packaging\hongyan.iss')
+    if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
+    Write-Output "Installer: dist\Hongyan-Setup-$version.exe"
+}
+else {
+    Write-Warning 'Inno Setup 6 (ISCC.exe) not found; installer not built. See packaging/hongyan.iss.'
+}

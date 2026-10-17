@@ -13,6 +13,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from verify_data import clean, isolate
+
 ROOT = Path(__file__).resolve().parent.parent
 EXE = ROOT / 'dist' / 'Hongyan' / 'Hongyan.exe'
 ALIVE_SECONDS = 18
@@ -26,6 +28,7 @@ def main():
         before = {item.name for item in Path(neutral).iterdir()}
         environment = dict(os.environ)
         environment['QT_QPA_PLATFORM'] = 'offscreen'
+        isolate(environment)
         process = subprocess.Popen([str(EXE), '--demo'], cwd=neutral, env=environment,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + ALIVE_SECONDS
@@ -35,6 +38,7 @@ def main():
         if alive:
             process.kill()
         process.wait()
+        clean()
         after = {item.name for item in Path(neutral).iterdir()}
         report = {
             'executable': str(EXE),

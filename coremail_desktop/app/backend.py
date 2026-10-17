@@ -21,7 +21,7 @@ from coremail_desktop.models import AccountConfig, DraftAttachment, DraftDocumen
 from coremail_desktop.mime.parser import parse_mime
 
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
-                 'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right'}
+                 'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'autostart': False}
 # Coremail system folder ids. Used only for icons and ordering; the name shown is
 # always the server's own folder name.
 SYSTEM_ROLES = {'1': 'inbox', '2': 'drafts', '3': 'sent', '4': 'trash', '5': 'spam', '6': 'virus'}
@@ -79,6 +79,7 @@ class MailBackend:
         self._contact_index = None
         self._contact_index_size = -1
         self._docs = {}
+        self.autostart = None  # Set by the app (not in demo mode): reads and writes the Windows Run key.
 
     # Accounts --------------------------------------------------------------
     def _accounts_path(self):
@@ -192,7 +193,10 @@ class MailBackend:
     # Preferences -----------------------------------------------------------
     def prefs(self):
         stored = self.cache.get('prefs', {}) if self.cache else {}
-        return {**DEFAULT_PREFS, **{k: v for k, v in stored.items() if k in DEFAULT_PREFS}}
+        prefs = {**DEFAULT_PREFS, **{k: v for k, v in stored.items() if k in DEFAULT_PREFS}}
+        if self.autostart is not None:
+            prefs['autostart'] = self.autostart.is_enabled()  # The registry is the source of truth.
+        return prefs
 
     def set_prefs(self, values):
         prefs = self.prefs()
@@ -201,6 +205,8 @@ class MailBackend:
                 prefs[key] = value
         prefs['pollSeconds'] = max(30, min(int(prefs['pollSeconds']), 3600))
         prefs['signature'] = prefs['signature'][:20000]
+        if self.autostart is not None and type(values.get('autostart')) is bool:
+            prefs['autostart'] = self.autostart.set_enabled(values['autostart'])
         self.cache.set('prefs', prefs)
         return prefs
 
