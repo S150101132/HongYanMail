@@ -52,6 +52,32 @@ class DesktopSession(CoremailSession):
         if code in ('FA_NEED_SECOND_AUTH','FA_NEED_VERIFY_CODE','FA_NEED_BIND_DEVICE'): raise AppError('AUTH_CHALLENGE')
         if code != 'S_OK': raise AppError('RPC_REJECTED')
         return result
+    def push_credentials(self):
+        """Everything the push channel needs, or None when push is off or signed out.
+
+        Verified 2026-10-17 (analysis/push-shape-2026-10-17.json): the socket.io
+        handshake is authenticated by the Coremail.sid cookie (the jar scopes it
+        to /coremail, so the header is built here for /socket.io/), and the topics
+        come from the webmail page's X.U settings. A push host on another origin
+        is refused: push then stays off and polling carries on."""
+        from coremail_desktop.protocol.push import read_push_config, topics
+        if not self.sid: return None
+        sid=self.sid
+        scheme,host,port=self._origin
+        origin=f'{scheme}://{host}'+('' if port==443 else f':{port}')
+        config=read_push_config(self)
+        if config.get('enablePushNotify') is not True: return None
+        online=config.get('onlineHost')
+        if online:
+            try:
+                if _origin(online)!=self._origin: return None
+            except CoremailError: return None
+        request=Request(origin+'/socket.io/1/')
+        self._cookies.add_cookie_header(request)
+        cookies=[c.strip() for c in (request.get_header('Cookie') or '').split(';') if c.strip()]
+        if not any(c.startswith('Coremail.sid=') for c in cookies): cookies.append('Coremail.sid='+sid)
+        return {'origin':origin,'cookie':'; '.join(cookies),'opener':self._opener,'sid':sid,
+                'username':str(config.get('dnemail') or ''),'topics':topics(config),'alive':lambda: self.sid==sid}
     def prepare_reply(self,source_id,reply_all=False,is_html=False):
         if not self.sid: raise AppError('NOT_AUTHENTICATED')
         url=urljoin(self.base_url,'XT/jsp/compose.jsp')+'?'+urlencode({'sid':self.sid})
@@ -279,6 +305,9 @@ class CoremailAdapter:
         rows=self._call('oab:autoMatch',{'keyword':keyword.strip(),'limit':max(1,min(int(limit),20))},True).get('var')
         if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
         return [{'name':str(r.get('true_name') or ''),'email':r['email']} for r in rows if isinstance(r,dict) and isinstance(r.get('email'),str) and '@' in r['email']]
+    def push_credentials(self):
+        getter=getattr(self._session,'push_credentials',None)
+        return getter() if getter else None
     def display_name(self):
         value=self._call('user:getAttrs',{'optionalAttrIds':['true_name']},True).get('var')
         return str(value.get('true_name') or '') if isinstance(value,dict) else ''

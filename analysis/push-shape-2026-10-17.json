@@ -1,0 +1,250 @@
+{
+ "runs": [
+  {
+   "date": "2026-10-17 15:17",
+   "scope": "push channel shapes; no values",
+   "steps": {
+    "login": "passed",
+    "cookie_names": [
+     "Coremail",
+     "Coremail.sid"
+    ],
+    "handshake": {
+     "status": 200,
+     "content_type": "application/octet-stream",
+     "binary_framing": true,
+     "bytes": 101,
+     "packets": [
+      {
+       "eio": 0,
+       "open_keys": {
+        "sid": "str",
+        "pingInterval": "num",
+        "pingTimeout": "num",
+        "upgrades": [
+         "str",
+         "len=1"
+        ]
+       },
+       "pingInterval": 30000,
+       "pingTimeout": 60000,
+       "upgrades": [
+        "websocket"
+       ]
+      }
+     ]
+    },
+    "upgrade": {
+     "status": "passed",
+     "replayed": 0,
+     "ping_interval_s": 30.0,
+     "ping_timeout_s": 60.0
+    },
+    "send_to_self": "Accepted",
+    "first_event_after_send": null
+   },
+   "frames": [
+    {
+     "t": 8.8,
+     "kind": "ws",
+     "eio": 4,
+     "sio": 0,
+     "nsp": "<redacted>",
+     "ack": false,
+     "event": null,
+     "args": "NoneType"
+    },
+    {
+     "t": 39.36,
+     "kind": "ws",
+     "eio": 3
+    },
+    {
+     "t": 69.92,
+     "kind": "ws",
+     "eio": 3
+    },
+    {
+     "t": 100.42,
+     "kind": "ws",
+     "eio": 3
+    },
+    {
+     "t": 131.02,
+     "kind": "ws",
+     "eio": 3
+    },
+    {
+     "t": 135.14,
+     "kind": "ws-end",
+     "code": "CLOSED"
+    }
+   ],
+   "note": "Run 1: channel only, no auth/subscribe. CONNECT and pongs arrive, but no event follows a send-to-self."
+  },
+  {
+   "date": "2026-10-17 15:25",
+   "scope": "push channel shapes; no values",
+   "steps": {
+    "login": "passed",
+    "page_config": {
+     "keys": [
+      "dnemail",
+      "enablePushNotify",
+      "onlineDelMailPath",
+      "onlineHost",
+      "onlineInMailPath",
+      "onlineModMailPath",
+      "onlineTryCount",
+      "orgid"
+     ],
+     "enablePushNotify": true,
+     "onlineHost": {
+      "scheme": "https",
+      "same_host": true,
+      "path": "/"
+     },
+     "paths": {
+      "onlineInMailPath": "/$org_id$/onstat/mail/$uid$/in_mail",
+      "onlineModMailPath": "/$org_id$/onstat/mail/$uid$/mod_mail",
+      "onlineDelMailPath": "/$org_id$/onstat/mail/$uid$/del_mail"
+     },
+     "orgid": "str",
+     "dnemail_is_account": true
+    },
+    "topics": [
+     "/$org_id$/onstat/mail/$uid$/in_mail",
+     "/$org_id$/onstat/mail/$uid$/mod_mail",
+     "/$org_id$/onstat/mail/$uid$/del_mail"
+    ],
+    "upgrade": {
+     "status": "passed",
+     "replayed": 0
+    },
+    "ready": true,
+    "send_to_self": "Accepted",
+    "first_message_after_send": {
+     "after_send_s": 1.91,
+     "topic": "one of steps.topics"
+    }
+   },
+   "frames": [
+    {
+     "t": 9.55,
+     "kind": "sent",
+     "event": "auth",
+     "args": {
+      "clientId": "str",
+      "sid": "str",
+      "username": "str"
+     }
+    },
+    {
+     "t": 9.55,
+     "kind": "ws",
+     "eio": 4,
+     "sio": 0,
+     "nsp": "/",
+     "event": null
+    },
+    {
+     "t": 9.89,
+     "kind": "ws",
+     "eio": 4,
+     "sio": 2,
+     "nsp": "/",
+     "event": "ready",
+     "args": [
+      {},
+      "len=1"
+     ]
+    },
+    {
+     "t": 9.89,
+     "kind": "sent",
+     "event": "subscribe",
+     "topic": "one of steps.topics"
+    },
+    {
+     "t": 9.89,
+     "kind": "sent",
+     "event": "subscribe",
+     "topic": "one of steps.topics"
+    },
+    {
+     "t": 9.89,
+     "kind": "sent",
+     "event": "subscribe",
+     "topic": "one of steps.topics"
+    },
+    {
+     "t": 16.8,
+     "kind": "ws",
+     "eio": 4,
+     "sio": 2,
+     "nsp": "/",
+     "event": "message",
+     "args": [
+      {
+       "topic": "str",
+       "payload": {
+        "json": {
+         "payload": {
+          "RealTo": "…",
+          "Sender": "…",
+          "Version": "…",
+          "fid": "…",
+          "mid": "…",
+          "msid": "…",
+          "sub": "…"
+         },
+         "type": "str"
+        }
+       }
+      },
+      "len=1"
+     ],
+     "topic": "one of steps.topics"
+    },
+    {
+     "t": 32.7,
+     "kind": "ws-end",
+     "code": "CLOSED"
+    }
+   ],
+   "note": "Run 2: emit auth {clientId,sid,username} on CONNECT, server emits ready, then subscribe {topic} per topic (webmail X.U onlineInMailPath/onlineModMailPath/onlineDelMailPath). The message event arrived 1.91 s after the send. The probe redacted every topic segment; the templates are in page_config.paths, and the message topic was one of the three."
+  }
+ ],
+ "summary": {
+  "handshake": "GET https://<mail host>/socket.io/1/?t=<ms>&EIO=3&transport=polling, Cookie Coremail.sid (+Coremail); binary (XHR2) polling framing",
+  "open": {
+   "keys": [
+    "sid",
+    "pingInterval",
+    "pingTimeout",
+    "upgrades"
+   ],
+   "pingInterval": 30000,
+   "pingTimeout": 60000,
+   "upgrades": [
+    "websocket"
+   ]
+  },
+  "upgrade": "wss://<mail host>/socket.io/1/websocket/?EIO=3&transport=websocket&sid=<eio sid>, 2probe/3probe/5",
+  "socket_io": "v2 default namespace; server sends 40 after upgrade",
+  "client_emits": [
+   "auth {clientId, sid, username}",
+   "subscribe {topic}"
+  ],
+  "server_emits": [
+   "ready {}",
+   "message {topic, payload: JSON string {type, payload{RealTo,Sender,Version,fid,mid,msid,sub}}}"
+  ],
+  "topics": [
+   "/$org_id$/onstat/mail/$uid$/in_mail",
+   "/$org_id$/onstat/mail/$uid$/mod_mail",
+   "/$org_id$/onstat/mail/$uid$/del_mail"
+  ],
+  "latency_after_send_s": 1.91
+ }
+}
