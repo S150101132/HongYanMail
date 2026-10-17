@@ -4,7 +4,7 @@ from collections import Counter
 import json, sqlite3
 
 root = Path(r'D:\work\email\wangbiao@inspur.com')
-out = Path(__file__).parent / 'analysis'
+out = Path(__file__).resolve().parents[2] / 'analysis'
 result = {'root': str(root), 'directories': {}, 'database_candidates': [], 'format_samples': []}
 for child in sorted(root.iterdir()):
     if child.is_dir():

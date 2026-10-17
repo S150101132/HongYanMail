@@ -60,6 +60,7 @@ def make_envelope(certificate_pem: bytes, cipher: str, extra_recipient_pem: byte
             command.append(str(extra))
         completed = subprocess.run(command, capture_output=True, text=True, timeout=120)
         if completed.returncode != 0 or not output.is_file():
+            shutil.rmtree(directory, ignore_errors=True)  # Unsupported cipher: leave nothing behind.
             return None
         return output.read_bytes(), directory
     except Exception:

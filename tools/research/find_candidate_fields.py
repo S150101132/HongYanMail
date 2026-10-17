@@ -12,7 +12,7 @@ are referenced by *different* functions than the RPC-name literal. Examples:
 
 Only 1 of the 5 ground-truth interfaces passed, so the script exits non-zero.
 Kept in the repository to document the rejected method and to make the ground-truth
-check reusable if the premise is ever revisited. See 04-接口证据与验证记录.md §6.
+check reusable if the premise is ever revisited. See docs/research/04-接口证据与验证记录.md §6.
 
 Original intent follows.
 

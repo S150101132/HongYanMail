@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from coremail_desktop.app.backend import MailBackend  # noqa: E402

@@ -1,4 +1,4 @@
-"""Generate 02-通信协议与接口清单.md from the collected evidence.
+"""Generate docs/research/02-通信协议与接口清单.md from the collected evidence.
 
 Columns required by the objective: 名称 / 用途 / 协议 / 端点或命令 / 请求参数 /
 响应结构 / 认证依赖 / 调用代码位置 / 证据 / 可信度 / 验证状态.
@@ -159,7 +159,7 @@ PURPOSE = {
     "lp:getImg": "登录插件相关图片（模块 `lp`，**仅网页端，按命名推断**）",
 }
 
-# code locations proven by REA trace_feature (see 04-接口证据与验证记录.md)
+# code locations proven by REA trace_feature (see docs/research/04-接口证据与验证记录.md)
 TRANSPORT_NOTE = ("通用 RPC 构造 `/s/json?func=` @`0x142105990`，被 `FUN_140ce70a0`、`FUN_140d06190`、"
                   "`FUN_140d06b70`、`FUN_140d0a340` 引用（共享传输层）")
 TRACED = {
@@ -501,7 +501,7 @@ def main():
     out.append("分析对象：`C:\\Program Files\\cmclient\\CMClient.exe`（INSPURCMClient 4.2.x，x86_64 PE，"
                "SHA-256 `a2cc47c5efb74524dd82e447204d0cc9587a971f9cda9552187eee19abb37c5b`）、"
                "安装目录 `C:\\Program Files\\cmclient\\app` 网页层、客户端运行日志、公司公开 Webmail 脚本。\n")
-    out.append("生成方式：`tools/build_interface_doc.py` 依据 `analysis/server-api-final.json`、"
+    out.append("生成方式：`tools/research/build_interface_doc.py` 依据 `analysis/server-api-final.json`、"
                "`analysis/runtime-observed-api.json`、`analysis/runtime-interface-contracts.json` 生成。\n")
     out.append("## 0. 协议判定（先说结论）\n")
     out.append("本客户端对当前公司部署（`https://newmail.inspur.com/coremail/`）使用 **Coremail 私有 HTTP JSON-RPC**，"
@@ -745,13 +745,13 @@ def main():
     for name in sorted(TRACED):
         out.append(f"| `{name}` | {TRACED[name]} |")
     out.append("")
-    out.append("未列出的接口其「调用代码位置」仍为未定位；批量定位由 `tools/trace_batch.ps1` 在后台逐个执行，"
+    out.append("未列出的接口其「调用代码位置」仍为未定位；批量定位由 `tools/research/trace_batch.ps1` 在后台逐个执行，"
                "结果汇总见 `analysis/rea-trace-summary.json`。\n")
     out.append("**推断（非已验证）**：`FUN_140cfca00`（10,128 B，引用 `user:login` 与 `/s/json?func=` 系列）"
                "规模最大，符合「登录状态机 + 设备/2FA 分支」的形态；需反编译确认后才能作为结论。\n")
-    with open(os.path.join(WS, "02-通信协议与接口清单.md"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(WS, "docs/research/02-通信协议与接口清单.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(out))
-    print("written 02-通信协议与接口清单.md, lines:", len(out))
+    print("written docs/research/02-通信协议与接口清单.md, lines:", len(out))
 
 
 if __name__ == "__main__":

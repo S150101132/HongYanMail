@@ -160,6 +160,20 @@ class SingleInstanceTest(unittest.TestCase):
         from PySide6.QtWidgets import QApplication
         cls.app = QApplication.instance() or QApplication([])
 
+    def setUp(self):
+        # Registered first, so it runs last: after every owner and socket is released,
+        # let Qt finish deferred deletions here instead of inside a later module's event
+        # loop (which crashed the full suite at random in the WebEngine reader tests).
+        self.addCleanup(self._settle)
+
+    def _settle(self):
+        import gc
+        from PySide6.QtCore import QCoreApplication, QEvent
+        for _ in range(3):
+            self.app.processEvents()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            gc.collect()
+
     def _pump(self, condition, seconds=3):
         import time
         deadline = time.monotonic() + seconds
@@ -173,11 +187,14 @@ class SingleInstanceTest(unittest.TestCase):
         from coremail_desktop.app.single_instance import SingleInstance
         variant = 'test-' + uuid.uuid4().hex[:8]
         first = SingleInstance(variant)
+        self.addCleanup(first.deleteLater)
         self.addCleanup(first.release)
         hits = []
         first.activated.connect(lambda: hits.append(1))
         self.assertTrue(first.acquire())
-        self.assertFalse(SingleInstance(variant).acquire())
+        rival = SingleInstance(variant)
+        self.addCleanup(rival.deleteLater)
+        self.assertFalse(rival.acquire())
         # A real second launch is another process; the owner keeps running its event loop.
         child = subprocess.Popen([sys.executable, '-c', (
             'from PySide6.QtCore import QCoreApplication; app = QCoreApplication([]); '
@@ -189,6 +206,7 @@ class SingleInstanceTest(unittest.TestCase):
         self.assertEqual(hits, [1])
         first.release()  # e.g. before the sandbox relaunch
         successor = SingleInstance(variant)
+        self.addCleanup(successor.deleteLater)
         self.addCleanup(successor.release)
         self.assertTrue(successor.acquire())
 
@@ -196,11 +214,14 @@ class SingleInstanceTest(unittest.TestCase):
         from PySide6.QtNetwork import QLocalSocket
         from coremail_desktop.app.single_instance import SingleInstance
         owner = SingleInstance('test-' + uuid.uuid4().hex[:8])
+        self.addCleanup(owner.deleteLater)
         self.addCleanup(owner.release)
         hits = []
         owner.activated.connect(lambda: hits.append(1))
         self.assertTrue(owner.acquire())
         socket = QLocalSocket()
+        self.addCleanup(socket.deleteLater)
+        self.addCleanup(socket.abort)
         socket.connectToServer(owner.server_name)
         self.assertTrue(socket.waitForConnected(1000))
         socket.write(b'open C:\\secret.eml')

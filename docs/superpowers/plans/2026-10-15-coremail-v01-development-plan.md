@@ -131,7 +131,7 @@ probe/                                       保留现有验证工具
 ### Task 0：前置验证 PFX 用途、实际加密格式与提交契约
 
 **Files**
-- Create：`analysis/certificate-compatibility.md`、`tools/crypto_probe.py`。
+- Create：`analysis/certificate-compatibility.md`、`tools/research/crypto_probe.py`。
 - Test：`tests/test_crypto_probe.py`、`tests/fixtures/crypto/`（仅合成证书与无业务内容样本）。个人 PFX、私钥、原始公司邮件不提交仓库。
 
 **Interfaces**

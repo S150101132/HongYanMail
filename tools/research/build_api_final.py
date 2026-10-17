@@ -17,7 +17,7 @@ import json
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-A = os.path.join(HERE, "..", "analysis")
+A = os.path.join(HERE, "..", "..", "analysis")
 
 inv = json.load(open(os.path.join(A, "server-api-inventory.json"), encoding="utf-8"))
 obs = json.load(open(os.path.join(A, "runtime-observed-api.json"), encoding="utf-8"))["observed"]

@@ -11,13 +11,13 @@ import re
 import sys
 
 WS = r"D:\workspace\redocoreemail"
-DOC = os.path.join(WS, "02-通信协议与接口清单.md")
+DOC = os.path.join(WS, "docs/research/02-通信协议与接口清单.md")
 
 REQUIRED = ["名称", "用途", "协议", "端点或命令", "请求参数", "响应结构",
             "认证依赖", "调用代码位置", "证据", "可信度", "验证状态"]
 
-DELIVERABLES = ["01-程序结构.md", "02-通信协议与接口清单.md", "03-认证与同步流程.md",
-                "04-接口证据与验证记录.md", "05-客户端MVP设计.md", "06-待验证问题.md"]
+DELIVERABLES = ["docs/research/01-程序结构.md", "docs/research/02-通信协议与接口清单.md", "docs/research/03-认证与同步流程.md",
+                "docs/research/04-接口证据与验证记录.md", "docs/research/05-客户端MVP设计.md", "docs/research/06-待验证问题.md"]
 
 
 def main():

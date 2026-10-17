@@ -14,7 +14,7 @@ Codex 版本的问题集中在界面简陋、日常功能缺失、每次操作�
 
 ## 本轮新接入的服务器能力（均先做只读形状探测）
 
-探测脚本 `tools/probe_daily_features.py` 只记录字段名与类型（`analysis/daily-features-shape-2026-10-17.json`）：
+探测脚本 `tools/probes/probe_daily_features.py` 只记录字段名与类型（`analysis/daily-features-shape-2026-10-17.json`）：
 
 - `mbox:getAllFolders {stats:true}` → 每个文件夹 `messageCount`/`unreadMessageCount`。
 - `mbox:listMessages {summaryWindowSize:120}` → 每行 `summary` 摘要。
@@ -24,7 +24,7 @@ Codex 版本的问题集中在界面简陋、日常功能缺失、每次操作�
 
 ## 真机验证（本人账号）
 
-`tools/verify_daily_real.py`，临时缓存目录用后删除，打开邮件不改变已读状态，结果见 `analysis/daily-client-real-verification-2026-10-17.json`：
+`tools/verify/verify_daily_real.py`，临时缓存目录用后删除，打开邮件不改变已读状态，结果见 `analysis/daily-client-real-verification-2026-10-17.json`：
 
 | 检查 | 结果 |
 | --- | --- |

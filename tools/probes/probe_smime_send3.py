@@ -19,13 +19,13 @@ from pathlib import Path
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.ciphers import algorithms  # noqa: E402
 from cryptography.hazmat.primitives.serialization import pkcs7  # noqa: E402
-from tools.probe_smime_send2 import ACCOUNT, PFX, ask, load_cert, shape  # noqa: E402
+from tools.probes.probe_smime_send2 import ACCOUNT, PFX, ask, load_cert, shape  # noqa: E402
 from coremail_desktop.protocol.coremail import CoremailAdapter  # noqa: E402
 from coremail_desktop.models import AccountConfig  # noqa: E402
 from coremail_desktop.crypto.service import CryptoService  # noqa: E402

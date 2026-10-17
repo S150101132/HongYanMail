@@ -49,7 +49,7 @@ python -m probe --preflight
 python -m probe --send-self
 ```
 
-第二条命令提示在本地输入密码，输入不会回显；也可双击 `run_probe.cmd`。如需要系统密码输入对话框：
+第二条命令提示在本地输入密码，输入不会回显；也可双击 `tools/legacy/run_probe.cmd`。如需要系统密码输入对话框：
 
 ```powershell
 python -m probe --password-dialog --send-self

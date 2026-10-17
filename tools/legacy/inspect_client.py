@@ -5,7 +5,7 @@ import pefile
 
 ROOT = Path(r'C:\Program Files\cmclient')
 DATA = Path(r'C:\Users\wangbiao\AppData\Roaming\Cm\CMClient')
-OUT = Path(__file__).parent / 'analysis'
+OUT = Path(__file__).resolve().parents[2] / 'analysis'
 OUT.mkdir(exist_ok=True)
 result = {'program_root': str(ROOT), 'data_root': str(DATA), 'binaries': [], 'web_modules': {}, 'bridge_commands': {}, 'data_structure': {}}
 keywords = ['sqlite','wxwidgets','wxwindow','imap','smtp','pop3','coremail','openssl','gmssl','libcurl','libcef','cryptopp','sqlcipher','sqlitemc','boost','inno setup']

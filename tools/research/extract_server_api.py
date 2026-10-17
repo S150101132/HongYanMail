@@ -82,8 +82,8 @@ def main():
     ap.add_argument("--cefapp", default=r"C:\Program Files\cmclient\CMCefApp.exe")
     ap.add_argument("--app", default=r"C:\Program Files\cmclient\app")
     ap.add_argument("--logs", default=r"C:\Users\wangbiao\AppData\Roaming\Cm\CMClient\logs")
-    ap.add_argument("--web", default=os.path.join(os.path.dirname(__file__), "..", "analysis", "web-login"))
-    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "analysis", "server-api-inventory.json"))
+    ap.add_argument("--web", default=os.path.join(os.path.dirname(__file__), "..", "..", "analysis", "web-login"))
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "..", "analysis", "server-api-inventory.json"))
     args = ap.parse_args()
 
     sinks = {"funcs": defaultdict(set), "jsp": set(), "paths": set()}

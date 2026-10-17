@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from coremail_desktop.protocol.coremail import DesktopSession, CoremailAdapter  # noqa: E402

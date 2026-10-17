@@ -12,12 +12,12 @@ import time
 import uuid
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from coremail_desktop.app.backend import MailBackend  # noqa: E402
 from coremail_desktop.crypto.service import CryptoService  # noqa: E402
-from tools.probe_smime_send2 import ACCOUNT, PFX, ask  # noqa: E402
+from tools.probes.probe_smime_send2 import ACCOUNT, PFX, ask  # noqa: E402
 
 
 def main():
