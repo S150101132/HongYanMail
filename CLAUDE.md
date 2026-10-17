@@ -21,6 +21,7 @@ Python 3.12 + PySide6 (Qt WebEngine). The web UI talks to a Qt-free backend thro
 | `tools/legacy/` | Early root scripts (`run_probe.cmd`, `inspect_*.py`) |
 | `docs/research/` | 01–06 reverse-engineering reports |
 | `docs/releases/` | Dated progress/verification notes |
+| `docs/roadmap/待实现功能.md` | Feature backlog (AI features etc.) — the basis for what to build next; specs in `docs/superpowers/specs/` |
 | `analysis/` | Evidence data written by probes (JSON is git-ignored) — scripts write here, keep the path |
 | `HongyanData/`, `build/`, `dist/`, `.tools/`, `.venv/` | Local/generated, git-ignored |
 
