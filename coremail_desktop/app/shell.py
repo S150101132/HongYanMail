@@ -43,10 +43,11 @@ BACKEND_METHODS = {
     'setFlags': 'set_flags', 'move': 'move', 'delete': 'delete', 'searchLocal': 'search_local',
     'searchServer': 'search_server', 'suggest': 'suggest', 'compose': 'compose', 'saveDraft': 'save_draft',
     'listDrafts': 'list_drafts', 'restoreDraft': 'restore_draft', 'deleteDraft': 'delete_draft',
-    'send': 'send', 'poll': 'poll', 'prefetch': 'prefetch',
+    'send': 'send', 'poll': 'poll', 'prefetch': 'prefetch', 'encryptionCheck': 'encryption_check',
+    'certificateStatus': 'certificate_status', 'forgetCertificate': 'forget_certificate',
 }
 # Read-only calls may run beside a long send or list fetch.
-FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest'}
+FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus'}
 BACKGROUND_METHODS = {'prefetch'}
 
 
@@ -390,12 +391,12 @@ class AppShell(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
         return True
 
-    def native_unlockCertificate(self, password=''):
+    def native_unlockCertificate(self, password='', remember=False):
         path, _ = QFileDialog.getOpenFileName(self, '选择个人证书', str(Path.home()), '证书 (*.pfx *.p12)')
         if not path:
             return False
         try:
-            return self.backend.unlock_certificate(path, password)
+            return self.backend.unlock_certificate(path, password, bool(remember))
         except Exception as error:
             raise AppError(getattr(error, 'code', 'CERT_UNLOCK_FAILED')) from None
 

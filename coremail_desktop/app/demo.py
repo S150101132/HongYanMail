@@ -6,7 +6,8 @@ from coremail_desktop.models import Folder, MessageSummary
 
 PEOPLE = [('产品协作组', 'product@example.invalid'), ('研发团队', 'rd@example.invalid'),
           ('张晓明', 'zhangxm@example.invalid'), ('李华', 'lihua@example.invalid'),
-          ('人力资源部', 'hr@example.invalid'), ('IT 服务台', 'itsupport@example.invalid')]
+          ('人力资源部', 'hr@example.invalid'), ('IT 服务台', 'itsupport@example.invalid'),
+          ('合作伙伴 · 外部', 'partner@external.example')]
 SUBJECTS = ['项目进展与本周计划', '关于设计评审的会议纪要', '【通知】办公网络维护安排', '研发周报 · 第 42 周',
             'Re: 接口联调时间确认', '季度预算申请表（请于周五前反馈）', '新员工入职培训安排', '服务器迁移方案评审']
 BODY = ('<div style="font-family:Microsoft YaHei;font-size:14px"><p>各位同事：</p>'
@@ -16,6 +17,31 @@ BODY = ('<div style="font-family:Microsoft YaHei;font-size:14px"><p>各位同事
         '<tr><td>草稿与阅读流程验证</td><td>李华</td><td>10-22</td></tr></table>'
         '<p style="color:#b42318"><b>请注意：</b>周五下午 3 点进行集中演示。</p><p>谢谢！<br>产品协作组</p>'
         '<p style="color:#98a2b3;font-size:12px">（以上内容为合成演示数据）</p></div>')
+
+
+_DEMO_KEYS = {}
+
+
+def demo_certificate(email):
+    """A throwaway self-signed S/MIME certificate for synthetic addresses (cached per process)."""
+    email = email.casefold()
+    if email not in _DEMO_KEYS:
+        from datetime import datetime, timedelta, timezone
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, email), x509.NameAttribute(NameOID.EMAIL_ADDRESS, email)])
+        now = datetime.now(timezone.utc)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(days=1))
+                .not_valid_after(now + timedelta(days=365))
+                .add_extension(x509.SubjectAlternativeName([x509.RFC822Name(email)]), False)
+                .add_extension(x509.KeyUsage(True, False, True, False, False, False, False, False, False), True)
+                .sign(key, hashes.SHA256()))
+        _DEMO_KEYS[email] = (cert.public_bytes(serialization.Encoding.DER), key, cert)
+    return _DEMO_KEYS[email]
 
 
 class DemoAdapter:
@@ -39,6 +65,7 @@ class DemoAdapter:
         self.last_folder_id = None
         self.signed_in = False
         self.sent = []
+        self.sent_payloads = []
         self._counter = 0
 
     def login(self, account, password):
@@ -115,8 +142,17 @@ class DemoAdapter:
         self.sent.append(draft)
         return {'code': 'S_OK'}
 
-    def submit_encrypted(self, payload, recipients):
-        raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
+    supports_encrypted_submission = True
+    _keys = {}
+
+    def public_certificates(self, emails):
+        """Synthetic company directory: every example.invalid colleague has a certificate."""
+        return {e.casefold(): demo_certificate(e)[0] for e in emails if e.casefold().endswith('@example.invalid')}
+
+    def submit_encrypted(self, payload, recipients, draft=None):
+        self.sent.append(draft)
+        self.sent_payloads.append(payload)
+        return {'code': 'S_OK'}
 
     def find_sent_candidates(self, job, limit=50):
         return []

@@ -51,7 +51,7 @@ class OutboxService:
                 self._snapshots.pop(key,None)  # deliver has not run.
                 raise
             try:
-                response = self.adapter.submit_encrypted(job.payload,envelope) if job.encrypted else self.adapter.deliver(job.compose_id,draft)
+                response = self.adapter.submit_encrypted(job.payload,envelope,draft) if job.encrypted else self.adapter.deliver(job.compose_id,draft)
                 if not isinstance(response,dict) or response.get('code') != 'S_OK': raise AppError('INVALID_RESPONSE')
             except Exception:
                 job = replace(job,state='Unknown')

@@ -565,12 +565,14 @@ async function pickFolder(id) {
 }
 
 async function unlockCertificate() {
-  const pw = await promptDialog({ title: '解锁个人证书', text: '输入证书密码，然后选择 .pfx 证书文件。证书只保存在本次运行的内存中。',
-    body: '<input type="password" id="cert-pw" placeholder="证书密码">', okText: '选择证书文件…', collect: () => $('#cert-pw').value });
-  if (pw == null) return;
+  const got = await promptDialog({ title: '解锁个人证书', text: '输入证书密码，然后选择 .pfx 证书文件。',
+    body: '<input type="password" id="cert-pw" placeholder="证书密码"><label class="check" style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" id="cert-remember" checked> 记住证书（Windows 加密保存，下次自动解锁）</label>',
+    okText: '选择证书文件…', collect: () => ({ password: $('#cert-pw').value, remember: $('#cert-remember').checked }) });
+  if (got == null) return;
   try {
-    const res = await api('unlockCertificate', { password: pw });
+    const res = await api('unlockCertificate', got);
     if (!res) return;
+    S.profile.certificate = res;
     toast('证书已解锁');
     if (S.message) selectMessage(S.message.id, { noScroll: true });
   } catch (err) { fail(err); }
@@ -623,7 +625,7 @@ async function startCompose(mode, mid, extra = {}) {
 }
 
 function openComposer(draft) {
-  C.draft = draft; C.dirty = false;
+  C.draft = draft; C.dirty = false; C.encrypt = draft.encrypt === true ? true : draft.encrypt === false ? false : null;
   const box = $('#composer');
   box.classList.remove('hidden');
   $('#cmp-title').textContent = { new: '写邮件', reply: '回复', reply_all: '全部回复', forward: '转发' }[draft.mode] || '写邮件';
@@ -637,6 +639,7 @@ function openComposer(draft) {
   $('#cmp-subject').value = draft.subject || '';
   $('#cmp-editor').innerHTML = draft.html || '<p><br></p>';
   renderAtts();
+  renderEncrypt();
   setTimeout(() => {
     if (!(draft.to || []).length) $('.chips[data-field="to"] input').focus();
     else { const ed = $('#cmp-editor'); ed.focus(); const r = document.createRange(); r.setStart(ed, 0); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
@@ -652,7 +655,7 @@ function chipEl(addr) {
   el.dataset.email = p.email; el.dataset.name = p.name || '';
   el.title = p.email;
   el.innerHTML = `<span>${esc(p.name ? `${p.name}` : p.email)}</span><button tabindex="-1" title="移除">×</button>`;
-  el.querySelector('button').onclick = () => { el.remove(); C.dirty = true; };
+  el.querySelector('button').onclick = () => { el.remove(); C.dirty = true; renderEncrypt(); };
   return el;
 }
 function setChips(field, list) {
@@ -666,8 +669,25 @@ function setChips(field, list) {
   box.onclick = (e) => { if (e.target === box) input.focus(); };
 }
 function addChip(box, input, addr) {
-  box.insertBefore(chipEl(addr), input); input.value = ''; C.dirty = true; hideSuggest();
+  box.insertBefore(chipEl(addr), input); input.value = ''; C.dirty = true; hideSuggest(); renderEncrypt();
 }
+
+// ---- encryption: colleagues encrypted by default, any external recipient turns it off
+function allRecipients() { return ['to', 'cc', 'bcc'].flatMap((f) => $$(`.chips[data-field="${f}"] .chip`).map((c) => c.dataset.email)); }
+function isInternal(addr) { return (S.profile.internalDomains || []).includes(String(addr).split('@').pop().toLowerCase()); }
+function autoEncrypt() { const r = allRecipients(); return r.length > 0 && r.every(isInternal); }
+function encryptOn() { return C.encrypt === null || C.encrypt === undefined ? autoEncrypt() : C.encrypt; }
+function renderEncrypt() {
+  if (!C.draft) return;
+  const on = encryptOn();
+  const external = allRecipients().filter((a) => !isInternal(a));
+  $('#cmp-encrypt').classList.toggle('on', on);
+  $('#cmp-encrypt span').textContent = on ? '加密发送' : '不加密';
+  $('#cmp-enc-hint').textContent = C.encrypt === null || C.encrypt === undefined
+    ? (on ? '收件人均为同事，自动加密' : external.length ? '含外部收件人，默认不加密' : '')
+    : '已手动' + (on ? '开启' : '关闭');
+}
+$('#cmp-encrypt').onclick = () => { C.encrypt = !encryptOn(); C.dirty = true; renderEncrypt(); };
 function commitInput(box, input) {
   const list = parseAddressList(input.value);
   for (const p of list) addChip(box, input, p);
@@ -798,8 +818,10 @@ $('#fmt-hilite').oninput = (e) => execIn($('#cmp-editor'), 'hiliteColor', e.targ
 $('#sig-color').oninput = (e) => execIn($('#pref-signature'), 'foreColor', e.target.value);
 
 function collectDraft() {
-  return { ...C.draft, from: $('#cmp-from').value || C.draft.from, to: chipsValue('to'), cc: chipsValue('cc'), bcc: chipsValue('bcc'),
+  const value = { ...C.draft, from: $('#cmp-from').value || C.draft.from, to: chipsValue('to'), cc: chipsValue('cc'), bcc: chipsValue('bcc'),
     subject: $('#cmp-subject').value, html: $('#cmp-editor').innerHTML };
+  value.encrypt = encryptOn();
+  return value;
 }
 async function saveDraft(quiet) {
   if (!C.draft) return;
@@ -825,8 +847,18 @@ async function sendMail() {
   try {
     const res = await api('send', { value });
     C.draft.revision = res.revision;
+    if (res.state === 'NeedsCertificates') {
+      $('#cmp-status').textContent = '部分收件人没有加密证书';
+      const plain = await promptDialog({ title: '无法加密发送',
+        text: '以下收件人在公司通讯录中没有加密证书，这封邮件无法加密发给他们：',
+        body: '<ul class="miss-list">' + res.missing.map((a) => `<li>${esc(a)}</li>`).join('') + '</ul>' +
+          '<p class="muted small">你可以移除这些收件人后加密发送，或改为不加密发送这一封。</p>',
+        okText: '改为不加密发送', collect: () => true });
+      if (plain) { C.encrypt = false; renderEncrypt(); setTimeout(sendMail, 0); }
+      return;
+    }
     if (res.state === 'Accepted') {
-      closeComposer(true); toast('邮件已发送');
+      closeComposer(true); toast(value.encrypt ? '加密邮件已发送' : '邮件已发送');
       refreshDraftCount();
       const sent = S.folders.find((f) => f.role === 'sent'); if (sent && S.folderId === sent.id) loadList(true);
     } else if (res.state === 'Unknown') {
@@ -873,7 +905,15 @@ function openSettings() {
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-signature').innerHTML = p.signature || '';
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
+  renderCertStatus();
+  api('certificateStatus').then((c) => { S.profile.certificate = c; renderCertStatus(); }).catch(() => {});
 }
+function renderCertStatus() {
+  const c = S.profile.certificate || {};
+  $('#cert-status').textContent = c.unlocked ? `个人证书已解锁 · 有效期至 ${c.expires}${c.remembered ? ' · 已记住' : ''}` : '个人证书未解锁（不影响加密发送，只影响阅读加密邮件）';
+  $('#btn-cert-forget').classList.toggle('hidden', !c.remembered && !c.unlocked);
+}
+$('#btn-cert-forget').onclick = async () => { S.profile.certificate = await api('forgetCertificate').catch(() => S.profile.certificate); renderCertStatus(); toast('已忘记证书'); };
 $$('#theme-seg button').forEach((b) => (b.onclick = () => { $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); applyTheme(b.dataset.theme); }));
 $$('#density-seg button').forEach((b) => (b.onclick = () => { $$('#density-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.dataset.density = b.dataset.density; }));
 $('#btn-account').onclick = openSettings;

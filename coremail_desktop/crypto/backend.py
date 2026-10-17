@@ -49,7 +49,9 @@ def validate_recipient(info: CertificateInfo):
     fresh = describe(x509.load_der_x509_certificate(info.certificate_der), info.trust_status)
     if not fresh.can_encrypt:
         raise CryptoError('RECIPIENT_CERT_USAGE')
-    if info.trust_status not in {'explicit_pin', 'own_key'}:
+    # 'directory': fetched from the company server over the authenticated
+    # same-origin session (cert:listPublicKey) and matched to the address.
+    if info.trust_status not in {'explicit_pin', 'own_key', 'directory'}:
         raise CryptoError('RECIPIENT_CERT_UNTRUSTED')
 
 
@@ -127,5 +129,27 @@ def encrypt_smime(data: bytes, recipients: tuple[CertificateInfo, ...]) -> bytes
             seen.add(info.fingerprint)
     try:
         return builder.encrypt(serialization.Encoding.SMIME, [pkcs7.PKCS7Options.Binary])
+    except (ValueError, TypeError, NotImplementedError):
+        raise CryptoError('ENCRYPT_FAILED') from None
+
+
+def encrypt_envelope_der(data: bytes, recipients: tuple[CertificateInfo, ...]) -> bytes:
+    """CMS EnvelopedData (AES-256-CBC, RSA key transport) as DER, for a top-level
+    application/pkcs7-mime part. The official client lists AES128/192/256 and
+    DES3 as supported content encryption methods."""
+    from cryptography.hazmat.primitives.ciphers import algorithms
+    if len(data) > MAX_ENVELOPE:
+        raise CryptoError('MESSAGE_TOO_LARGE')
+    if not recipients:
+        raise CryptoError('RECIPIENT_CERT_MISSING')
+    builder = pkcs7.PKCS7EnvelopeBuilder().set_data(data).set_content_encryption_algorithm(algorithms.AES256)
+    seen = set()
+    for info in recipients:
+        validate_recipient(info)
+        if info.fingerprint not in seen:
+            builder = builder.add_recipient(x509.load_der_x509_certificate(info.certificate_der))
+            seen.add(info.fingerprint)
+    try:
+        return builder.encrypt(serialization.Encoding.DER, [pkcs7.PKCS7Options.Binary])
     except (ValueError, TypeError, NotImplementedError):
         raise CryptoError('ENCRYPT_FAILED') from None

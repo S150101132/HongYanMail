@@ -14,7 +14,7 @@ from coremail_desktop.compose.recipients import normalize_recipients
 
 class DesktopSession(CoremailSession):
     """Retain the verified login/redirect parser, classify production failures."""
-    ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare','oab:autoMatch','pab:searchContacts'}
+    ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare','oab:autoMatch','pab:searchContacts','cert:listPublicKey','cert:get'}
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -89,6 +89,21 @@ class DesktopSession(CoremailSession):
             uploaded=self._decode_response(raw).get('var')
             if not isinstance(uploaded,dict) or uploaded.get('attachmentId')!=attachment_id or uploaded.get('size')!=size or uploaded.get('actualSize')!=offset+len(chunk): raise AppError('ATTACHMENT_UPLOAD_FAILED')
         return {'id':attachment_id,'type':'upload','name':attachment.name,'size':size}
+    def deliver_preencoded(self,compose_id,fields,lettercontent):
+        """Submit a fully built MIME message (webmail's lettercontent path).
+
+        Verified on the deployment 2026-10-17 with an S/MIME send-to-self: the
+        message arrives as built (top-level application/pkcs7-mime), whereas
+        extraHeaders sent through mbox:compose are ignored."""
+        if not self.sid: raise AppError('NOT_AUTHENTICATED')
+        boundary='Hongyan'+uuid.uuid4().hex
+        parts=[f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode('ascii')+str(value).encode('utf-8')+b'\r\n'
+               for name,value in {**fields,'lettercontent':lettercontent}.items()]
+        data=b''.join(parts)+f'--{boundary}--\r\n'.encode('ascii')
+        query={'func':'mbox:composeF','uploadMode':'preEncodedData','sid':self.sid,'id':compose_id,'action':'deliver','returnInfo':'true','autosaveHitCounter':'true'}
+        raw,_=self._fetch(Request(urljoin(self.base_url,'XT/jsp/mformdata.jsp')+'?'+urlencode(query),data=data,
+                                  headers={'Content-Type':'multipart/form-data; boundary='+boundary,'Accept':'text/x-json'}))
+        return self._decode_response(raw)
 
 def _summary(item,folder_id,sender):
     flags=item.get('flags',{}) if isinstance(item.get('flags',{}),dict) else {}
@@ -98,7 +113,7 @@ def _summary(item,folder_id,sender):
 
 class CoremailAdapter:
     supports_reply_headers = True
-    supports_encrypted_submission = False
+    supports_encrypted_submission = True  # Pre-encoded S/MIME, verified by send-to-self 2026-10-17.
     # Folder roles: the deployment's mbox:getAllFolders returns only
     # {id, name, flags{system:bool}, keepPeriod} for every read-only parameter
     # variant, so no role is exposed and none is inferred from names. Folder id 1
@@ -215,17 +230,24 @@ class CoremailAdapter:
         affected=response.get('originalMsgInfos')
         if not isinstance(affected,list) or not any(isinstance(item,dict) and item.get('id')==message_id for item in affected): raise AppError('MAIL_UPDATE_UNCONFIRMED')
         return {'message_id':message_id,'flags':dict(flags)}
-    def _attrs(self,draft):
+    def _attrs(self,draft,encrypted=False):
         from coremail_desktop.compose.attachments import validate_attachments
         validate_attachments(draft.attachments)
         if draft.mode in ('reply','reply_all'):
             if not isinstance(draft.reply_source_id,str) or not draft.reply_source_id: raise AppError('REPLY_SOURCE_REQUIRED')
         elif draft.reference_headers: raise AppError('REPLY_SOURCE_REQUIRED')
-        if draft.encryption_required: raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
+        # An encrypted draft must never reach the plaintext compose path.
+        if draft.encryption_required and not encrypted: raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
         if '\r' in draft.subject or '\n' in draft.subject: raise AppError('INVALID_SUBJECT')
         return {'account':normalize_recipients((draft.from_identity,))[0], 'to':list(normalize_recipients(draft.to)), 'cc':list(normalize_recipients(draft.cc)), 'bcc':list(normalize_recipients(draft.bcc)), 'subject':draft.subject,'content':draft.body,'isHtml':bool(getattr(draft,'is_html',False)),'saveSentCopy':True,'attachments':[]}
     def create_compose(self, draft):
         self._attrs(draft)  # Validate before creating a server-side session.
+        compose_id=self._compose_session(draft)
+        if draft.attachments:
+            attachments=[self._session.upload_attachment(compose_id,attachment) for attachment in draft.attachments]
+            self._compose_attachments[compose_id]=(draft,attachments)
+        return compose_id
+    def _compose_session(self, draft, encrypted=False):
         if draft.mode in ('reply','reply_all'):
             # Restoring a draft under another session must not bind its reply to
             # an unrelated remote message. The parent Message-ID is the contract.
@@ -237,12 +259,11 @@ class CoremailAdapter:
             if not isinstance(value,dict) or not isinstance(value.get('id'),str) or not value['id']: raise AppError('INVALID_RESPONSE')
             compose_id=value['id']
         else:
-            value = self._call('%mbox/compose',{'action':'continue','returnInfo':True,'attrs':self._attrs(draft)}).get('var')
+            # The encrypted body never goes into the compose session in plaintext.
+            attrs={**self._attrs(draft,encrypted),'content':''} if encrypted else self._attrs(draft)
+            value = self._call('%mbox/compose',{'action':'continue','returnInfo':True,'attrs':attrs}).get('var')
             compose_id = value.get('id') if isinstance(value,dict) else value
             if not isinstance(compose_id,str) or not compose_id: raise AppError('INVALID_RESPONSE')
-        if draft.attachments:
-            attachments=[self._session.upload_attachment(compose_id,attachment) for attachment in draft.attachments]
-            self._compose_attachments[compose_id]=(draft,attachments)
         return compose_id
     def deliver(self, compose_id, draft):
         attrs=self._attrs(draft)
@@ -261,8 +282,38 @@ class CoremailAdapter:
     def display_name(self):
         value=self._call('user:getAttrs',{'optionalAttrIds':['true_name']},True).get('var')
         return str(value.get('true_name') or '') if isinstance(value,dict) else ''
-    def submit_encrypted(self,payload,envelope_recipients):
-        raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
+    def public_certificates(self,emails):
+        """Recipients' S/MIME certificates from the company directory, as DER.
+
+        cert:listPublicKey {userList} returns {email: {id, publicKey (base64 DER),
+        publicKeyHash, isDynamic}} (verified read-only 2026-10-17). A certificate is
+        accepted only if it names the requested address."""
+        import base64
+        from cryptography import x509
+        from cryptography.hazmat.primitives.serialization import Encoding
+        from cryptography.x509.oid import NameOID
+        wanted=list(normalize_recipients(tuple(emails)))
+        if not wanted: return {}
+        value=self._call('cert:listPublicKey',{'userList':wanted},True).get('var')
+        if not isinstance(value,dict): raise AppError('INVALID_RESPONSE')
+        result={}
+        for key,entry in value.items():
+            if not isinstance(key,str) or not isinstance(entry,dict) or not isinstance(entry.get('publicKey'),str) or not entry['publicKey']: continue
+            try: cert=x509.load_der_x509_certificate(base64.b64decode(entry['publicKey']))
+            except ValueError: continue
+            names={v.value.casefold() for v in cert.subject.get_attributes_for_oid(NameOID.EMAIL_ADDRESS)}
+            try: names|={v.casefold() for v in cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.RFC822Name)}
+            except x509.ExtensionNotFound: pass
+            if key.casefold() in names: result[key.casefold()]=cert.public_bytes(Encoding.DER)
+        return result
+    def submit_encrypted(self,payload,envelope_recipients,draft=None):
+        """Open a compose session for the draft, then deliver the pre-built S/MIME message."""
+        if draft is None or not draft.encryption_required: raise AppError('ENCRYPTION_REQUIRED')
+        attrs=self._attrs(draft,encrypted=True)
+        compose_id=self._compose_session(draft,encrypted=True)
+        fields={'returnInfo':'true','account':attrs['account'],'to':','.join(attrs['to']),'cc':','.join(attrs['cc']),'bcc':','.join(attrs['bcc']),
+                'subject':attrs['subject'],'isHtml':'false','saveSentCopy':'true'}
+        return self._session.deliver_preencoded(compose_id,fields,payload.decode('ascii'))
     def find_sent_candidates(self,job,limit=50):
         results = []
         for folder in self.list_folders():

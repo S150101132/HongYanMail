@@ -146,7 +146,8 @@ class MailBackend:
                 self.cache.close()
             self.cache = MailCache(self.data_dir / 'cache' / (account_key + '.db'), self.protector)
         self.account = username
-        self.services = self._services_factory(self.adapter, self.data_dir)
+        self.services = self._services_factory(self.adapter, self.data_dir, prepare_encrypted=self._prepare_encrypted)
+        self._auto_unlock_certificate()
         identity = self.cache.get('identity', {})
         self.identities, self.display_name = identity.get('identities') or [username], identity.get('name', '')
         if online:
@@ -162,9 +163,14 @@ class MailBackend:
         if username not in self.identities and '@' in username:
             self.identities.insert(0, username)
 
+    def internal_domains(self):
+        """Colleagues are addresses in the account's own mail domains."""
+        return sorted({i.rpartition('@')[2].casefold() for i in [self.account or '', *self.identities] if '@' in i})
+
     def profile(self):
         return {'account': self.account, 'name': self.display_name, 'identities': self.identities,
-                'prefs': self.prefs()}
+                'prefs': self.prefs(), 'internalDomains': self.internal_domains(),
+                'certificate': self.certificate_status()}
 
     def _online(self, operation, *args, **kwargs):
         """Run an adapter call; on an expired session sign in again once if allowed."""
@@ -322,12 +328,42 @@ class MailBackend:
             raise AppError('MESSAGE_UNAVAILABLE')
         return info.name, info.media_type, data
 
-    def unlock_certificate(self, path, password):
+    def _certificate_path(self):
+        return self.data_dir / 'certificate.bin'
+
+    def unlock_certificate(self, path, password, remember=False):
         if self.crypto is None:
             raise AppError('OPERATION_NOT_ALLOWED')
-        info = self.crypto.unlock(path, password)
+        self.crypto.unlock(path, password)
         self._docs.clear()
-        return {'subject': getattr(info, 'subject', ''), 'unlocked': True}
+        if remember:
+            record = json.dumps({'path': str(path), 'password': password}).encode('utf-8')
+            self._certificate_path().write_bytes(self.protector.protect(record))
+        else:
+            self._certificate_path().unlink(missing_ok=True)
+        return self.certificate_status()
+
+    def _auto_unlock_certificate(self):
+        if self.crypto is None or self.crypto.certificate_info is not None:
+            return
+        try:
+            record = json.loads(self.protector.unprotect(self._certificate_path().read_bytes()).decode('utf-8'))
+            self.crypto.unlock(record['path'], record['password'])
+        except Exception:
+            pass  # A moved file or changed password simply asks again when needed.
+
+    def forget_certificate(self):
+        self._certificate_path().unlink(missing_ok=True)
+        if self.crypto is not None:
+            self.crypto.lock()
+        self._docs.clear()
+        return self.certificate_status()
+
+    def certificate_status(self):
+        info = self.crypto.certificate_info if self.crypto is not None else None
+        return {'available': self.crypto is not None, 'unlocked': info is not None,
+                'subject': info.subject if info else '', 'expires': info.not_after.strftime('%Y-%m-%d') if info else '',
+                'remembered': self._certificate_path().exists()}
 
     # Mail actions ----------------------------------------------------------
     def set_flags(self, mid, read=None, flagged=None):
@@ -406,7 +442,7 @@ class MailBackend:
         identity = self.identities[0] if self.identities else (self.account or '')
         base = {'localId': uuid.uuid4().hex, 'revision': 0, 'mode': mode, 'from': identity,
                 'to': [], 'cc': [], 'bcc': [], 'subject': '', 'html': '<p><br></p>' + self._signature_html(),
-                'replySourceId': None, 'referenceHeaders': {}, 'attachments': []}
+                'replySourceId': None, 'referenceHeaders': {}, 'attachments': [], 'encrypt': None}
         if mode == 'new' or not mid:
             return base
         document = self._document(mid)
@@ -414,14 +450,16 @@ class MailBackend:
             draft = build_reply(document, set(self.identities), mode == 'reply_all', identity)
             return {**base, 'mode': draft.mode, 'to': list(draft.to), 'cc': list(draft.cc), 'subject': draft.subject,
                     'html': '<p><br></p>' + self._signature_html() + _quote_html(document),
-                    'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers)}
+                    'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
+                    'encrypt': True if document.encryption_state != 'none' else None}
         if mode == 'forward':
             subject = next(iter(document.headers.get('subject', ())), '')
             attachments = [{'name': a.name, 'type': a.media_type, 'size': len(document.attachment_payloads[a.part_id]),
                             'data': base64.b64encode(document.attachment_payloads[a.part_id]).decode('ascii')}
                            for a in document.attachments if a.part_id in document.attachment_payloads]
             return {**base, 'mode': 'forward', 'subject': ('' if subject.lower().startswith('fwd:') else 'Fwd: ') + subject,
-                    'html': '<p><br></p>' + self._signature_html() + _quote_html(document), 'attachments': attachments}
+                    'html': '<p><br></p>' + self._signature_html() + _quote_html(document), 'attachments': attachments,
+                    'encrypt': True if document.encryption_state != 'none' else None}
         raise AppError('INVALID_MAIL_ACTION')
 
     def _draft(self, value):
@@ -434,7 +472,7 @@ class MailBackend:
                              str(value.get('from') or self.identities[0]), listify('to'), listify('cc'), listify('bcc'),
                              str(value.get('subject', '')), str(value.get('html', '')),
                              {str(k): str(v) for k, v in dict(value.get('referenceHeaders') or {}).items()},
-                             False, value.get('replySourceId') if mode in ('reply', 'reply_all') else None,
+                             value.get('encrypt') is True, value.get('replySourceId') if mode in ('reply', 'reply_all') else None,
                              attachments, True)
 
     def save_draft(self, value):
@@ -452,6 +490,7 @@ class MailBackend:
         return {'localId': draft.local_id, 'revision': draft.revision, 'mode': draft.mode, 'from': draft.from_identity,
                 'to': list(draft.to), 'cc': list(draft.cc), 'bcc': list(draft.bcc), 'subject': draft.subject,
                 'html': body, 'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
+                'encrypt': True if draft.encryption_required else None,
                 'attachments': [{'name': a.name, 'type': a.media_type, 'size': len(a.payload),
                                  'data': base64.b64encode(a.payload).decode('ascii')} for a in draft.attachments]}
 
@@ -466,6 +505,11 @@ class MailBackend:
             raise AppError('RECIPIENT_REQUIRED')
         # A durable copy first: if sending fails the user loses nothing.
         self.services['save_draft'](draft=draft)
+        if draft.encryption_required:
+            missing = self.encryption_check(list(draft.to + draft.cc + draft.bcc))['missing']
+            if missing:
+                # The user decides: remove them, or send this one unencrypted.
+                return {'state': 'NeedsCertificates', 'missing': missing, 'localId': draft.local_id, 'revision': draft.revision}
         job = self._online(self.services['request_send'], draft=draft)
         if job.state == 'Accepted':
             self.delete_draft(draft.local_id)
@@ -474,6 +518,31 @@ class MailBackend:
         from coremail_desktop.ui.messages import user_message
         return {'state': job.state, 'failure': job.failure_code, 'localId': draft.local_id, 'revision': draft.revision,
                 'failureMessage': user_message(job.failure_code) if job.failure_code else None}
+
+    def encryption_check(self, recipients):
+        """Which recipients have a company certificate. Bare addresses only."""
+        from coremail_desktop.compose.recipients import normalize_recipients
+        addresses = list(normalize_recipients(tuple(recipients)))
+        found = self._online(self.adapter.public_certificates, addresses) if addresses else {}
+        return {'missing': [a for a in addresses if a.casefold() not in found],
+                'covered': [a for a in addresses if a.casefold() in found]}
+
+    def _prepare_encrypted(self, draft):
+        """Outbox hook: build the S/MIME message for every recipient and the sender."""
+        from coremail_desktop.compose.recipients import normalize_recipients
+        from coremail_desktop.compose.smime import build_encrypted_message
+        from coremail_desktop.crypto.backend import describe
+        from cryptography import x509
+        recipients = list(normalize_recipients(draft.to + draft.cc + draft.bcc))
+        sender = normalize_recipients((draft.from_identity,))[0]
+        found = self.adapter.public_certificates(recipients + [sender])
+        if any(a.casefold() not in found for a in recipients):
+            raise AppError('RECIPIENT_CERT_MISSING')
+        if sender.casefold() not in found:
+            # Without the sender's own key the sent copy could never be read again.
+            raise AppError('OWN_CERT_MISSING')
+        certificates = [describe(x509.load_der_x509_certificate(der), 'directory') for der in found.values()]
+        return build_encrypted_message(draft, certificates, self.display_name)
 
     # Background sync -------------------------------------------------------
     def poll(self):

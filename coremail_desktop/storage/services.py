@@ -6,7 +6,7 @@ from coremail_desktop.outbox.service import OutboxService
 from coremail_desktop.errors import AppError
 
 
-def local_services(adapter, directory):
+def local_services(adapter, directory, prepare_encrypted=None):
     directory=Path(directory)
     store=None
     journal=None
@@ -21,7 +21,7 @@ def local_services(adapter, directory):
         nonlocal journal,outbox
         if outbox is None:
             candidate=SendJournal(directory/'outbox')
-            service=OutboxService(adapter,candidate)
+            service=OutboxService(adapter,candidate,prepare_encrypted)
             journal,outbox=candidate,service
         return outbox
 

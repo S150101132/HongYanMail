@@ -115,6 +115,8 @@
 <div id="composer" class="composer hidden" role="dialog" aria-label="写邮件">
   <div class="cmp-head">
     <b id="cmp-title">写邮件</b>
+    <button id="cmp-encrypt" class="enc-toggle" title="点击切换加密"><i data-icon="lock"></i><span>加密</span></button>
+    <span id="cmp-enc-hint" class="muted small"></span>
     <span id="cmp-status" class="muted small"></span>
     <span class="spacer"></span>
     <button class="icon-btn" id="cmp-max" title="最大化"><i data-icon="max"></i></button>
@@ -175,8 +177,9 @@
         <label class="check"><input type="checkbox" id="pref-notify"> 新邮件桌面通知</label>
         <label class="check"><input type="checkbox" id="pref-markread"> 打开邮件时自动标为已读</label>
         <h3>加密邮件</h3>
-        <p class="muted small">阅读证书加密邮件需要解锁个人证书（.pfx）。证书只在本次运行的内存中使用。</p>
-        <button class="btn ghost" id="btn-cert">解锁个人证书…</button>
+        <p class="muted small">发给同事的邮件默认加密（使用公司通讯录中的证书），含外部收件人时默认不加密。阅读加密邮件需要解锁个人证书（.pfx）。</p>
+        <p class="small" id="cert-status"></p>
+        <div class="row-gap"><button class="btn ghost" id="btn-cert">解锁个人证书…</button><button class="btn ghost hidden" id="btn-cert-forget">忘记证书</button></div>
         <h3>账号</h3>
         <p class="muted small" id="settings-account"></p>
         <button class="btn ghost danger" id="btn-logout">退出登录</button>

@@ -21,13 +21,13 @@ class XorProtector:
         return bytes(b ^ 0x5A for b in data)
 
 
-def local_services_stub(adapter, directory):
+def local_services_stub(adapter, directory, prepare_encrypted=None):
     from coremail_desktop.drafts.store import DraftStore
     from coremail_desktop.outbox.journal import SendJournal
     from coremail_desktop.outbox.service import OutboxService
     drafts = DraftStore(Path(directory) / 'drafts', XorProtector())
     journal = SendJournal(Path(directory) / 'outbox', XorProtector())
-    outbox = OutboxService(adapter, journal)
+    outbox = OutboxService(adapter, journal, prepare_encrypted)
     return {'save_draft': lambda draft: drafts.save(draft), 'list_drafts': drafts.list_summaries,
             'restore_draft': lambda local_id: drafts.load(local_id), 'delete_draft': lambda local_id: drafts.delete(local_id),
             'request_send': lambda draft: journal.load(outbox.request_send(draft))}

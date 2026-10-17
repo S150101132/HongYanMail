@@ -46,7 +46,26 @@ Codex 版本的问题集中在界面简陋、日常功能缺失、每次操作�
 
 ## 仍未做 / 已知限制
 
-- 证书加密**发送**仍被阻止（提交接口未完成互通验证），加密邮件可解锁后阅读。
+- 证书加密发送已在同日接通，见下文“加密发送”。
 - 不提供彻底删除；不支持多选批量操作、会话（线程）视图、服务端规则、日历。
 - 新邮件为轮询（默认 1 分钟），未接入 Socket.IO 推送（握手参数未验证）。
 - 粘贴的图片作为附件添加，不做内嵌图片。
+
+## 加密发送（同日追加）
+
+规则：收件人全部是同事（账号所在域，当前为 `inspur.com`）时默认加密；只要有外部收件人默认不加密；写信窗口标题旁的开关可手动切换。开启加密但有人在公司通讯录中没有证书时，弹窗列出这些人，由用户选择移除或“改为不加密发送”，程序从不自行降级。
+
+实现与证据：
+
+| 环节 | 方式 | 证据 |
+| --- | --- | --- |
+| 服务端代加密 | 不可用：本部署 `X.M.SMIME=false`，`smimeEncrypt:true` 被忽略（测试信以明文到达本人） | `analysis/smime-send-probe-2026-10-17.json` |
+| 收件人证书 | `cert:listPublicKey {userList:[...]}` → `{邮箱: {publicKey(base64 DER), publicKeyHash, id, isDynamic}}`；只接受证书内邮箱与请求地址一致的证书 | 官方客户端日志请求形状；只读探测 |
+| 加密 | 本地 CMS EnvelopedData，AES-256-CBC + RSA；同时加密给发件人自己，已发送副本可读 | 官方客户端支持 AES128/192/256/DES3 |
+| 提交 | `continue` 取 composeId → `XT/jsp/mformdata.jsp?func=mbox:composeF&uploadMode=preEncodedData`，表单字段 `lettercontent` 为完整 S/MIME 邮件 | 网页端 CA 加密路径源码；`extraHeaders`/附件方式实测均被服务器改写为 multipart/mixed |
+
+真机验证（仅发给本人，`analysis/encrypted-send-real-verification-2026-10-17.json`）：生产代码路径发送被接受（2.7 秒）；收件箱与已发送两份副本均为顶层 `application/pkcs7-mime`，服务器标记为加密，用本人证书解密后 HTML 与标记完整。探测阶段共向本人发送 7 封测试信。
+
+阅读加密邮件需解锁个人证书，可选“记住证书”（路径与密码经 DPAPI 加密保存，启动时自动解锁）；发送加密邮件只需要收件人公钥，不需要解锁。新增测试 `tests/test_app_encryption.py`（9 项）。
+
+尚未验证：同事在官方客户端中打开本程序发出的加密邮件（本人在官方客户端打开自发测试信即可确认）；签名（smimeSign）未实现。
