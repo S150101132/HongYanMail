@@ -96,8 +96,8 @@ class RealMessageTests(unittest.TestCase):
         self.addCleanup(service.lock)
         result = service.decrypt(self.raw)
         self.assertEqual(result.format, 'smime-enveloped-data+signed-data')
-        self.assertEqual(result.signature_status, 'not_verified',
-                         'a signature is reported, never claimed as verified')
+        # Verified on the real message 2026-10-17 (SHA-256/RSA, signer matches From).
+        self.assertEqual(result.signature_status, 'valid')
 
         document = parse_mime(result.mime_bytes, 'real-1')
         self.assertTrue((document.text or '').strip() or document.html,

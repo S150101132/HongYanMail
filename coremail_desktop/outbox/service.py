@@ -29,7 +29,8 @@ class OutboxService:
                 envelope = normalize_recipients(draft.to + draft.cc + draft.bcc)
                 if not envelope: raise AppError('RECIPIENT_REQUIRED')
                 normalize_recipients((draft.from_identity,))
-                if draft.encryption_required:
+                # Encrypted and signed mail are both built locally and submitted pre-encoded.
+                if draft.encryption_required or draft.signature_required:
                     if self.prepare_encrypted is None: raise AppError('ENCRYPTION_REQUIRED')
                     if not getattr(self.adapter,'supports_encrypted_submission',False): raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
                     payload = self.prepare_encrypted(draft)

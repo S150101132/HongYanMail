@@ -192,6 +192,10 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .banner { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 9px 12px; border-radius: 8px; background: var(--warn-bg); border: 1px solid var(--warn-line); font-size: 13px; }
 .banner .btn { height: 28px; padding: 0 10px; font-size: 12.5px; }
 .banner.info { background: var(--accent-soft); border-color: transparent; }
+.banner.ok { background: #e7f6ec; border-color: #9fd8b1; }
+.banner.bad { background: #fdecea; border-color: #f4b4ad; color: var(--danger); }
+:root[data-theme="dark"] .banner.ok { background: #12321f; border-color: #1f6b3a; }
+:root[data-theme="dark"] .banner.bad { background: #3a1714; border-color: #7a2a22; }
 .attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; align-items: center; }
 .att { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; max-width: 280px; background: var(--panel-2); }
 .att .ext { width: 34px; height: 34px; border-radius: 7px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; color: #fff; flex: none; }

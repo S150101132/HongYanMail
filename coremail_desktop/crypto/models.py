@@ -20,6 +20,7 @@ class DecryptionResult:
     format: str = 'smime-enveloped-data'
     signature_status: str = 'unsigned'
     trust_status: str = 'not_verified'
+    signature: object = field(default=None, repr=False)  # signature.SignatureReport when signed
 
 
 class CryptoError(Exception):

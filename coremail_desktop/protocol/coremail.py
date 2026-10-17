@@ -281,7 +281,7 @@ class CoremailAdapter:
             if not isinstance(draft.reply_source_id,str) or not draft.reply_source_id: raise AppError('REPLY_SOURCE_REQUIRED')
         elif draft.reference_headers: raise AppError('REPLY_SOURCE_REQUIRED')
         # An encrypted draft must never reach the plaintext compose path.
-        if draft.encryption_required and not encrypted: raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
+        if (draft.encryption_required or draft.signature_required) and not encrypted: raise AppError('ENCRYPTED_SUBMISSION_UNVERIFIED')
         if '\r' in draft.subject or '\n' in draft.subject: raise AppError('INVALID_SUBJECT')
         return {'account':normalize_recipients((draft.from_identity,))[0], 'to':list(normalize_recipients(draft.to)), 'cc':list(normalize_recipients(draft.cc)), 'bcc':list(normalize_recipients(draft.bcc)), 'subject':draft.subject,'content':draft.body,'isHtml':bool(getattr(draft,'is_html',False)),'saveSentCopy':True,'attachments':[]}
     def create_compose(self, draft):
@@ -355,7 +355,7 @@ class CoremailAdapter:
         return result
     def submit_encrypted(self,payload,envelope_recipients,draft=None):
         """Open a compose session for the draft, then deliver the pre-built S/MIME message."""
-        if draft is None or not draft.encryption_required: raise AppError('ENCRYPTION_REQUIRED')
+        if draft is None or not (draft.encryption_required or draft.signature_required): raise AppError('ENCRYPTION_REQUIRED')
         attrs=self._attrs(draft,encrypted=True)
         compose_id=self._compose_session(draft,encrypted=True)
         fields={'returnInfo':'true','account':attrs['account'],'to':','.join(attrs['to']),'cc':','.join(attrs['cc']),'bcc':','.join(attrs['bcc']),
