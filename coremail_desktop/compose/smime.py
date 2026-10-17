@@ -46,6 +46,8 @@ def build_encrypted_message(draft, certificates, display_name='') -> bytes:
         value = draft.reference_headers.get(name)
         if value:
             outer[name] = value
+    if getattr(draft, 'request_receipt', False):
+        outer['Disposition-Notification-To'] = sender  # What the server adds for requestReadReceipt.
     outer['x-cm-smime'] = 'encrypted'
     outer.set_content(envelope, maintype='application', subtype='pkcs7-mime', cte='base64',
                       disposition='attachment', filename='smime.p7m',

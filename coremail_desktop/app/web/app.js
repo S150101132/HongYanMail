@@ -199,6 +199,7 @@ async function enterApp(profile) {
   api('folders').then((f) => { S.folders = f; renderFolders(); }).catch(fail);
   api('startSync', { seconds: S.prefs.pollSeconds });
   refreshDraftCount();
+  setTimeout(refreshScheduled, 1500);
 }
 
 const ROLE_ICON = { inbox: 'inbox', drafts: 'drafts', sent: 'sent', trash: 'trash', spam: 'spam', virus: 'virus' };
@@ -219,6 +220,7 @@ function renderFolders() {
     };
   });
   $('#nav-drafts').classList.toggle('on', S.local === 'drafts');
+  $('#nav-scheduled').classList.toggle('on', S.local === 'scheduled');
   const current = folderById(S.folderId);
   if (current && !S.local && !S.search) $('#list-title').textContent = current.name;
   const inbox = S.folders.find((f) => f.role === 'inbox');
@@ -306,13 +308,16 @@ function rowHtml(r, item = { ids: [r.id], rows: [r] }) {
   const any = (flag) => item.rows.some((x) => x.flags[flag]);
   const marks = (any('attached') ? '<i data-icon="clip"></i>' : '') + (any('flagged') ? '<i class="star" data-icon="star"></i>' : '') +
     (r.flags.encrypted ? '<i data-icon="lock"></i>' : '') + (r.flags.replied ? '<i data-icon="reply"></i>' : '');
+  const role = (folderById(r.fid) || {}).role;
+  const badge = r.flags.scheduleDelivery ? `<span class="row-badge" title="定时发送">${r.scheduleAt ? '定时 ' + esc(scheduleText(r.scheduleAt)) : '定时'}</span>`
+    : role === 'sent' && r.flags.rcptRead ? '<span class="row-badge" title="收件人已阅读（服务器投递记录）">已读</span>' : '';
   const unread = item.rows.some((x) => !x.flags.read);
   const msel = S.multi.size && item.ids.every((id) => S.multi.has(id));
   return `<div class="row${unread ? ' unread' : ''}${item.ids.includes(S.selected) ? ' sel' : ''}${msel ? ' msel' : ''}" data-id="${esc(r.id)}" draggable="true" role="option">
     ${avatarHtml(r.fromName, sentLike ? r.to : r.fromEmail)}
     <div class="main">
       <div class="line1"><span class="who">${esc(who)}</span>${thread ? `<span class="tcount" title="${item.ids.length} 封邮件">${item.ids.length}</span>` : ''}${folderTag}<span class="marks">${marks}</span><span class="when">${esc(shortDate(d))}</span></div>
-      <div class="subj">${esc(r.subject || '（无主题）')}</div>
+      <div class="subj">${badge}${esc(r.subject || '（无主题）')}</div>
       ${r.preview ? `<div class="prev">${esc(r.preview)}</div>` : ''}
     </div></div>`;
 }
@@ -330,7 +335,7 @@ function renderList() {
     html += rowHtml(r, it);
   }
   if (!rows.length) {
-    html = `<div class="list-foot">${S.search ? '没有找到匹配的邮件' : S.filter === 'unread' ? '没有未读邮件 🎉' : S.filter === 'flagged' ? '没有星标邮件' : '这个文件夹是空的'}</div>`;
+    html = `<div class="list-foot">${S.local === 'scheduled' ? '没有等待发出的定时邮件' : S.search ? '没有找到匹配的邮件' : S.filter === 'unread' ? '没有未读邮件 🎉' : S.filter === 'flagged' ? '没有星标邮件' : '这个文件夹是空的'}</div>`;
   } else if (S.more && !S.search) {
     html += `<div class="list-foot" id="load-more">正在加载更多…</div>`;
   } else {
@@ -518,8 +523,13 @@ function renderMessage(m) {
   $('#r-to').innerHTML = (m.to.length ? '收件人：' + people(m.to) : '') + (m.cc.length ? '<br>抄送：' + people(m.cc) : '');
   $$('#r-to a').forEach((a) => (a.onclick = () => startCompose('new', null, { to: [a.dataset.mailto] })));
   $$('.reader-toolbar [data-act="flag"]').forEach((b) => b.classList.toggle('on', !!m.flags.flagged));
+  const role = (folderById(m.fid) || {}).role;
+  const panel = $('#ds-panel'); if (panel) panel.remove();
+  $$('#reader-body .sent-only').forEach((b) => b.classList.toggle('hidden', role !== 'sent'));
+  $$('#reader-body .sched-only').forEach((b) => b.classList.toggle('hidden', !m.scheduled));
   // Banners
   const banners = [];
+  if (m.scheduled) banners.push(`<div class="banner info"><i data-icon="clock"></i><span>这是一封定时邮件${m.scheduleAt ? `，将于 <b>${esc(scheduleText(m.scheduleAt))}</b> 由服务器发出` : '，到时间由服务器发出'}。</span><span class="spacer"></span><button class="btn ghost" data-act="unschedule">取消定时</button></div>`);
   if (m.encryption === 'locked') banners.push(`<div class="banner"><i data-icon="lock"></i><span>这是一封证书加密邮件，解锁个人证书后即可阅读。</span><span class="spacer"></span><button class="btn primary" id="b-unlock">解锁证书</button></div>`);
   if (m.encryption === 'decrypted') banners.push(`<div class="banner info"><i data-icon="lock"></i><span>此邮件已使用你的证书在本机解密。</span></div>`);
   if (m.hasRemoteImages && !S.allowRemote.has(m.id)) banners.push(`<div class="banner"><i data-icon="image"></i><span>为保护隐私，已阻止远程图片。</span><span class="spacer"></span><button class="btn ghost" id="b-images">显示图片</button></div>`);
@@ -543,6 +553,53 @@ function renderMessage(m) {
   } else { atts.classList.add('hidden'); atts.innerHTML = ''; }
   renderBody(m);
   $('.reader-scroll').scrollTop = 0;
+  if (role === 'sent') loadDeliveryStatus(m, false);
+}
+
+// Sent mail: per-recipient delivery state, straight from the server's records.
+async function loadDeliveryStatus(m, open) {
+  const box = document.createElement('div');
+  box.className = 'ds-panel'; box.id = 'ds-panel';
+  const old = $('#ds-panel'); if (old) old.remove();
+  $('#r-banners').after(box);
+  box.innerHTML = '<div class="ds-head"><i data-icon="route"></i><span class="muted">正在查询投递状态…</span></div>';
+  renderIcons(box);
+  let st;
+  try { st = await api('deliveryStatus', { mid: m.id }); } catch (err) {
+    if (S.message !== m) return;
+    box.innerHTML = `<div class="ds-head"><i data-icon="route"></i><span class="muted">投递状态暂不可用：${esc(err.message)}</span><span class="spacer"></span><button class="btn ghost" data-ds="retry">重试</button></div>`;
+    renderIcons(box); $('[data-ds="retry"]', box).onclick = () => loadDeliveryStatus(m, true); return;
+  }
+  if (S.message !== m) return;
+  const summary = st.rows.length ? `共 ${st.rows.length} 位收件人：` + Object.entries(st.counts).map(([t, n]) => `${n} 位${t}`).join('，') : '暂无投递记录（邮件可能仍在处理中，或记录已过期）';
+  box.innerHTML = `<div class="ds-head"><i data-icon="route"></i><span>${esc(summary)}</span><span class="spacer"></span>
+    ${st.rows.length ? `<button class="btn ghost" data-ds="toggle">${open ? '收起' : '详情'}</button>` : ''}<button class="btn ghost" data-ds="retry" title="刷新">刷新</button></div>
+    <table class="ds-table${open ? '' : ' hidden'}">${st.rows.map((r) => `<tr><td class="who"><b>${esc(r.name || r.email)}</b>${r.name ? ` <span class="muted small">${esc(r.email)}</span>` : ''}</td>
+      <td><span class="ds-state ${esc(r.kind)}">${esc(r.text)}</span></td><td class="when">${esc(r.time)}</td></tr>`).join('')}</table>`;
+  renderIcons(box);
+  const t = $('[data-ds="toggle"]', box);
+  if (t) t.onclick = () => { const tbl = $('.ds-table', box); tbl.classList.toggle('hidden'); t.textContent = tbl.classList.contains('hidden') ? '详情' : '收起'; };
+  $('[data-ds="retry"]', box).onclick = () => loadDeliveryStatus(m, !$('.ds-table', box) || !$('.ds-table', box).classList.contains('hidden'));
+}
+
+async function recallMessage(m) {
+  if (!(await confirmDialog('撤回邮件', '确定撤回这封邮件吗？只能撤回发给本公司邮箱、且对方尚未阅读的邮件。撤回结果以服务器返回为准。', '撤回'))) return;
+  let res;
+  try { res = await api('recall', { mid: m.id }); } catch (err) { fail(err); return; }
+  const rows = res.rows.map((r) => `<tr><td class="who"><b>${esc(r.email)}</b></td><td><span class="ds-state ${esc(r.kind)}">${esc(r.text)}</span></td></tr>`).join('');
+  const title = res.recalled === res.rows.length && res.rows.length ? '已撤回' : res.recalled ? `部分撤回（${res.recalled}/${res.rows.length}）` : '未能撤回';
+  await promptDialog({ title, text: res.recalled ? '以下是服务器返回的每位收件人的撤回结果：' : '服务器返回的结果如下，邮件没有被撤回：',
+    body: `<table class="ds-table">${rows || '<tr><td class="muted">服务器没有返回收件人结果</td></tr>'}</table>` });
+  if (S.message === m) loadDeliveryStatus(m, true);
+}
+
+async function unscheduleMessage(m) {
+  if (!(await confirmDialog('取消定时发送', '取消后这封邮件不会发出，会作为普通草稿保留在服务器草稿箱中。', '取消定时'))) return;
+  try {
+    await api('unschedule', { mid: m.id });
+    toast('已取消定时发送，邮件保留在草稿箱');
+    m.scheduled = false; renderMessage(m); loadList(true); refreshScheduled();
+  } catch (err) { fail(err); }
 }
 
 function linkify(text) {
@@ -586,6 +643,7 @@ $('#reader-body').addEventListener('click', (e) => {
     reply: () => startCompose('reply', m.id), reply_all: () => startCompose('reply_all', m.id), forward: () => startCompose('forward', m.id),
     delete: () => deleteMessage(m.id), move: () => pickFolder(m.id), unread: () => setFlags(m.id, { read: false }),
     flag: () => setFlags(m.id, { flagged: !m.flags.flagged }), find: openFind,
+    recall: () => recallMessage(m), status: () => loadDeliveryStatus(m, true), unschedule: () => unscheduleMessage(m),
   }[b.dataset.act] || (() => {}))();
 });
 
@@ -808,6 +866,21 @@ $('#nav-drafts').onclick = async () => {
       <div class="prev">点击继续编辑 · 右键删除</div></div></div>`).join('') : '<div class="list-foot">没有本机草稿</div>';
   renderIcons(list);
 };
+// ---------------------------------------------------------------- scheduled mail (server drafts with a send time)
+async function refreshScheduled() {
+  try {
+    const res = await api('scheduled');
+    $('#scheduled-count').textContent = res.rows.length || '';
+    if (S.local === 'scheduled') { S.rows = res.rows; S.total = res.rows.length; S.more = false; renderList(); $('#list-sub').textContent = res.rows.length ? `${res.rows.length} 封等待发出` : ''; }
+  } catch (e) { if (S.local === 'scheduled') $('#mail-list').innerHTML = `<div class="list-foot">${esc(e.message)}</div>`; }
+}
+$('#nav-scheduled').onclick = () => {
+  S.local = 'scheduled'; S.search = null; S.listToken++; S.multi.clear(); renderSelection();
+  S.rows = []; renderFolders();
+  $('#list-title').textContent = '定时发送'; $('#list-sub').textContent = '正在读取服务器草稿箱…';
+  $('#mail-list').innerHTML = '<div class="skeleton"></div>'.repeat(3);
+  refreshScheduled();
+};
 async function openLocalDraft(id) { try { openComposer(await api('restoreDraft', { local_id: id })); } catch (err) { fail(err); } }
 async function deleteLocalDraft(id) {
   if (!(await confirmDialog('删除草稿', '确定删除这份本机草稿吗？此操作无法撤销。', '删除'))) return;
@@ -843,6 +916,8 @@ function openComposer(draft) {
   $('#cmp-editor').innerHTML = draft.html || '<p><br></p>';
   renderAtts();
   renderEncrypt();
+  $('#cmp-receipt').checked = !!draft.receipt;
+  renderSchedule();
   setTimeout(() => {
     if (!(draft.to || []).length) $('.chips[data-field="to"] input').focus();
     else { const ed = $('#cmp-editor'); ed.focus(); const r = document.createRange(); r.setStart(ed, 0); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
@@ -881,6 +956,7 @@ function isInternal(addr) { return (S.profile.internalDomains || []).includes(St
 function autoEncrypt() { const r = allRecipients(); return r.length > 0 && r.every(isInternal); }
 function encryptOn() { return C.encrypt === null || C.encrypt === undefined ? autoEncrypt() : C.encrypt; }
 function renderEncrypt() {
+  if (C.draft) setTimeout(renderSchedule, 0);
   if (!C.draft) return;
   const on = encryptOn();
   const external = allRecipients().filter((a) => !isInternal(a));
@@ -1024,8 +1100,53 @@ function collectDraft() {
   const value = { ...C.draft, from: $('#cmp-from').value || C.draft.from, to: chipsValue('to'), cc: chipsValue('cc'), bcc: chipsValue('bcc'),
     subject: $('#cmp-subject').value, html: $('#cmp-editor').innerHTML };
   value.encrypt = encryptOn();
+  value.receipt = $('#cmp-receipt').checked;
+  value.scheduleAt = C.draft.scheduleAt || null;
   return value;
 }
+
+// Scheduled send: the time is picked in local time and travels as epoch milliseconds.
+function pad2(n) { return String(n).padStart(2, '0'); }
+function localInput(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+function scheduleText(ms) {
+  const d = new Date(ms), now = new Date(), tomorrow = new Date(now.getTime() + 86400000);
+  const day = sameDay(d, now) ? '今天' : sameDay(d, tomorrow) ? '明天' : `${d.getMonth() + 1}月${d.getDate()}日`;
+  return `${d.getFullYear() !== now.getFullYear() ? d.getFullYear() + '年' : ''}${day} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+function renderSchedule() {
+  const at = C.draft && C.draft.scheduleAt;
+  const chip = $('#cmp-schedule-chip');
+  chip.classList.toggle('hidden', !at);
+  $('#cmp-schedule').classList.toggle('hidden', !!at);
+  if (at) $('span', chip).textContent = scheduleText(at) + ' 发送';
+  const clash = !!at && encryptOn();
+  chip.classList.toggle('warn', clash);
+  chip.title = clash ? '服务器不接受加密邮件的定时发送：发送时会请你选择立即加密发送' : '点击修改定时时间';
+  const btn = $('#cmp-send');
+  if (!btn.disabled) { btn.innerHTML = at ? '<i data-icon="clock"></i>定时发送' : '<i data-icon="send"></i>发送'; renderIcons(btn); }
+  renderIcons(chip);
+}
+async function pickSchedule() {
+  const now = new Date();
+  const at = (h, m, days = 0) => { const d = new Date(now); d.setDate(d.getDate() + days); d.setHours(h, m, 0, 0); return d; };
+  const quick = [['1 小时后', new Date(Math.ceil((now.getTime() + 3600000) / 300000) * 300000)],
+    ...(now.getHours() < 17 ? [['今天 18:00', at(18, 0)]] : []), ['明天 09:00', at(9, 0, 1)], ['明天 14:00', at(14, 0, 1)]];
+  const start = C.draft.scheduleAt ? new Date(C.draft.scheduleAt) : quick[0][1];
+  const value = await promptDialog({ title: '定时发送', okText: '确定',
+    text: '邮件会先保存在服务器的草稿箱，到时间由服务器发出；在此之前可以随时取消。',
+    body: `<div class="sched-form"><div class="sched-quick">${quick.map(([label, d]) => `<button data-at="${d.getTime()}">${label}</button>`).join('')}</div>
+      <input type="datetime-local" id="sched-at" value="${localInput(start)}" min="${localInput(now)}"></div>`,
+    onOpen: (d) => $$('[data-at]', d).forEach((b) => (b.onclick = () => { $('#sched-at').value = localInput(new Date(+b.dataset.at)); })),
+    collect: () => { const v = $('#sched-at').value; return v ? new Date(v).getTime() : NaN; } });
+  if (value === null) return;
+  if (!(value > Date.now() + 120000)) { toast('定时发送时间至少要在 2 分钟之后', { error: true }); return; }
+  if (value > Date.now() + 365 * 86400000) { toast('定时发送时间不能超过一年', { error: true }); return; }
+  C.draft.scheduleAt = value; C.dirty = true; renderSchedule();
+}
+$('#cmp-schedule').onclick = pickSchedule;
+$('#cmp-schedule-chip span').onclick = pickSchedule;
+$('#cmp-schedule-chip button').onclick = () => { C.draft.scheduleAt = null; C.dirty = true; renderSchedule(); };
+$('#cmp-receipt').onchange = () => { C.dirty = true; };
 async function saveDraft(quiet) {
   if (!C.draft) return;
   try {
@@ -1041,11 +1162,19 @@ async function sendMail() {
   if (!value.to.length && !value.cc.length && !value.bcc.length) { toast('请至少填写一个收件人', { error: true }); $('.chips[data-field="to"] input').focus(); return; }
   const bad = [...value.to, ...value.cc, ...value.bcc].map((a) => parseAddressList(a)[0]).filter((p) => !EMAIL_RE.test(p.email));
   if (bad.length) { toast(`收件人地址无效：${bad[0].email}`, { error: true }); return; }
+  if (value.scheduleAt && value.scheduleAt < Date.now() + 60000) { toast('定时发送时间已过，请重新选择', { error: true }); pickSchedule(); return; }
+  if (value.scheduleAt && value.encrypt) {
+    // The server accepts scheduling only for ordinary mail; never fall back to plaintext silently.
+    const now = await promptDialog({ title: '加密邮件不能定时发送', okText: '立即加密发送', collect: () => true,
+      text: '服务器只接受普通邮件的定时发送。你可以现在就加密发送，或者取消后关闭加密再定时（关闭加密需要你自己确认）。' });
+    if (!now) return;
+    C.draft.scheduleAt = null; value.scheduleAt = null; renderSchedule();
+  }
   if (!value.subject.trim() && !(await confirmDialog('没有主题', '这封邮件没有主题，仍要发送吗？', '仍然发送'))) return;
   const text = $('#cmp-editor').innerText;
   if (/附件|attach/i.test(text.split('原始邮件')[0]) && !(value.attachments || []).length &&
       !(await confirmDialog('忘记添加附件？', '正文提到了“附件”，但还没有添加附件。仍要发送吗？', '仍然发送'))) return;
-  const btn = $('#cmp-send'); btn.disabled = true; btn.innerHTML = '<i data-icon="send"></i>发送中…'; renderIcons(btn);
+  const btn = $('#cmp-send'); btn.disabled = true; btn.innerHTML = value.scheduleAt ? '<i data-icon="clock"></i>提交中…' : '<i data-icon="send"></i>发送中…'; renderIcons(btn);
   $('#cmp-status').textContent = (value.attachments || []).length ? '正在上传附件并发送…' : '正在发送…';
   try {
     const res = await api('send', { value });
@@ -1061,7 +1190,9 @@ async function sendMail() {
       return;
     }
     if (res.state === 'Accepted') {
-      closeComposer(true); toast(value.encrypt ? '加密邮件已发送' : '邮件已发送');
+      closeComposer(true);
+      toast(res.scheduledAt ? `${value.encrypt ? '加密邮件' : '邮件'}已定时，将于 ${scheduleText(res.scheduledAt)} 发送` : value.encrypt ? '加密邮件已发送' : '邮件已发送');
+      if (res.scheduledAt) refreshScheduled();
       refreshDraftCount();
       const sent = S.folders.find((f) => f.role === 'sent'); if (sent && S.folderId === sent.id) loadList(true);
     } else if (res.state === 'Unknown') {
@@ -1072,7 +1203,7 @@ async function sendMail() {
       fail({ message: res.failureMessage || '发送失败，草稿已保存在本机，可修改后重试。' });
     }
   } catch (err) { $('#cmp-status').textContent = '发送失败，草稿已保留'; fail(err); }
-  finally { btn.disabled = false; btn.innerHTML = '<i data-icon="send"></i>发送'; renderIcons(btn); }
+  finally { btn.disabled = false; renderSchedule(); }
 }
 function closeComposer(sent) {
   clearInterval(C.timer);

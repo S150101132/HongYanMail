@@ -1,5 +1,5 @@
 """Synthetic in-memory adapter for --demo and offline tests. Never touches the network."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from coremail_desktop.errors import AppError
 from coremail_desktop.models import Folder, MessageSummary
@@ -61,6 +61,13 @@ class DemoAdapter:
                                      'to': 'demo@example.invalid' if fid != '3' else f'"{name}" <{addr}>',
                                      'date': when.strftime('%Y-%m-%d %H:%M:%S'),
                                      'flags': {'read': i % 4 != 0, 'attached': i % 5 == 1, 'flagged': i % 11 == 2}}
+            if fid == '3':
+                self.rows[f'demo{i}']['flags'].update(read=True, rcptQueued=True, rcptSucceed=True, rcptRead=i % 2 == 0)
+        # One message waiting on the server's schedule (drafts folder, flags.scheduleDelivery).
+        self.rows['demo-sched'] = {'id': 'demo-sched', 'fid': '2', 'subject': '周报提醒（演示定时邮件）', 'from': '"演示用户" <demo@example.invalid>',
+                                   'to': '"研发团队" <rd@example.invalid>', 'date': (now + timedelta(hours=20)).strftime('%Y-%m-%d %H:%M:%S'),
+                                   'flags': {'read': True, 'scheduleDelivery': True},
+                                   'scheduleAt': (now + timedelta(hours=20)).astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
         self.last_folder_total = None
         self.last_folder_id = None
         self.signed_in = False
@@ -96,7 +103,7 @@ class DemoAdapter:
     def _summary(self, r):
         return MessageSummary(r['id'], r['fid'], r['subject'], r['from'], r['date'], r['flags'],
                               preview='本周的设计评审已经完成，请查看以下安排：邮箱工作台交互优化、草稿与阅读流程验证……',
-                              recipients=r['to'], size=24000)
+                              recipients=r['to'], size=24000, schedule_at=r.get('scheduleAt'))
 
     def list_messages(self, folder_id, offset, limit=50):
         self._need()
@@ -152,7 +159,51 @@ class DemoAdapter:
 
     def deliver(self, compose_id, draft):
         self.sent.append(draft)
-        return {'code': 'S_OK'}
+        self._counter += 1
+        mid = f'demo-new{self._counter}'
+        scheduled = bool(getattr(draft, 'schedule_at', None))
+        self.rows[mid] = {'id': mid, 'fid': '2' if scheduled else '3', 'subject': draft.subject, 'from': '"演示用户" <demo@example.invalid>',
+                          'to': ', '.join(draft.to), 'date': datetime(2026, 10, 17, 10, 31).strftime('%Y-%m-%d %H:%M:%S'),
+                          'flags': {'read': True, 'scheduleDelivery': True} if scheduled else {'read': True, 'rcptQueued': True},
+                          'scheduleAt': draft.schedule_at}
+        return {'code': 'S_OK', **({'scheduledSent': {'mid': mid}} if scheduled else {})}
+
+    supports_scheduled_encrypted = False
+
+    def scheduled_messages(self, limit=100):
+        return [self._summary(r) for r in self.rows.values() if r['fid'] == '2' and r['flags'].get('scheduleDelivery')][:limit]
+
+    def unschedule(self, message_id):
+        row = self.rows.get(message_id)
+        if not row or not row['flags'].get('scheduleDelivery'):
+            raise AppError('NOT_SCHEDULED')
+        row['flags']['scheduleDelivery'] = False
+        row['scheduleAt'] = None
+        return {'message_id': message_id, 'draft_id': message_id}
+
+    def _recipients(self, message_id):
+        from email.utils import getaddresses
+        row = self.rows.get(message_id)
+        if row is None or row['fid'] != '3':
+            raise AppError('MESSAGE_UNAVAILABLE')
+        return row, [(n, a) for n, a in getaddresses([row['to']]) if a]
+
+    def delivery_history(self, message_id):
+        row, people = self._recipients(message_id)
+        result = []
+        for name, addr in people:
+            external = not addr.endswith('@example.invalid')
+            code = row.get('recall') or (200 if external else 509 if row['flags'].get('rcptRead') else 100)
+            result.append({'to': addr, 'name': name, 'result': code if code > 99 else 100, 'recall': code if code < 99 else 0,
+                           'recallable': not external and code == 100, 'time': row['date']})
+        return result
+
+    def recall_message(self, message_id):
+        row, people = self._recipients(message_id)
+        states = {a: 0 if not a.endswith('@example.invalid') else 5 if row['flags'].get('rcptRead') else 2 for _, a in people}
+        if all(code == 2 for code in states.values()):
+            row['recall'] = 2
+        return {'cancelled': False, 'states': states}
 
     supports_encrypted_submission = True
     _keys = {}

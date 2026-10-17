@@ -10,6 +10,7 @@ import json
 import re
 import uuid
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from email.utils import getaddresses, parseaddr
 from pathlib import Path
 
@@ -29,6 +30,23 @@ SYSTEM_ROLES = {'1': 'inbox', '2': 'drafts', '3': 'sent', '4': 'trash', '5': 'sp
 REAUTH_CODES = ('SESSION_EXPIRED', 'NOT_AUTHENTICATED')
 
 
+def _schedule_iso(value):
+    """Epoch milliseconds from the page -> UTC 'YYYY-MM-DDTHH:MM:SSZ'; None means send now."""
+    if value in (None, '', 0):
+        return None
+    if type(value) not in (int, float):
+        raise AppError('INVALID_SCHEDULE')
+    try:
+        moment = datetime.fromtimestamp(value / 1000, timezone.utc).replace(microsecond=0)
+    except (OverflowError, OSError, ValueError):
+        raise AppError('INVALID_SCHEDULE') from None
+    return moment.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _schedule_ms(iso):
+    return int(datetime.strptime(iso, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc).timestamp() * 1000) if iso else None
+
+
 def _people(value):
     result = []
     for name, addr in getaddresses([value.replace(';', ',')] if isinstance(value, str) else [str(v) for v in value]):
@@ -42,7 +60,8 @@ def _summary_dict(item):
     return {'id': item.remote_id, 'fid': item.folder_id, 'subject': item.subject, 'from': item.sender,
             'fromName': name or addr or item.sender, 'fromEmail': addr, 'to': item.recipients,
             'date': item.date_text, 'ts': date_ts(item.date_text), 'preview': item.preview,
-            'size': item.size, 'flags': {k: bool(v) for k, v in dict(item.flags).items()}}
+            'size': item.size, 'flags': {k: bool(v) for k, v in dict(item.flags).items()},
+            'scheduleAt': _schedule_ms(getattr(item, 'schedule_at', None))}
 
 
 def _quote_html(document):
@@ -299,6 +318,7 @@ class MailBackend:
                   'replyTo': _people(header('reply-to')), 'date': summary.get('date') or header('date'),
                   'html': body_html, 'text': document.text, 'hasRemoteImages': remote,
                   'encryption': document.encryption_state, 'flags': summary.get('flags', {}),
+                  'scheduled': bool(summary.get('flags', {}).get('scheduleDelivery')), 'scheduleAt': summary.get('scheduleAt'),
                   'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
                                   for a in document.attachments]}
         if mark_read is None:
@@ -505,7 +525,8 @@ class MailBackend:
         identity = self.identities[0] if self.identities else (self.account or '')
         base = {'localId': uuid.uuid4().hex, 'revision': 0, 'mode': mode, 'from': identity,
                 'to': [], 'cc': [], 'bcc': [], 'subject': '', 'html': '<p><br></p>' + self._signature_html(),
-                'replySourceId': None, 'referenceHeaders': {}, 'attachments': [], 'encrypt': None}
+                'replySourceId': None, 'referenceHeaders': {}, 'attachments': [], 'encrypt': None,
+                'scheduleAt': None, 'receipt': False}
         if mode == 'new' or not mid:
             return base
         document = self._document(mid)
@@ -536,7 +557,7 @@ class MailBackend:
                              str(value.get('subject', '')), str(value.get('html', '')),
                              {str(k): str(v) for k, v in dict(value.get('referenceHeaders') or {}).items()},
                              value.get('encrypt') is True, value.get('replySourceId') if mode in ('reply', 'reply_all') else None,
-                             attachments, True)
+                             attachments, True, _schedule_iso(value.get('scheduleAt')), value.get('receipt') is True)
 
     def save_draft(self, value):
         draft = self._draft(value)
@@ -554,6 +575,7 @@ class MailBackend:
                 'to': list(draft.to), 'cc': list(draft.cc), 'bcc': list(draft.bcc), 'subject': draft.subject,
                 'html': body, 'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
                 'encrypt': True if draft.encryption_required else None,
+                'scheduleAt': _schedule_ms(draft.schedule_at), 'receipt': draft.request_receipt,
                 'attachments': [{'name': a.name, 'type': a.media_type, 'size': len(a.payload),
                                  'data': base64.b64encode(a.payload).decode('ascii')} for a in draft.attachments]}
 
@@ -566,6 +588,15 @@ class MailBackend:
         draft = replace(draft, revision=draft.revision + 1)
         if not (draft.to or draft.cc or draft.bcc):
             raise AppError('RECIPIENT_REQUIRED')
+        if draft.schedule_at:
+            # The server sends it later; a time already past would go out at once.
+            at = datetime.strptime(draft.schedule_at, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            if not now + timedelta(minutes=1) <= at <= now + timedelta(days=366):
+                raise AppError('INVALID_SCHEDULE')
+            if draft.encryption_required and not getattr(self.adapter, 'supports_scheduled_encrypted', False):
+                # Never fall back to plaintext: the user chooses to send now instead.
+                raise AppError('SCHEDULE_ENCRYPTED_UNSUPPORTED')
         # A durable copy first: if sending fails the user loses nothing.
         self.services['save_draft'](draft=draft)
         if draft.encryption_required:
@@ -580,7 +611,8 @@ class MailBackend:
                 self.cache.update(draft.reply_source_id, flags={'replied': True})
         from coremail_desktop.ui.messages import user_message
         return {'state': job.state, 'failure': job.failure_code, 'localId': draft.local_id, 'revision': draft.revision,
-                'failureMessage': user_message(job.failure_code) if job.failure_code else None}
+                'failureMessage': user_message(job.failure_code) if job.failure_code else None,
+                'scheduledAt': _schedule_ms(draft.schedule_at) if job.state == 'Accepted' else None}
 
     def encryption_check(self, recipients):
         """Which recipients have a company certificate. Bare addresses only."""
@@ -606,6 +638,48 @@ class MailBackend:
             raise AppError('OWN_CERT_MISSING')
         certificates = [describe(x509.load_der_x509_certificate(der), 'directory') for der in found.values()]
         return build_encrypted_message(draft, certificates, self.display_name)
+
+    # Sent mail: delivery status and recall ---------------------------------
+    def delivery_status(self, mid):
+        """Each recipient's delivery/read state, worded from the server's own codes only."""
+        from coremail_desktop.compose.tracking import delivery_state
+        if not hasattr(self.adapter, 'delivery_history'):
+            raise AppError('OPERATION_NOT_ALLOWED')
+        rows = []
+        for entry in self._online(self.adapter.delivery_history, str(mid)):
+            state = delivery_state(entry['result'], entry['recall'])
+            rows.append({'email': entry['to'], 'name': entry['name'], 'text': state['text'], 'kind': state['kind'],
+                         'time': entry['time'], 'recallable': entry['recallable']})
+        counts = {}
+        for row in rows:
+            counts[row['text']] = counts.get(row['text'], 0) + 1
+        return {'rows': rows, 'counts': counts, 'read': sum(r['kind'] == 'read' for r in rows),
+                'recallable': any(r['recallable'] for r in rows)}
+
+    def recall(self, mid):
+        """Recall a sent message. Every row is the server's own per-recipient answer."""
+        from coremail_desktop.compose.tracking import recall_state
+        if not hasattr(self.adapter, 'recall_message'):
+            raise AppError('OPERATION_NOT_ALLOWED')
+        result = self._online(self.adapter.recall_message, str(mid))
+        if result['cancelled']:
+            return {'cancelled': True, 'rows': [], 'recalled': 0}
+        rows = [{'email': email, **recall_state(code)} for email, code in sorted(result['states'].items())]
+        return {'cancelled': False, 'rows': rows, 'recalled': sum(r['recalled'] for r in rows)}
+
+    # Scheduled mail ----------------------------------------------------------
+    def scheduled(self):
+        if not hasattr(self.adapter, 'scheduled_messages'):
+            return {'rows': []}
+        rows = [_summary_dict(item) for item in self._online(self.adapter.scheduled_messages)]
+        if rows:
+            self.cache.put_summaries(rows[0]['fid'], rows)  # Lets the reader open them; never a complete window.
+        return {'rows': sorted(rows, key=lambda r: r['scheduleAt'] or 0)}
+
+    def unschedule(self, mid):
+        self._online(self.adapter.unschedule, str(mid))
+        self.cache.update(mid, flags={'scheduleDelivery': False}, scheduleAt=None)
+        return True
 
     # Background sync -------------------------------------------------------
     def poll(self):

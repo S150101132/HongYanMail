@@ -45,6 +45,7 @@ BACKEND_METHODS = {
     'listDrafts': 'list_drafts', 'restoreDraft': 'restore_draft', 'deleteDraft': 'delete_draft',
     'send': 'send', 'poll': 'poll', 'prefetch': 'prefetch', 'encryptionCheck': 'encryption_check',
     'certificateStatus': 'certificate_status', 'forgetCertificate': 'forget_certificate',
+    'deliveryStatus': 'delivery_status', 'recall': 'recall', 'scheduled': 'scheduled', 'unschedule': 'unschedule',
 }
 # Read-only calls may run beside a long send or list fetch.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus'}

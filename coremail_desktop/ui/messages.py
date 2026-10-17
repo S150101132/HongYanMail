@@ -71,6 +71,17 @@ MESSAGES = {
     'SESSION_CLOSED': '会话已关闭。',
     'OPERATION_NOT_ALLOWED': '当前预览版不支持该操作。',
     'DEMO_WRITE_DISABLED': '演示模式不保存或发送邮件。',
+    'INVALID_SCHEDULE': '定时发送时间需在 1 分钟之后、一年以内，请重新选择。',
+    'SCHEDULE_ENCRYPTED_UNSUPPORTED': '服务器不接受加密邮件的定时发送。可以立即加密发送，或取消定时；鸿雁不会改成明文发送。',
+    'SCHEDULE_ZONE_UNSUPPORTED': '无法确定邮箱账号设置的时区，为避免发错时间，已停止定时发送。',
+    'SCHEDULE_UNCONFIRMED': '服务器没有确认已取消定时发送，请刷新草稿箱核对。',
+    'NOT_SCHEDULED': '这封邮件不是定时邮件，或已经发出。',
+    'RECALL_UNSUPPORTED': '服务器不支持撤回这封邮件。',
+    'RECALL_EXPIRED': '邮件已超过可撤回的期限。',
+    'RECALL_NOT_FOUND': '服务器上找不到这封邮件，无法撤回。',
+    'RECALL_UNCONFIRMED': '服务器没有返回撤回结果，请稍后在投递状态中核对，不要当作已撤回。',
+    'RECALL_LATER': '撤回需要等待更长时间，请稍后再试。',
+    'DELIVERY_STATUS_EXPIRED': '投递记录只保留一段时间，这封邮件的记录已过期。',
 }
 
 GENERIC = '操作未完成。请检查连接或稍后重试，本应用不会自动重发邮件。'
