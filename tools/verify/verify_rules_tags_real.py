@@ -239,7 +239,7 @@ def main():
         report['cleanup'] = cleanup
         backend.logout()
         shutil.rmtree(data, ignore_errors=True)
-    out = ROOT / 'analysis' / f'rules-tags-real-verification-{time.strftime("%Y-%m-%d")}.json'
+    out = ROOT / 'analysis' / f'{"invite-respond" if ONLY == {"respond-invite"} else "rules-tags"}-real-verification-{time.strftime("%Y-%m-%d")}.json'
     out.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding='utf-8')
     print(json.dumps(report, ensure_ascii=False, indent=1))
     return 0 if all(c['status'] == 'passed' for c in checks.values()) else 1

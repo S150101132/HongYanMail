@@ -65,7 +65,7 @@ Condition / action shapes (all stored and read back on the test rule):
   `var.mail.calendar`. `mail.jsp?func=readMessage` is RPC_REJECTED.
 - Answer as webmail does: `cal:respond {fid:calFid, eventId:calUid, type:2 暂定|3 接受|4 拒绝, inform:true}`, then
   `mbox:updateMessageInfos {attrs:{partStat}}`. **Verified 2026-10-18** with the user's approval: 暂定 on the Gmail test
-  invitation → S_OK, and `meetingRequestStatus` went 5 → 2 (the reply went to the user's own Gmail).
+  invitation → S_OK, and `meetingRequestStatus` went 5 → 2 (the reply went to the user's own Gmail; analysis/invite-respond-real-verification-2026-10-18.json).
 - An invitation created in webmail to the organizer's own address produces no mail (Coremail does not invite the
   organizer). `cal:listCalFolder` answered an empty list.
 - The card remembers an answer given in Hongyan; it does not yet read `meetingRequestStatus` to show answers given
