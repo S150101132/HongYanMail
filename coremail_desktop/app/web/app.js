@@ -526,6 +526,7 @@ function renderMessage(m) {
   const role = (folderById(m.fid) || {}).role;
   const panel = $('#ds-panel'); if (panel) panel.remove();
   $$('#reader-body .sent-only').forEach((b) => b.classList.toggle('hidden', role !== 'sent'));
+  setRecallAllowed(true);
   $$('#reader-body .sched-only').forEach((b) => b.classList.toggle('hidden', !m.scheduled));
   // Banners
   const banners = [];
@@ -572,9 +573,15 @@ async function loadDeliveryStatus(m, open) {
     renderIcons(box); $('[data-ds="retry"]', box).onclick = () => loadDeliveryStatus(m, true); return;
   }
   if (S.message !== m) return;
+  // The server's own per-recipient flag decides: when no recipient is recallable the
+  // button is greyed out with the reason, instead of failing after a confirmation.
+  const blocked = st.rows.length > 0 && !st.recallable;
+  const reason = st.read === st.rows.length ? RECALL_READ_TEXT : RECALL_BLOCKED_TEXT;
+  setRecallAllowed(!blocked, reason);
   const summary = st.rows.length ? `共 ${st.rows.length} 位收件人：` + Object.entries(st.counts).map(([t, n]) => `${n} 位${t}`).join('，') : '暂无投递记录（邮件可能仍在处理中，或记录已过期）';
   box.innerHTML = `<div class="ds-head"><i data-icon="route"></i><span>${esc(summary)}</span><span class="spacer"></span>
     ${st.rows.length ? `<button class="btn ghost" data-ds="toggle">${open ? '收起' : '详情'}</button>` : ''}<button class="btn ghost" data-ds="retry" title="刷新">刷新</button></div>
+    ${blocked ? `<div class="ds-note muted small"><i data-icon="undo"></i>${reason}。</div>` : ''}
     <table class="ds-table${open ? '' : ' hidden'}">${st.rows.map((r) => `<tr><td class="who"><b>${esc(r.name || r.email)}</b>${r.name ? ` <span class="muted small">${esc(r.email)}</span>` : ''}</td>
       <td><span class="ds-state ${esc(r.kind)}">${esc(r.text)}</span></td><td class="when">${esc(r.time)}</td></tr>`).join('')}</table>`;
   renderIcons(box);
@@ -583,10 +590,24 @@ async function loadDeliveryStatus(m, open) {
   $('[data-ds="retry"]', box).onclick = () => loadDeliveryStatus(m, !$('.ds-table', box) || !$('.ds-table', box).classList.contains('hidden'));
 }
 
+const RECALL_BLOCKED_TEXT = '服务器标记这封邮件不可撤回：本邮箱未开放撤回功能（服务器策略）';
+const RECALL_READ_TEXT = '收件人均已阅读，服务器不再允许撤回这封邮件';
+function setRecallAllowed(allowed, reason = RECALL_BLOCKED_TEXT) {
+  $$('#reader-body [data-act="recall"]').forEach((b) => {
+    b.disabled = !allowed;
+    b.title = allowed ? '撤回这封已发送邮件' : reason;
+  });
+}
+
 async function recallMessage(m) {
+  const button = $('#reader-body [data-act="recall"]');
+  if (button && button.disabled) { toast(button.title, { error: true }); return; }
   if (!(await confirmDialog('撤回邮件', '确定撤回这封邮件吗？只能撤回发给本公司邮箱、且对方尚未阅读的邮件。撤回结果以服务器返回为准。', '撤回'))) return;
   let res;
-  try { res = await api('recall', { mid: m.id }); } catch (err) { fail(err); return; }
+  try { res = await api('recall', { mid: m.id }); } catch (err) {
+    if (err && err.code === 'RECALL_UNSUPPORTED' && S.message === m) setRecallAllowed(false);
+    fail(err); return;
+  }
   const rows = res.rows.map((r) => `<tr><td class="who"><b>${esc(r.email)}</b></td><td><span class="ds-state ${esc(r.kind)}">${esc(r.text)}</span></td></tr>`).join('');
   const title = res.recalled === res.rows.length && res.rows.length ? '已撤回' : res.recalled ? `部分撤回（${res.recalled}/${res.rows.length}）` : '未能撤回';
   await promptDialog({ title, text: res.recalled ? '以下是服务器返回的每位收件人的撤回结果：' : '服务器返回的结果如下，邮件没有被撤回：',

@@ -80,7 +80,7 @@ MESSAGES = {
     'SCHEDULE_ZONE_UNSUPPORTED': '无法确定邮箱账号设置的时区，为避免发错时间，已停止定时发送。',
     'SCHEDULE_UNCONFIRMED': '服务器没有确认已取消定时发送，请刷新草稿箱核对。',
     'NOT_SCHEDULED': '这封邮件不是定时邮件，或已经发出。',
-    'RECALL_UNSUPPORTED': '服务器不支持撤回这封邮件。',
+    'RECALL_UNSUPPORTED': '本邮箱未开放撤回功能（服务器策略），这封邮件无法撤回。',
     'RECALL_EXPIRED': '邮件已超过可撤回的期限。',
     'RECALL_NOT_FOUND': '服务器上找不到这封邮件，无法撤回。',
     'RECALL_UNCONFIRMED': '服务器没有返回撤回结果，请稍后在投递状态中核对，不要当作已撤回。',
