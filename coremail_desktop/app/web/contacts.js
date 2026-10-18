@@ -225,32 +225,103 @@ $('#ct-search').addEventListener('keydown', async (e) => {
   } catch (err) { if (token === CT.token) { $('#ct-sub').textContent = ''; fail(err); } }
 });
 
-function renderCard(p) {
+// A colleague's details come from the directory (backend.person: encrypted cache,
+// refreshed daily). Fields the directory leaves empty are not shown (this server
+// exposes no 工号/办公地点/上级 today). Every field copies on click; the head image replaces the
+// coloured initials when the directory has one.
+const PERSON_FIELDS = [['name', '姓名'], ['email', '邮箱'], ['dept', '部门'], ['title', '职位'], ['mobile', '手机'], ['phone', '办公电话'],
+  ['fax', '传真'], ['address', '地址'], ['employeeNo', '工号'], ['office', '办公地点'], ['manager', '上级']];
+const PERSON = new Map();  // email (lower case) -> details promise, for this run only.
+function personDetails(email, refresh = false) {
+  const key = String(email || '').toLowerCase();
+  if (!key) return Promise.resolve(null);
+  if (!refresh && PERSON.has(key)) return PERSON.get(key);
+  const p = api('person', { email, refresh }).catch(() => null);
+  PERSON.set(key, p);
+  return p;
+}
+function mergePerson(p, d) {
+  if (!d || !d.found) return { ...p };
+  const out = { ...p };
+  for (const [k] of PERSON_FIELDS) if (d[k]) out[k] = d[k];
+  out.avatar = d.avatar || ''; out.found = true;
+  return out;
+}
+function personAvatar(p, cls) {
+  return p.avatar ? `<img class="avatar ${cls} photo" src="${esc(p.avatar)}" alt="">` : avatarHtml(p.name, p.email, cls);
+}
+function factsHtml(p) {
+  return PERSON_FIELDS.filter(([k]) => p[k]).map(([k, label]) =>
+    `<dt>${label}</dt><dd class="copyable" data-copy="${esc(p[k])}" title="点击复制${label}">${esc(p[k])}<i data-icon="copy"></i></dd>`).join('');
+}
+function copyText(text, label) {
+  const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select();
+  const ok = document.execCommand('copy'); t.remove(); toast(ok ? `已复制${label || ''}` : '无法访问剪贴板', { error: !ok });
+}
+document.addEventListener('click', (e) => {
+  const dd = e.target.closest('.copyable'); if (!dd) return;
+  const dt = dd.previousElementSibling;
+  copyText(dd.dataset.copy, dt ? dt.textContent : '');
+});
+
+function renderCard(p, details) {
   const card = $('#ct-card');
   if (!p) { card.innerHTML = '<div class="empty"><div class="empty-art ct-art"></div><p>选择一位同事查看详情</p><p class="muted small">双击联系人直接写邮件</p></div>'; return; }
-  const dept = p.dept || (CT.mode === 'dept' ? CT.title : '');
+  const shown = mergePerson({ ...p, dept: p.dept || (CT.mode === 'dept' ? CT.title : '') }, details);
   card.innerHTML = `<div class="ct-card">
-    ${avatarHtml(p.name, p.email, 'xl')}
-    <h1>${esc(p.name || p.email)}</h1>
-    ${p.title ? `<p class="muted">${esc(p.title)}</p>` : ''}
-    <dl class="ct-facts">
-      <dt>邮箱</dt><dd class="selectable">${esc(p.email)}</dd>
-      ${dept ? `<dt>部门</dt><dd>${esc(dept)}</dd>` : ''}
+    ${personAvatar(shown, 'xl')}
+    <h1>${esc(shown.name || shown.email)}</h1>
+    ${shown.title ? `<p class="muted">${esc(shown.title)}</p>` : ''}
+    <dl class="ct-facts">${factsHtml(shown)}
       ${CT.mode === 'personal' ? '<dt>来源</dt><dd>个人通讯录</dd>' : ''}
     </dl>
+    <p class="muted small ct-detail-note">${details === undefined ? '正在读取详细信息…' : details && details.found ? '点击任一项即可复制' : CT.mode === 'personal' ? '' : '组织通讯录中没有更多信息'}</p>
     <div class="ct-actions">
       <button class="btn primary" id="ct-write"><i data-icon="pen"></i>写邮件</button>
       <button class="btn ghost" id="ct-mails"><i data-icon="search"></i>查看往来邮件</button>
-      <button class="btn ghost" id="ct-copy" title="复制邮箱地址"><i data-icon="copy"></i>复制邮箱</button>
     </div></div>`;
   renderIcons(card);
-  $('#ct-write').onclick = () => writeTo(p);
-  $('#ct-mails').onclick = () => mailsWith(p);
-  $('#ct-copy').onclick = () => {
-    const t = document.createElement('textarea'); t.value = p.email; document.body.appendChild(t); t.select();
-    const ok = document.execCommand('copy'); t.remove(); toast(ok ? '已复制邮箱地址' : '无法访问剪贴板', { error: !ok });
-  };
+  $('#ct-write').onclick = () => writeTo(shown);
+  $('#ct-mails').onclick = () => mailsWith(shown);
+  if (details === undefined) personDetails(p.email).then((d) => { if (CT.person === p) renderCard(p, d); });
 }
+
+// ---------------------------------------------------------------- person popover (reader names)
+// Clicking a sender or recipient in the reader shows who it is; 写邮件 stays one click away.
+function closePersonPop() { const pop = $('#person-pop'); if (pop) pop.remove(); }
+function personPopover(anchor, person) {
+  closePersonPop();
+  const pop = document.createElement('div');
+  pop.id = 'person-pop'; pop.className = 'person-pop'; pop.setAttribute('role', 'dialog');
+  document.body.appendChild(pop);
+  const draw = (details) => {
+    const p = mergePerson(person, details);
+    pop.innerHTML = `<div class="pp-head">${personAvatar(p, '')}<div class="pp-who"><b>${esc(p.name || p.email)}</b>
+        ${p.title ? `<div class="muted small">${esc(p.title)}</div>` : ''}</div></div>
+      <dl class="ct-facts pp-facts">${factsHtml({ ...p, name: '' })}</dl>
+      ${details === undefined ? '<p class="muted small pp-note">正在读取…</p>' : ''}
+      <div class="pp-actions"><button class="btn primary" data-pp="write"><i data-icon="pen"></i>写邮件</button>
+        <button class="btn ghost" data-pp="mails"><i data-icon="search"></i>查看往来邮件</button></div>`;
+    renderIcons(pop);
+    $('[data-pp="write"]', pop).onclick = () => { closePersonPop(); writeTo(p); };
+    $('[data-pp="mails"]', pop).onclick = () => { closePersonPop(); mailsWith(p); };
+    place();
+  };
+  const place = () => {
+    const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+    pop.style.top = (r.bottom + 6 + h > innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6) + 'px';
+  };
+  draw(undefined);
+  personDetails(person.email).then((d) => { if (pop.isConnected) draw(d); });
+}
+document.addEventListener('mousedown', (e) => { if (!e.target.closest('#person-pop')) closePersonPop(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#person-pop')) { e.stopPropagation(); closePersonPop(); } }, true);
+$('.reader-scroll').addEventListener('scroll', closePersonPop);
+$('#r-from-name').addEventListener('click', (e) => {
+  const email = ($('#r-from-mail').textContent || '').replace(/^<|>$/g, '');
+  if (email) personPopover(e.currentTarget, { name: e.currentTarget.textContent === email ? '' : e.currentTarget.textContent, email });
+});
 function writeTo(p) {
   const name = String(p.name || '').replace(/["<>]/g, '');
   startCompose('new', null, { to: [name ? `"${name}" <${p.email}>` : p.email] });

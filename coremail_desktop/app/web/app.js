@@ -581,7 +581,7 @@ function renderRecipients(m) {
   box.innerHTML = `<span class="r-list">${parts.join('<span class="r-sep">·</span>')}</span>` +
     `<a class="r-more hidden" title="显示全部收件人和抄送">展开（共 ${total} 人）</a>`;
   box.classList.add('clamped');
-  $$('.r-list a', box).forEach((a) => (a.onclick = () => startCompose('new', null, { to: [a.dataset.mailto] })));
+  $$('.r-list a', box).forEach((a) => (a.onclick = () => personPopover(a, { name: a.dataset.name || '', email: a.dataset.mailto })));
   const more = $('.r-more', box);
   more.onclick = () => {
     const open = box.classList.toggle('clamped');
@@ -590,7 +590,7 @@ function renderRecipients(m) {
   // Only offer the toggle when the single line actually overflows.
   requestAnimationFrame(() => { const list = $('.r-list', box); more.classList.toggle('hidden', !list || list.scrollWidth <= list.clientWidth + 1); });
 }
-function people(list) { return list.map((p) => `<a title="${esc(p.email)}" data-mailto="${esc(p.email)}">${esc(p.name || p.email)}</a>`).join('、'); }
+function people(list) { return list.map((p) => `<a title="${esc(p.email)}" data-mailto="${esc(p.email)}" data-name="${esc(p.name || '')}">${esc(p.name || p.email)}</a>`).join('、'); }
 function renderMessage(m) {
   $('#r-subject').textContent = m.subject || '（无主题）';
   const from = m.from[0] || { name: '', email: '' };

@@ -48,11 +48,12 @@ BACKEND_METHODS = {
     'deliveryStatus': 'delivery_status', 'recall': 'recall', 'scheduled': 'scheduled', 'unschedule': 'unschedule',
     'sharedMailboxes': 'shared_mailboxes',
     'directory': 'directory', 'members': 'members', 'personalContacts': 'personal_contacts', 'findPeople': 'find_people',
+    'person': 'person',
     'searchCapabilities': 'search_capabilities',
 }
 # Read-only calls may run beside a long send or list fetch.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
-                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople'}
+                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'person'}
 BACKGROUND_METHODS = {'prefetch'}
 
 

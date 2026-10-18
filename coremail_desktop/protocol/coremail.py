@@ -18,7 +18,7 @@ class DesktopSession(CoremailSession):
     """Retain the verified login/redirect parser, classify production failures."""
     ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare','oab:autoMatch','pab:searchContacts','cert:listPublicKey','cert:get',
                                        'user:listDeliveryHistory','mbox:recallMessage2','mbox:cancelDeliver','mbox:getMessageInfos','mbox:listSharedAccessMbox',
-                                       'oab:getDirectories','oab:listEx'}
+                                       'oab:getDirectories','oab:listEx','oab:get','oab:getHeadImageData'}
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -64,6 +64,11 @@ class DesktopSession(CoremailSession):
         if code in ('FA_NEED_SECOND_AUTH','FA_NEED_VERIFY_CODE','FA_NEED_BIND_DEVICE'): raise AppError('AUTH_CHALLENGE')
         if code != 'S_OK': raise AppError('RPC_REJECTED')
         return result
+    def get_raw(self,func,**parameters):
+        """A read-only GET whose answer is bytes rather than JSON (head images)."""
+        if func not in self.ALLOWED: raise AppError('RPC_NOT_ALLOWED')
+        raw,_ = self._fetch(Request(self._rpc_url(func,**parameters),headers={'Accept':'image/*,text/x-json'}))
+        return raw
     def push_credentials(self):
         """Everything the push channel needs, or None when push is off or signed out.
 
@@ -498,6 +503,37 @@ class CoremailAdapter:
             if parts and parts[-1]==self._root_name: parts.reverse()  # Shown root first, whichever way the server writes it.
             people.append({'name':str(r.get('true_name') or ''),'email':r['email'],'title':str(r.get('duty') or ''),'dept':' / '.join(parts)})
         return {'rows':people,'total':total if total is not None else len(people)}
+    # A colleague's card: oab:get {list, returnAttrs, forEmail} answers one row per
+    # address, matched exactly (webmail's card lookup, X.03931.js). Verified read-only
+    # 2026-10-18 (analysis/contact-details-shape2-2026-10-18.json): any attribute the
+    # deployment does not expose fails the whole call with FA_FORBIDDEN (employee
+    # number, manager, office ... are not exposed); of the allowed ones only
+    # true_name, duty, @location and mobile_number were filled in the sample, the
+    # others are asked for in case a department fills them.
+    PERSON_ATTRS={'name':('true_name',),'title':('duty',),'mobile':('mobile_number',),'phone':('company_phone',),
+                  'fax':('fax_number',),'address':('address',)}
+    def person_details(self,email):
+        if not isinstance(email,str) or '@' not in email or len(email)>254: raise AppError('INVALID_CONTACT')
+        attrs=['@id','email','@location']+[a for names in self.PERSON_ATTRS.values() for a in names]
+        rows=self._call('oab:get',{'list':[email],'returnAttrs':attrs,'forEmail':True},True).get('var')
+        if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
+        row=next((r for r in rows if isinstance(r,dict) and isinstance(r.get('email'),str) and r['email'].casefold()==email.casefold()),None)
+        if row is None: return None
+        text=lambda v: ', '.join(str(x) for x in v if x) if isinstance(v,list) else str(v).strip() if isinstance(v,(str,int)) else ''
+        result={field:next((text(row.get(a)) for a in names if text(row.get(a))),'') for field,names in self.PERSON_ATTRS.items()}
+        if self._root_name is None: self.directory_tree()
+        parts=[part for part in text(row.get('@location')).split('/') if part]
+        if parts and parts[-1]==self._root_name: parts.reverse()
+        return {**result,'email':row['email'],'dept':' / '.join(parts),'uid':text(row.get('@id'))}
+    def head_image(self,uid):
+        """Raw image bytes, or None when the directory has no head image for uid.
+        oab:getHeadImageData?uid= answered empty for every sampled person (2026-10-18);
+        webmail's avatar/ URL serves one generic picture, so it is not used."""
+        if not isinstance(uid,str) or not uid or len(uid)>200: return None
+        if self._session is None: raise AppError('NOT_AUTHENTICATED')
+        raw=self._session.get_raw('oab:getHeadImageData',uid=uid)
+        if raw.lstrip()[:1] in (b'{',b'<',b''): return None  # A JSON/HTML answer means no image.
+        return raw
     def personal_contacts(self):
         """Personal address book. pab:searchContacts {} lists every contact as
         {id, FN, 'EMAIL;PREF', groups} (verified 2026-10-18; pab:getAllGroups is empty here)."""
