@@ -17,7 +17,8 @@ from coremail_desktop.compose.recipients import normalize_recipients
 class DesktopSession(CoremailSession):
     """Retain the verified login/redirect parser, classify production failures."""
     ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare','oab:autoMatch','pab:searchContacts','cert:listPublicKey','cert:get',
-                                       'user:listDeliveryHistory','mbox:recallMessage2','mbox:cancelDeliver','mbox:getMessageInfos'}
+                                       'user:listDeliveryHistory','mbox:recallMessage2','mbox:cancelDeliver','mbox:getMessageInfos',
+                                       'oab:getDirectories','oab:listEx'}
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -116,10 +117,12 @@ class DesktopSession(CoremailSession):
         value=self._decode_response(raw).get('var')
         if not isinstance(value,list) or any(not isinstance(item,dict) or not isinstance(item.get('addr'),str) for item in value): raise AppError('INVALID_RESPONSE')
         return set(normalize_recipients(tuple(item['addr'] for item in value)))
-    def search_messages(self,pattern,offset,limit):
+    def search_messages(self,pattern,offset,limit,fields=None):
+        """fields: extra advanced-search form fields (see CoremailAdapter.search_fields)."""
         if not self.sid: raise AppError('NOT_AUTHENTICATED')
         url=urljoin(self.base_url,'XT/jsp/mail.jsp')+'?'+urlencode({'func':'searchMessages','sid':self.sid})
-        data=urlencode({'pattern':pattern,'start':offset,'limit':limit,'summaryWindowSize':0}).encode('utf-8')
+        form={'pattern':pattern} if pattern else {}
+        data=urlencode({**form,**(fields or {}),'start':offset,'limit':limit,'summaryWindowSize':0}).encode('utf-8')
         raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
         return self._decode_response(raw)
     def upload_attachment(self,compose_id,attachment):
@@ -283,11 +286,36 @@ class CoremailAdapter:
         message = BytesParser(policy=policy.default).parsebytes(raw)
         if not message.get('From') or not any(message.get(k) for k in ('To','Subject','Message-ID','Date')): raise AppError('MESSAGE_UNAVAILABLE')
         return raw
-    def search_messages(self,pattern,offset,limit=50):
-        if not isinstance(pattern,str) or not pattern.strip() or len(pattern)>1000: raise AppError('INVALID_SEARCH')
+    # Webmail's advanced search form (X.03931.js: '!mail:searchMessages' picks pattern,
+    # fid, subject, from, to, sentDate, attachType, flagType, read, dealings ...).
+    # Verified read-only 2026-10-18 (analysis/contacts-search-shape-2026-10-18.json):
+    # each field narrows the total, every returned row satisfies it, fields combine,
+    # and start/limit still page. pattern is the full-text search, subject searches
+    # subjects only; from/to match address substrings, dealings needs a whole address.
+    SEARCH_FILTERS=frozenset({'from','to','with','scope','since','until','folder','attachment','unread','flagged'})
+    @staticmethod
+    def search_fields(pattern,filters):
+        """Validated backend filters -> (pattern, form fields)."""
+        fields={}
+        for key,name in (('from','from'),('to','to'),('with','dealings')):
+            if filters.get(key): fields[name]=filters[key]
+        if pattern and filters.get('scope')=='subject': fields['subject'],pattern=pattern,''
+        since,until=filters.get('since'),filters.get('until')
+        # 'from:to 23:59:59' and 'from:' are the forms webmail sends (and were verified).
+        if since or until: fields['sentDate']=f"{since or '1970-01-01'}:"+(f'{until} 23:59:59' if until else '')
+        if filters.get('folder'): fields['fid']=int(filters['folder']) if str(filters['folder']).isdigit() else filters['folder']
+        if filters.get('attachment'): fields['attachType']='attached'
+        if filters.get('flagged'): fields['flagType']='flagged'
+        if filters.get('unread'): fields['read']='false'
+        return pattern,fields
+    def search_messages(self,pattern,offset,limit=50,filters=None):
+        filters=dict(filters or {})
+        if not isinstance(pattern,str) or len(pattern)>1000 or set(filters)-self.SEARCH_FILTERS: raise AppError('INVALID_SEARCH')
+        pattern,fields=self.search_fields(pattern.strip(),filters)
+        if not pattern and not fields: raise AppError('INVALID_SEARCH')
         if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=100: raise AppError('INVALID_PAGE')
         if self._session is None: raise AppError('NOT_AUTHENTICATED')
-        response=self._session.search_messages(pattern.strip(),offset,limit)
+        response=self._session.search_messages(pattern,offset,limit,fields) if fields else self._session.search_messages(pattern,offset,limit)
         rows=response.get('var'); total=response.get('total')
         if not isinstance(rows,list) or type(total) is not int or total<0: raise AppError('INVALID_RESPONSE')
         messages=[]
@@ -397,6 +425,51 @@ class CoremailAdapter:
         rows=self._call('oab:autoMatch',{'keyword':keyword.strip(),'limit':max(1,min(int(limit),20))},True).get('var')
         if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
         return [{'name':str(r.get('true_name') or ''),'email':r['email']} for r in rows if isinstance(r,dict) and isinstance(r.get('email'),str) and '@' in r['email']]
+    # Directory (read-only). oab:getDirectories {} returns [{id, name, ou:[{id, name, ou}]}]
+    # (one root, 169 departments in 3 levels, ids unique and slash-free). oab:listEx takes
+    # the dn webmail builds for a department at any depth, '<root id>/<department id>';
+    # the root is listed by its own id. start/limit page (limit 1000 accepted) and total
+    # is the department's full count, up to several thousand people. '@location' has one
+    # '/'-separated segment per level plus the root (verified 2026-10-18,
+    # analysis/contacts-search-shape{,2}-2026-10-18.json).
+    DIRECTORY_PAGE=1000
+    DIRECTORY_CAP=2000
+    _root_name=None
+    def directory_tree(self):
+        value=self._call('oab:getDirectories',{},True).get('var')
+        if not isinstance(value,list): raise AppError('INVALID_RESPONSE')
+        self._root_name=next((str(r.get('name') or '') for r in value if isinstance(r,dict)),None)
+        def build(nodes,root,depth):
+            return [{'id':f"{root}/{n['id']}",'name':str(n.get('name') or ''),'children':build(n.get('ou'),root,depth+1) if depth<10 else []}
+                    for n in nodes or [] if isinstance(n,dict) and isinstance(n.get('id'),(str,int)) and str(n['id']) and '/' not in str(n['id'])]
+        return [{'id':str(r['id']),'name':str(r.get('name') or ''),'children':build(r.get('ou'),str(r['id']),1)}
+                for r in value if isinstance(r,dict) and isinstance(r.get('id'),(str,int)) and str(r['id'])]
+    def directory_members(self,dn):
+        """A department's own people (not its sub-departments'), as {rows, total}."""
+        if not isinstance(dn,str) or not dn or len(dn)>500: raise AppError('INVALID_CONTACT')
+        rows,total=[],None
+        while len(rows)<self.DIRECTORY_CAP:
+            response=self._call('oab:listEx',{'dn':dn,'returnAttrs':['@id','@type','true_name','email','duty','@location'],'start':len(rows),'limit':self.DIRECTORY_PAGE},True)
+            page=response.get('var')
+            if not isinstance(page,list): raise AppError('INVALID_RESPONSE')
+            if type(response.get('total')) is int: total=response['total']
+            rows.extend(r for r in page if isinstance(r,dict))
+            if len(page)<self.DIRECTORY_PAGE or (total is not None and len(rows)>=total): break
+        if self._root_name is None: self.directory_tree()
+        people=[]
+        for r in rows:
+            if not isinstance(r.get('email'),str) or '@' not in r['email']: continue
+            parts=[part for part in (r.get('@location') if isinstance(r.get('@location'),str) else '').split('/') if part]
+            if parts and parts[-1]==self._root_name: parts.reverse()  # Shown root first, whichever way the server writes it.
+            people.append({'name':str(r.get('true_name') or ''),'email':r['email'],'title':str(r.get('duty') or ''),'dept':' / '.join(parts)})
+        return {'rows':people,'total':total if total is not None else len(people)}
+    def personal_contacts(self):
+        """Personal address book. pab:searchContacts {} lists every contact as
+        {id, FN, 'EMAIL;PREF', groups} (verified 2026-10-18; pab:getAllGroups is empty here)."""
+        rows=self._call('pab:searchContacts',{},True).get('var')
+        if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
+        return [{'name':str(r.get('FN') or ''),'email':r['EMAIL;PREF']} for r in rows
+                if isinstance(r,dict) and isinstance(r.get('EMAIL;PREF'),str) and '@' in r['EMAIL;PREF']]
     def push_credentials(self):
         getter=getattr(self._session,'push_credentials',None)
         return getter() if getter else None
@@ -509,3 +582,4 @@ class CoremailAdapter:
         self._session = None
         self._identities.clear()
         self._compose_attachments.clear()
+        self._root_name=None
