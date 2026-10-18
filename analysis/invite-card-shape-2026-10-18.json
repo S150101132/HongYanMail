@@ -1,0 +1,27 @@
+{
+ "date": "2026-10-18 14:26",
+ "invites": [
+  {
+   "was_read": true,
+   "external_sender": true,
+   "method": "REQUEST",
+   "cancelled": false,
+   "has_start": true,
+   "has_end": true,
+   "all_day": false,
+   "floating": false,
+   "tzid_kind": "iana",
+   "attendees": 2,
+   "me_listed": true,
+   "my_partstat": "NEEDS-ACTION",
+   "has_organizer": true,
+   "has_location": true,
+   "recurring": false,
+   "can_answer": true,
+   "ics_saveable": true,
+   "server_record": "RPC_REJECTED",
+   "read_after": true
+  }
+ ],
+ "scanned": 30
+}

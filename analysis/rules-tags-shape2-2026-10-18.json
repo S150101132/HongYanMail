@@ -1,0 +1,274 @@
+{
+ "date": "2026-10-18 13:34",
+ "rules": [
+  {
+   "id": 100,
+   "keys": [
+    "actions",
+    "condictions",
+    "continue",
+    "id",
+    "name"
+   ],
+   "continue": true,
+   "disabled": null,
+   "operator": "NoneType",
+   "name_len": 5,
+   "condictions": [
+    {
+     "extractAddress": true,
+     "field": "from",
+     "forAddress": true,
+     "ignoreCase": true,
+     "listOfValues": true,
+     "operator": "=",
+     "operand": {
+      "len": 32,
+      "commas": 0,
+      "semicolons": 0,
+      "digits_only": false,
+      "has_at": true
+     }
+    }
+   ],
+   "conditions": [],
+   "exceptions": {},
+   "actions": [
+    {
+     "target": 975274,
+     "type": "move"
+    }
+   ]
+  },
+  {
+   "id": 102,
+   "keys": [
+    "actions",
+    "condictions",
+    "continue",
+    "id",
+    "name",
+    "operator"
+   ],
+   "continue": true,
+   "disabled": null,
+   "operator": "or",
+   "name_len": 4,
+   "condictions": [
+    {
+     "extractAddress": true,
+     "field": "from",
+     "forAddress": true,
+     "ignoreCase": true,
+     "listOfValues": true,
+     "operator": "=",
+     "operand": {
+      "len": 341,
+      "commas": 9,
+      "semicolons": 0,
+      "digits_only": false,
+      "has_at": true
+     }
+    },
+    {
+     "field": "subject",
+     "ignoreCase": true,
+     "listOfValues": true,
+     "operator": "contains",
+     "operand": {
+      "len": 4,
+      "commas": 0,
+      "semicolons": 0,
+      "digits_only": false,
+      "has_at": false
+     }
+    },
+    {
+     "field": "subject",
+     "ignoreCase": true,
+     "listOfValues": true,
+     "operator": "contains",
+     "operand": {
+      "len": 9,
+      "commas": 0,
+      "semicolons": 0,
+      "digits_only": false,
+      "has_at": false
+     }
+    }
+   ],
+   "conditions": [],
+   "exceptions": {},
+   "actions": [
+    {
+     "target": 975276,
+     "type": "move"
+    }
+   ]
+  }
+ ],
+ "autorep": {
+  "autorepmode": 0,
+  "welcometip": 0,
+  "has_title": false,
+  "condition_keys": [
+   "begintime",
+   "endtime",
+   "instation"
+  ],
+  "instation": 0,
+  "begin_pattern": "9999-99-99 99:99:99",
+  "end_pattern": "9999-99-99 99:99:99",
+  "time_zone": "Asia/Shanghai"
+ },
+ "page": {
+  "enableAutoRepTitle": "false",
+  "supportMailTagged": "true",
+  "supportCalendar": null,
+  "limitTagCount": "100",
+  "enableAutoReply": "true",
+  "limitFilterCount": null,
+  "maxMailRules": null
+ },
+ "tags": [
+  {
+   "id": "19",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "0"
+  },
+  {
+   "id": "18",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "2"
+  },
+  {
+   "id": "17",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "6"
+  },
+  {
+   "id": "16",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "1"
+  },
+  {
+   "id": "15",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "5"
+  },
+  {
+   "id": "14",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "4"
+  },
+  {
+   "id": "13",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "3"
+  },
+  {
+   "id": "12",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "7"
+  },
+  {
+   "id": "11",
+   "attr_keys": [
+    "color"
+   ],
+   "color": "8"
+  }
+ ],
+ "fids_count": 8,
+ "per_tag": [
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  },
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  },
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  },
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  },
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  },
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  },
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  },
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  },
+  {
+   "ok": true,
+   "total": 0,
+   "rows": 0,
+   "tag_field": [],
+   "tag_value": null,
+   "contains_id": null
+  }
+ ],
+ "empty_tags_ok": true
+}

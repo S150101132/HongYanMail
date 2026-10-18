@@ -359,7 +359,7 @@ function rowHtml(r, item = { ids: [r.id], rows: [r] }) {
     ${avatarHtml(r.fromName, sentLike ? r.to : r.fromEmail)}
     <div class="main">
       <div class="line1"><span class="who">${esc(who)}</span>${thread ? `<span class="tcount" title="${item.ids.length} 封邮件">${item.ids.length}</span>` : ''}${folderTag}<span class="marks">${marks}</span><span class="when">${esc(shortDate(d))}</span></div>
-      <div class="subj">${badge}${esc(r.subject || '（无主题）')}</div>
+      <div class="subj">${badge}${esc(r.subject || '（无主题）')}${window.TG ? TG.chips(r.tags) : ''}</div>
       ${r.preview ? `<div class="prev">${esc(r.preview)}</div>` : ''}
     </div></div>`;
 }

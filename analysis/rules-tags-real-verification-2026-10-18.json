@@ -1,0 +1,122 @@
+{
+ "date": "2026-10-18 14:09",
+ "checks": {
+  "login": {
+   "status": "passed",
+   "ms": 5483,
+   "ok": true
+  },
+  "rules_before": {
+   "status": "passed",
+   "count": 3
+  },
+  "rule_add": {
+   "status": "passed",
+   "ms": 3703,
+   "stored_keys": {
+    "actions": [
+     {
+      "type": "flags",
+      "value": {
+       "flagged": true
+      }
+     }
+    ],
+    "condictions": [
+     {
+      "field": "subject",
+      "ignoreCase": true,
+      "listOfValues": true,
+      "operand": "HY-RULE-TEST",
+      "operator": "contains"
+     }
+    ],
+    "continue": true,
+    "id": 104,
+    "name": "HY-RULE-TEST"
+   },
+   "position": 3
+  },
+  "rule_disable": {
+   "status": "passed",
+   "ms": 2395,
+   "enabled": false
+  },
+  "rule_edit_all_types": {
+   "status": "passed",
+   "ms": 3352,
+   "stored_keys": {
+    "actions": [
+     {
+      "type": "flags",
+      "value": {
+       "flagged": true
+      }
+     },
+     {
+      "type": "flags",
+      "value": {
+       "read": true
+      }
+     },
+     {
+      "type": "tags",
+      "value": [
+       "11"
+      ]
+     },
+     {
+      "keepLocal": true,
+      "target": "str",
+      "type": "forward"
+     }
+    ],
+    "condictions": [
+     {
+      "field": "subject",
+      "ignoreCase": true,
+      "listOfValues": true,
+      "operand": "HY-RULE-TEST-2",
+      "operator": "contains"
+     },
+     {
+      "field": "flags",
+      "operand": [
+       "attached",
+       "linkAttached"
+      ],
+      "operator": "contains"
+     },
+     {
+      "field": "size",
+      "operand": 10240,
+      "operator": ">"
+     }
+    ],
+    "continue": true,
+    "disabled": true,
+    "id": 104,
+    "name": "HY-RULE-TEST"
+   },
+   "editable": true
+  },
+  "rule_order": {
+   "status": "passed",
+   "ms": 5037,
+   "moved_up": true,
+   "restored": true
+  },
+  "rule_remove": {
+   "status": "passed",
+   "ms": 1870,
+   "variants": [
+    {
+     "ids:list[int]": true
+    }
+   ]
+  }
+ },
+ "cleanup": {
+  "order_restored": true
+ }
+}

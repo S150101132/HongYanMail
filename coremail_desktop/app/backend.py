@@ -62,7 +62,7 @@ def _summary_dict(item):
             'fromName': name or addr or item.sender, 'fromEmail': addr, 'to': item.recipients,
             'date': item.date_text, 'ts': date_ts(item.date_text), 'preview': item.preview,
             'size': item.size, 'flags': {k: bool(v) for k, v in dict(item.flags).items()},
-            'scheduleAt': _schedule_ms(getattr(item, 'schedule_at', None))}
+            'scheduleAt': _schedule_ms(getattr(item, 'schedule_at', None)), 'tags': list(getattr(item, 'tags', ()) or ())}
 
 
 SEARCH_TEXT = ('from', 'to', 'with')  # Address substrings; 'with' is either side (往来邮件).
@@ -157,6 +157,7 @@ class MailBackend:
         self._contact_index_size = -1
         self._docs = {}
         self._signer_directory = {}  # (sender, signer fingerprint) -> matches the company directory
+        self._rules = {}  # Rule id -> the rule as the server last listed it.
         self.autostart = None  # Set by the app (not in demo mode): reads and writes the Windows Run key.
 
     # Accounts --------------------------------------------------------------
@@ -480,7 +481,11 @@ class MailBackend:
                   'scheduled': bool(summary.get('flags', {}).get('scheduleDelivery')), 'scheduleAt': summary.get('scheduleAt'),
                   'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
                                   for a in document.attachments],
-                  'mailbox': self._box_view(self._locate(mid)[1])}
+                  'mailbox': self._box_view(self._locate(mid)[1]), 'tags': list(summary.get('tags') or [])}
+        invitation = self._invitation(mid, document)
+        if invitation:
+            result['invitation'] = {**invitation, 'answer': (self.cache.get('inviteAnswers') or {}).get(mid),
+                                    'canAnswer': not result['mailbox'] and hasattr(self.adapter, 'respond_invitation')}
         if mark_read is None:
             mark_read = self.prefs()['markReadOnOpen']
         if result['mailbox'] and not result['mailbox']['rw']:
@@ -512,6 +517,12 @@ class MailBackend:
 
     def attachment(self, mid, part):
         document = self._document(mid)
+        if part == 'invite.ics':  # The invitation's calendar part, saved as an .ics file.
+            from coremail_desktop.mime.icalendar import calendar_part
+            found = calendar_part(self.cache.get_body(mid) or b'') if document.encryption_state == 'none' else None
+            if not found:
+                raise AppError('MESSAGE_UNAVAILABLE')
+            return (found[1] or 'invite.ics'), 'text/calendar', found[0]
         data = document.attachment_payloads.get(part)
         info = next((a for a in document.attachments if a.part_id == part), None)
         if data is None or info is None:
@@ -988,6 +999,205 @@ class MailBackend:
         self._online(self.adapter.unschedule, str(mid))
         self.cache.update(mid, flags={'scheduleDelivery': False}, scheduleAt=None)
         return True
+
+    # Mail rules and holiday auto-reply (收信规则 / 休假自动回复) ----------------------
+    # Both change how the server treats the user's mail, so every write is read back
+    # and success is reported only from what the server then holds.
+    def _need(self, name):
+        if not hasattr(self.adapter, name):
+            raise AppError('OPERATION_NOT_ALLOWED')
+
+    def rules(self):
+        from coremail_desktop.protocol.rules import rule_view
+        self._need('mail_rules')
+        raw = self._online(self.adapter.mail_rules)
+        self._rules = {r['id']: r for r in raw}
+        return {'rules': [rule_view(r) for r in raw]}
+
+    def _rule_targets(self):
+        folders = {f['id'] for f in (self._folders or self.folders())}
+        tags = {t['id'] for t in self.tags()['tags']}
+        return folders, tags
+
+    def save_rule(self, rule):
+        from coremail_desktop.protocol.rules import rule_server, rule_view
+        self._need('mail_rules')
+        rule = dict(rule or {})
+        current = self.rules()['rules']
+        rule_id = rule.get('id')
+        if rule_id is not None:
+            old = next((r for r in current if r['id'] == rule_id), None)
+            if old is None or not old['editable']:
+                raise AppError('RULE_NOT_EDITABLE')
+        name = str(rule.get('name') or '').strip()
+        if any(r['name'] == name and r['id'] != rule_id for r in current):
+            raise AppError('RULE_NAME_EXISTS')  # Webmail: 分类规则名称已存在.
+        server = rule_server(rule, *self._rule_targets(), rule_id=rule_id)
+        self._online(self.adapter.update_mail_rule if rule_id is not None else self.adapter.add_mail_rule, server)
+        result = self.rules()
+        saved = next((r for r in result['rules'] if r['name'] == name), None)
+        expected = rule_view(server)
+        if saved is None or [saved[k] for k in ('conditions', 'actions', 'match', 'stop', 'enabled')] != \
+                [expected[k] for k in ('conditions', 'actions', 'match', 'stop', 'enabled')]:
+            raise AppError('RULE_UNCONFIRMED')
+        return {**result, 'saved': saved['id']}
+
+    def set_rule_enabled(self, rule_id, enabled):
+        self._need('mail_rules')
+        self.rules()
+        raw = self._rules.get(rule_id)
+        if raw is None or type(enabled) is not bool:
+            raise AppError('INVALID_RULE')
+        self._online(self.adapter.set_mail_rule_disabled, rule_id, not enabled)
+        result = self.rules()
+        if next((r['enabled'] for r in result['rules'] if r['id'] == rule_id), None) is not enabled:
+            raise AppError('RULE_UNCONFIRMED')
+        return result
+
+    def delete_rule(self, rule_id):
+        self._need('mail_rules')
+        self.rules()
+        if rule_id not in self._rules:
+            raise AppError('INVALID_RULE')
+        self._online(self.adapter.remove_mail_rule, rule_id)
+        result = self.rules()
+        if any(r['id'] == rule_id for r in result['rules']):
+            raise AppError('RULE_UNCONFIRMED')
+        return result
+
+    def move_rule(self, rule_id, step):
+        """Move a rule one place up (-1) or down (+1); rules run top to bottom."""
+        self._need('mail_rules')
+        order = [r['id'] for r in self.rules()['rules']]
+        if rule_id not in order or step not in (-1, 1):
+            raise AppError('INVALID_RULE')
+        i = order.index(rule_id)
+        j = i + step
+        if not 0 <= j < len(order):
+            return {'rules': self.rules()['rules']}
+        self._online(self.adapter.move_mail_rule, rule_id, order[j])
+        order[i], order[j] = order[j], order[i]
+        result = self.rules()
+        if [r['id'] for r in result['rules']] != order:
+            raise AppError('RULE_UNCONFIRMED')
+        return result
+
+    def auto_reply(self):
+        from coremail_desktop.protocol.rules import autoreply_view
+        self._need('auto_reply')
+        attrs = self._online(self.adapter.auto_reply)
+        return {**autoreply_view(attrs), 'zone': str(attrs.get('time_zone') or '')}
+
+    def set_auto_reply(self, values):
+        from coremail_desktop.protocol.rules import autoreply_server, autoreply_view
+        self._need('auto_reply')
+        attrs = autoreply_server(values, self._online(self.adapter.account_now))
+        self._online(self.adapter.set_auto_reply, attrs)
+        now = self.auto_reply()
+        expected = autoreply_view(attrs)
+        if any(now[k] != expected[k] for k in expected):
+            raise AppError('AUTOREPLY_UNCONFIRMED')
+        return now
+
+    # Tags (标签) ------------------------------------------------------------------
+    # The user's own mailbox only; shared mailboxes keep their tags in webmail.
+    def tags(self, refresh=True):
+        from coremail_desktop.protocol.rules import TAG_LIMIT, tags_view
+        if not hasattr(self.adapter, 'list_tags'):
+            return {'tags': [], 'limit': 0}
+        cached = self.cache.get('tags')
+        if refresh or cached is None:
+            try:
+                cached = tags_view(self._online(self.adapter.list_tags))
+                self.cache.set('tags', cached)
+            except AppError as error:
+                if cached is None or error.code not in ('NETWORK_ERROR', 'TLS_ERROR'):
+                    raise
+        return {'tags': cached, 'limit': TAG_LIMIT}
+
+    def save_tag(self, name, color, tag_id=None):
+        from coremail_desktop.protocol.rules import TAG_LIMIT, clean_tag_name, new_tag_id, stored_color
+        self._need('manage_tags')
+        name = clean_tag_name(name)
+        current = self.tags()['tags']
+        if any(t['name'] == name and t['id'] != tag_id for t in current):
+            raise AppError('TAG_EXISTS')
+        attrs = {'name': name, 'color': stored_color(color)}
+        if tag_id is None:
+            if len(current) >= TAG_LIMIT:
+                raise AppError('TAG_LIMIT')
+            tag_id = new_tag_id({t['id'] for t in current})
+            self._online(self.adapter.manage_tags, 'add', [[tag_id, attrs]])
+        else:
+            if not any(t['id'] == tag_id for t in current):
+                raise AppError('INVALID_TAG')
+            self._online(self.adapter.manage_tags, 'update', [[tag_id, attrs]])
+        result = self.tags()
+        saved = next((t for t in result['tags'] if t['id'] == tag_id), None)
+        if saved is None or saved['name'] != name:
+            raise AppError('TAG_UNCONFIRMED')
+        return {**result, 'saved': tag_id}
+
+    def delete_tag(self, tag_id):
+        self._need('manage_tags')
+        if not any(t['id'] == tag_id for t in self.tags()['tags']):
+            raise AppError('INVALID_TAG')
+        self._online(self.adapter.manage_tags, 'delete', [tag_id])
+        result = self.tags()
+        if any(t['id'] == tag_id for t in result['tags']):
+            raise AppError('TAG_UNCONFIRMED')
+        return result  # Cached rows lose the tag on their next list refresh; the page hides unknown ids.
+
+    def tag_messages(self, ids, add=None, remove=None):
+        """Apply and/or remove tags on messages of the user's own mailbox."""
+        self._need('update_message_tags')
+        ids = [ids] if isinstance(ids, str) else [str(m) for m in ids or []]
+        add, remove = [str(t) for t in add or []], [str(t) for t in remove or []]
+        known = {t['id'] for t in self.tags(refresh=False)['tags']}
+        if not ids or any(self._locate(m)[1] for m in ids):
+            raise AppError('OPERATION_NOT_ALLOWED')
+        if not (add or remove) or set(add + remove) - known or set(add) & set(remove):
+            raise AppError('INVALID_TAG')
+        self._online(self.adapter.update_message_tags, ids, add, remove)
+        for mid in ids:
+            row = self.cache.summary(mid)
+            if row is not None:
+                tags = [t for t in row.get('tags') or [] if t not in remove]
+                self.cache.update(mid, tags=tags + [t for t in add if t not in tags])
+        return {'ids': ids, 'add': add, 'remove': remove}
+
+    def tag_view(self, tag_id, offset=0):
+        """A tag's mail across the user's folders (trash excluded), newest first."""
+        self._need('tagged_messages')
+        result = self._online(self.adapter.tagged_messages, str(tag_id), offset, 50)
+        rows = [_summary_dict(item) for item in result['messages']]
+        for fid in {r['fid'] for r in rows}:
+            self.cache.put_summaries(fid, [r for r in rows if r['fid'] == fid])  # Never a complete window.
+        total = result['total']
+        return {'rows': rows, 'total': total, 'more': offset + len(rows) < total if total is not None else len(rows) == 50}
+
+    # Meeting invitations (会议邀请) ------------------------------------------------
+    def _invitation(self, mid, document):
+        from coremail_desktop.mime.icalendar import find_invitation
+        if document.encryption_state != 'none':
+            return None
+        raw = self.cache.get_body(mid)
+        return find_invitation(raw) if raw else None
+
+    def respond_invitation(self, mid, answer):
+        """Accept / tentatively accept / decline: the server informs the organizer."""
+        self._need('respond_invitation')
+        remote, box = self._locate(mid)
+        if box:
+            raise AppError('OPERATION_NOT_ALLOWED')  # Shared mailboxes: answer in webmail.
+        card = self._invitation(mid, self._document(mid))
+        if not card or card['method'] != 'REQUEST' or card['cancelled']:
+            raise AppError('INVITE_UNAVAILABLE')
+        result = self._online(self.adapter.respond_invitation, remote, answer)
+        answers = self.cache.get('inviteAnswers') or {}
+        answers[mid] = answer
+        self.cache.set('inviteAnswers', dict(list(answers.items())[-500:]))
+        return result
 
     # Background sync -------------------------------------------------------
     def poll(self):

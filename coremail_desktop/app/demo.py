@@ -50,6 +50,8 @@ def demo_certificate(email):
 
 
 OUTLOOK_DEMO_ID = 'demo3'
+INVITE_ID, CANCEL_ID = 'demo10', 'demo14'  # Meeting request / cancellation (text/calendar parts).
+INVITES = {INVITE_ID: '邀请：设计评审第二轮（演示）', CANCEL_ID: '已取消：服务器迁移方案沟通（演示）'}
 _TINY_PNG = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
              b'\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\xa7\xc1\x9b\xb7\x00\x00\x00\x00IEND\xaeB`\x82')
 
@@ -110,6 +112,30 @@ class DemoAdapter:
                                        'flags': {'read': i % 3 != 0 or fid == '3', 'attached': i % 4 == 1, 'flagged': i == 2}}
         self.shared = {'@rd': {'info': dict(SHARED_BOX), 'folders': {'1': '收件箱', '2': '草稿箱', '3': '已发送', '4': '已删除'},
                                'rows': shared_rows}}
+        # Meeting invitations: a request and a cancellation (text/calendar parts).
+        # Two existing inbox rows carry them, so folder counts stay as the other tests expect.
+        for mid, subject in INVITES.items():
+            self.rows[mid].update(subject=subject, **{'from': '"张晓明" <zhangxm@example.invalid>'})
+        # Server-shaped mail rules, auto-reply attributes and tags (see protocol/rules.py).
+        self.rules = [{'id': 100, 'name': '项目归档', 'continue': True,
+                       'condictions': [{'field': 'from', 'operator': '=', 'operand': 'product@example.invalid,rd@example.invalid', 'ignoreCase': True,
+                                        'listOfValues': True, 'forAddress': True, 'extractAddress': True}],
+                       'actions': [{'type': 'move', 'target': 100}]},
+                      {'id': 102, 'name': '周报', 'continue': True, 'operator': 'or',
+                       'condictions': [{'field': 'subject', 'operator': 'contains', 'operand': '周报', 'ignoreCase': True, 'listOfValues': True},
+                                       {'field': 'subject', 'operator': 'contains', 'operand': 'weekly', 'ignoreCase': True, 'listOfValues': True}],
+                       'actions': [{'type': 'flags', 'value': {'read': True}}]},
+                      {'id': 103, 'name': '密级邮件提醒', 'continue': False,
+                       'condictions': [{'field': 'securityLevel', 'operator': '=', 'operand': '2'}], 'actions': [{'type': 'move', 'target': 1}]}]
+        self.attrs = {'autorepmode': 0, 'autoreptext': '10 月 20 日至 10 月 24 日休假，期间邮件回复会延迟。紧急事务请联系李华。（演示）',
+                      'autorep_condition': {'begintime': '2026-10-20 00:00:00', 'endtime': '2026-10-24 23:59:59', 'instation': 1},
+                      'autorep_welcometip': 1, 'time_zone': 'Asia/Shanghai'}
+        self.tags = [['x19a1f0c0001', {'name': '待跟进', 'color': '0'}], ['x19a1f0c0002', {'name': '项目 A', 'color': '3'}]]
+        self.tags += [[str(19 - i), {'color': str(c)}] for i, c in enumerate([0, 2, 6, 1, 5, 4, 3, 7, 8])]
+        for mid, tags in (('demo1', ['x19a1f0c0001']), ('demo2', ['x19a1f0c0002']), ('demo5', ['x19a1f0c0001', 'x19a1f0c0002']),
+                          ('demo9', ['16']), (INVITE_ID, ['x19a1f0c0002'])):
+            self.rows[mid]['tag'] = tags
+        self.responses = []
         self.last_folder_total = None
         self.last_folder_id = None
         self.signed_in = False
@@ -158,7 +184,7 @@ class DemoAdapter:
     def _summary(self, r):
         return MessageSummary(r['id'], r['fid'], r['subject'], r['from'], r['date'], r['flags'],
                               preview='本周的设计评审已经完成，请查看以下安排：邮箱工作台交互优化、草稿与阅读流程验证……',
-                              recipients=r['to'], size=24000, schedule_at=r.get('scheduleAt'))
+                              recipients=r['to'], size=24000, schedule_at=r.get('scheduleAt'), tags=tuple(r.get('tag') or ()))
 
     def list_messages(self, folder_id, offset, limit=50, mboxa=''):
         self._need()
@@ -177,6 +203,11 @@ class DemoAdapter:
         message['Message-ID'] = f'<{message_id}{mboxa.replace("@", ".")}@example.invalid>'
         if message_id == OUTLOOK_DEMO_ID and not mboxa:
             return _outlook_style(message)
+        if message_id in INVITES and not mboxa:
+            cancel = message_id == CANCEL_ID
+            message.set_content('张晓明 邀请你参加会议。（合成演示数据）')
+            message.add_alternative(_demo_ics(cancel), subtype='calendar', params={'method': 'CANCEL' if cancel else 'REQUEST'})
+            return bytes(message)
         message.set_content('各位同事：本周的设计评审已经完成。（合成演示数据）')
         message.add_alternative(BODY, subtype='html')
         if r['flags'].get('attached'):
@@ -326,3 +357,100 @@ class DemoAdapter:
 
     def find_sent_candidates(self, job, limit=50):
         return []
+
+    # Rules, auto-reply, tags, invitations: server shapes, kept in memory.
+    def mail_rules(self):
+        self._need()
+        return [dict(r) for r in self.rules]
+
+    def add_mail_rule(self, rule):
+        rule = {**rule}
+        rule['condictions'] = rule.pop('conditions')
+        rule['id'] = max([r['id'] for r in self.rules] + [100]) + 1
+        self.rules.append(rule)
+        return True
+
+    def update_mail_rule(self, rule):
+        rule = {**rule}
+        if 'conditions' in rule:
+            rule['condictions'] = rule.pop('conditions')
+        i = next(i for i, r in enumerate(self.rules) if r['id'] == rule['id'])
+        self.rules[i] = {**self.rules[i], **rule}
+        return True
+
+    def remove_mail_rule(self, rule_id):
+        self.rules = [r for r in self.rules if r['id'] != rule_id]
+        return True
+
+    def move_mail_rule(self, rule_id, ref_id):
+        ids = [r['id'] for r in self.rules]
+        i, j = ids.index(rule_id), ids.index(ref_id)
+        self.rules[i], self.rules[j] = self.rules[j], self.rules[i]
+        return True
+
+    def set_mail_rule_disabled(self, rule_id, disabled):
+        return self.update_mail_rule({'id': rule_id, 'disabled': disabled})
+
+    def auto_reply(self):
+        self._need()
+        return {**self.attrs, 'autorep_condition': dict(self.attrs['autorep_condition'])}
+
+    def set_auto_reply(self, attrs):
+        self.attrs.update(attrs)
+        return True
+
+    def account_now(self):
+        return datetime(2026, 10, 17, 10, 30).strftime('%Y-%m-%d %H:%M:%S')
+
+    def list_tags(self, mboxa=''):
+        self._need()
+        return [[t[0], dict(t[1])] for t in self.tags]
+
+    def manage_tags(self, op, payload):
+        if op == 'add':
+            self.tags.extend([list(p) for p in payload])
+        elif op == 'update':
+            for tag_id, attrs in payload:
+                next(t for t in self.tags if t[0] == tag_id)[1].update(attrs)
+        else:
+            self.tags = [t for t in self.tags if t[0] not in payload]
+            for r in self.rows.values():
+                r['tag'] = [t for t in r.get('tag') or [] if t not in payload]
+        return True
+
+    def update_message_tags(self, message_ids, add=(), remove=(), mboxa=''):
+        for mid in message_ids:
+            row = self._store(mboxa)[1][mid]
+            row['tag'] = [t for t in row.get('tag') or [] if t not in remove] + [t for t in add if t not in (row.get('tag') or [])]
+        return list(message_ids)
+
+    def tagged_messages(self, tag_id, offset, limit=50):
+        rows = sorted((r for r in self.rows.values() if tag_id in (r.get('tag') or []) and r['fid'] != '4'), key=lambda r: r['date'], reverse=True)
+        return {'messages': [self._summary(r) for r in rows[offset:offset + limit]], 'total': len(rows)}
+
+    def respond_invitation(self, message_id, answer):
+        if message_id != INVITE_ID:
+            raise AppError('INVITE_UNAVAILABLE')
+        self.responses.append((message_id, answer))
+        return {'answer': answer, 'type': {'tentative': 2, 'accept': 3, 'decline': 4}[answer]}
+
+
+def _demo_ics(cancel):
+    start = '20261021T100000' if cancel else '20261020T150000'
+    end = '20261021T110000' if cancel else '20261020T163000'
+    lines = ['BEGIN:VCALENDAR', 'PRODID:-//Hongyan demo//CN', 'VERSION:2.0', 'METHOD:' + ('CANCEL' if cancel else 'REQUEST'),
+             'BEGIN:VTIMEZONE', 'TZID:China Standard Time', 'BEGIN:STANDARD', 'DTSTART:16010101T000000', 'TZOFFSETFROM:+0800',
+             'TZOFFSETTO:+0800', 'END:STANDARD', 'END:VTIMEZONE', 'BEGIN:VEVENT',
+             'ORGANIZER;CN=张晓明:mailto:zhangxm@example.invalid',
+             'ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=演示用户:mailto:demo@example.invalid',
+             'ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=李华:mailto:lihua@example.invalid',
+             'ATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=TENTATIVE;CN=王芳:mailto:wangfang@example.invalid',
+             'SUMMARY:' + ('服务器迁移方案沟通' if cancel else '设计评审第二轮'), 'LOCATION:' + ('线上会议' if cancel else '研发中心 3 号会议室'),
+             'DESCRIPTION:' + (BSL + 'n').join(['议程：', '1. 交互稿评审', '2. 接口联调计划（合成演示数据）']),
+             f'DTSTART;TZID=China Standard Time:{start}', f'DTEND;TZID=China Standard Time:{end}',
+             'UID:demo-' + ('cancel' if cancel else 'invite') + '@example.invalid', 'SEQUENCE:' + ('1' if cancel else '0'),
+             'STATUS:' + ('CANCELLED' if cancel else 'CONFIRMED'), 'END:VEVENT', 'END:VCALENDAR', '']
+    return CRLF.join(lines)
+
+
+BSL, CRLF = chr(92), chr(13) + chr(10)

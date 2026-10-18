@@ -1,0 +1,40 @@
+{
+ "date": "2026-10-18 14:29",
+ "checks": {
+  "login": {
+   "status": "passed",
+   "ms": 5285,
+   "ok": true
+  },
+  "invite_respond": {
+   "status": "passed",
+   "ms": 7315,
+   "meta_keys": [
+    "attendees",
+    "calFid",
+    "calUid",
+    "deletedStatus",
+    "inRecurrence",
+    "isAttendee",
+    "isExpired",
+    "meetingRequest",
+    "meetingRequestMethod",
+    "meetingRequestPartId",
+    "meetingRequestStatus"
+   ],
+   "method": "request",
+   "type": 2,
+   "status_before": 5,
+   "status_after": 2,
+   "attendee_keys": [
+    "email",
+    "status",
+    "type"
+   ],
+   "my_status_before": null,
+   "my_status_after": null,
+   "partStat_on_mail": null
+  }
+ },
+ "cleanup": {}
+}

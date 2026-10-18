@@ -1,0 +1,286 @@
+{
+ "date": "2026-10-18 11:26",
+ "page_flags": [
+  true,
+  {
+   "enableAutoReply": true,
+   "supportAutoRepTitle": null,
+   "limitTagCount": 100,
+   "label0Count": 1,
+   "enableInviteEvent": true,
+   "supportCalendar": null,
+   "supportCalendar30": null,
+   "supportMailRule": null,
+   "enableMailRule": null,
+   "limitMailRuleCount": null,
+   "supportTag": null,
+   "enableTag": null,
+   "supportAutoForward": null,
+   "enableAutoForward": null,
+   "supportAutoRepInner": null,
+   "supportAutoRepOuter": null,
+   "other_autorep_keys": [
+    "enableAutoRepTitle",
+    "enableAutoReply",
+    "onlineInAutoReplyPath"
+   ],
+   "other_rule_keys": []
+  }
+ ],
+ "rules_ok": true,
+ "rules": {
+  "code": "str=S_OK",
+  "var": {
+   "<list>": 2,
+   "<item>": {
+    "actions": {
+     "<list>": 1,
+     "<item>": {
+      "target": "int",
+      "type": "str=move"
+     }
+    },
+    "condictions": {
+     "<list>": 1,
+     "<item>": {
+      "extractAddress": true,
+      "field": "str=from",
+      "forAddress": true,
+      "ignoreCase": true,
+      "listOfValues": true,
+      "operand": "str(len 32)",
+      "operator": "str(len 1)"
+     }
+    },
+    "continue": true,
+    "id": 100,
+    "name": "str(len 5)"
+   },
+   "<item1>": {
+    "actions": {
+     "<list>": 1,
+     "<item>": {
+      "target": "int",
+      "type": "str=move"
+     }
+    },
+    "condictions": {
+     "<list>": 3,
+     "<item>": {
+      "extractAddress": true,
+      "field": "str=from",
+      "forAddress": true,
+      "ignoreCase": true,
+      "listOfValues": true,
+      "operand": "str(len 341)",
+      "operator": "str(len 1)"
+     },
+     "<item1>": {
+      "field": "str=subject",
+      "ignoreCase": true,
+      "listOfValues": true,
+      "operand": "str(len 4)",
+      "operator": "str=contains"
+     }
+    },
+    "continue": true,
+    "id": 102,
+    "name": "str(len 4)",
+    "operator": "str=or"
+   }
+  }
+ },
+ "rules_count": 2,
+ "rule_keys": [
+  "actions",
+  "condictions",
+  "continue",
+  "id",
+  "name",
+  "operator"
+ ],
+ "rule_items": [
+  {
+   "actions": {
+    "<list>": 1,
+    "<item>": {
+     "target": "int",
+     "type": "str=move"
+    }
+   },
+   "condictions": {
+    "<list>": 1,
+    "<item>": {
+     "extractAddress": true,
+     "field": "str=from",
+     "forAddress": true,
+     "ignoreCase": true,
+     "listOfValues": true,
+     "operand": "str(len 32)",
+     "operator": "str(len 1)"
+    }
+   },
+   "continue": true,
+   "id": 100,
+   "name": "str(len 5)"
+  },
+  {
+   "actions": {
+    "<list>": 1,
+    "<item>": {
+     "target": "int",
+     "type": "str=move"
+    }
+   },
+   "condictions": {
+    "<list>": 3,
+    "<item>": {
+     "extractAddress": true,
+     "field": "str=from",
+     "forAddress": true,
+     "ignoreCase": true,
+     "listOfValues": true,
+     "operand": "str(len 341)",
+     "operator": "str(len 1)"
+    },
+    "<item1>": {
+     "field": "str=subject",
+     "ignoreCase": true,
+     "listOfValues": true,
+     "operand": "str(len 4)",
+     "operator": "str=contains"
+    }
+   },
+   "continue": true,
+   "id": 102,
+   "name": "str(len 4)",
+   "operator": "str=or"
+  }
+ ],
+ "autorep_ok": true,
+ "autorep": {
+  "autorep_condition": {
+   "begintime": "str:9999-99-99 99:99:99",
+   "endtime": "str:9999-99-99 99:99:99",
+   "instation": 0
+  },
+  "autorep_welcometip": "int",
+  "autorepmode": 0,
+  "autoreptext": "str(len 88)",
+  "time_zone": "str(len 13)"
+ },
+ "autorep_single": {
+  "autorepmode": {
+   "autorepmode": 0
+  },
+  "autorep_condition": {
+   "autorep_condition": {
+    "begintime": "str:9999-99-99 99:99:99",
+    "endtime": "str:9999-99-99 99:99:99",
+    "instation": 0
+   }
+  },
+  "autorep_welcometip": {
+   "autorep_welcometip": "int"
+  },
+  "autoreptext": {
+   "autoreptext": "str(len 88)"
+  },
+  "autoreptitle": {},
+  "autorep_title": {},
+  "autorep_text": {},
+  "autorep_content": {},
+  "autorep_inner": {},
+  "autorep_outer": {},
+  "autorep_external": {},
+  "autorep_internal": {},
+  "autorep_range": {},
+  "autoreply_on": {},
+  "autorep_once": {},
+  "autorep_outside": {},
+  "autorep_scope": {},
+  "fltforward": {},
+  "forwarddes": {},
+  "time_zone": {
+   "time_zone": "str(len 13)"
+  }
+ },
+ "attrs_default_keys_matching": [],
+ "attrs_default_count": 0,
+ "tags_ok": true,
+ "tags": {
+  "code": "str=S_OK",
+  "var": {
+   "<list>": 9,
+   "<item>": {
+    "<list>": 2,
+    "<item>": "str(len 2)",
+    "<item1>": {
+     "color": "str(len 1)"
+    }
+   },
+   "<item1>": {
+    "<list>": 2,
+    "<item>": "str(len 2)",
+    "<item1>": {
+     "color": "str(len 1)"
+    }
+   }
+  }
+ },
+ "tags_count": 9,
+ "tag_attr_keys": [
+  "color"
+ ],
+ "tag_id_samples": [
+  "99",
+  "99",
+  "99",
+  "99",
+  "99",
+  "99",
+  "99",
+  "99"
+ ],
+ "list_keys": [
+  "antiVirusStatus",
+  "backgroundColor",
+  "ctrls",
+  "fid",
+  "flags",
+  "from",
+  "hmid",
+  "id",
+  "label0",
+  "modifiedDate",
+  "priority",
+  "receivedDate",
+  "ref",
+  "sender",
+  "sentDate",
+  "size",
+  "subject",
+  "to"
+ ],
+ "list_flag_keys": [
+  "archived",
+  "attached",
+  "encrypted",
+  "inlineAttached",
+  "read",
+  "replied",
+  "signed"
+ ],
+ "list_tag_fields": {
+  "label0": 0
+ },
+ "list_rows": 100,
+ "calendar_folders": {
+  "code": "str=S_OK",
+  "var": {
+   "<list>": 0
+  }
+ },
+ "invites_scanned": 60,
+ "invites": []
+}
