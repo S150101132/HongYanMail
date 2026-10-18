@@ -71,9 +71,12 @@ STEPS = [
     (800, "openContacts()", None),
     (1200, "CT.open.add('d/rd'); openDepartment('d/rd-fe', '前端组')", None),
     (900, "$('#ct-list .ct-row').click()", 'contacts'),
+    (900, "$$('#ct-list .ct-row')[1].click()", 'contacts-details'),
     (700, "$('#ct-search').value = '李'; $('#ct-search').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))", 'contacts-search'),
     (900, "mailsWith({ name: '张晓明', email: 'zhangxm@example.invalid' })", None),
     (900, "selectMessage(S.rows[0].id)", 'contacts-mails'),
+    (900, "$('#r-from-name').click()", 'reader-person'),
+    (300, "closePersonPop()", None),
     (900, "S.message && writeFrame && 0; document.body.offsetWidth", None),
     # v0.4: meeting invitations, tags, rules and holiday auto-reply.
     (900, "selectFolder('1')", None),

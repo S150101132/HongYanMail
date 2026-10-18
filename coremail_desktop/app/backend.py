@@ -51,6 +51,14 @@ def _schedule_ms(iso):
     return int(datetime.strptime(iso, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc).timestamp() * 1000) if iso else None
 
 
+def _image_uri(raw, limit=256 * 1024):
+    """A head image as a data: URI, only for real PNG/JPEG/GIF bytes of sane size."""
+    if not isinstance(raw, (bytes, bytearray)) or not raw or len(raw) > limit:
+        return ''
+    kind = 'png' if raw.startswith(b'\x89PNG\r\n') else 'jpeg' if raw.startswith(b'\xff\xd8\xff') else 'gif' if raw.startswith((b'GIF87a', b'GIF89a')) else ''
+    return f'data:image/{kind};base64,' + base64.b64encode(bytes(raw)).decode('ascii') if kind else ''
+
+
 def _people(value):
     result = []
     for name, addr in getaddresses([value.replace(';', ',')] if isinstance(value, str) else [str(v) for v in value]):
@@ -745,6 +753,39 @@ class MailBackend:
             return {'rows': [], 'at': None, 'cached': False}
         value = self._stale('pab', self.adapter.personal_contacts, refresh)
         return {'rows': value['data'], 'at': value['at'], 'cached': value['cached']}
+
+    PERSON_MAX_AGE = 24 * 3600
+    PERSON_FIELDS = ('name', 'email', 'dept', 'title', 'mobile', 'phone', 'fax', 'address', 'employeeNo', 'office', 'manager')
+
+    def person(self, email, refresh=False):
+        """A colleague's directory details (and head image) for the card and popover.
+
+        Kept in the encrypted cache under a hashed key and refreshed once a day; never
+        logged. People the directory does not know come back as {found: False}."""
+        email = (email or '').strip()
+        if not email or len(email) > 254 or '@' not in email:
+            raise AppError('INVALID_CONTACT')
+        if not hasattr(self.adapter, 'person_details'):
+            return {'found': False, 'email': email, 'at': None, 'cached': False}
+        key = 'person:' + hashlib.sha256(email.casefold().encode('utf-8')).hexdigest()[:24]
+        cached = self.cache.get(key)
+        fresh = cached is not None and int(datetime.now(timezone.utc).timestamp()) - cached.get('at', 0) < self.PERSON_MAX_AGE
+        value = self._stale(key, lambda: self._fetch_person(email), refresh or not fresh)
+        return {**value['data'], 'at': value['at'], 'cached': value['cached']}
+
+    def _fetch_person(self, email):
+        found = self.adapter.person_details(email)
+        if not found:
+            return {'found': False, 'email': email}
+        result = {k: str(found.get(k) or '')[:500] for k in self.PERSON_FIELDS}
+        result.update(found=True, email=result['email'] or email, avatar='')
+        uid = found.get('uid')
+        if uid and hasattr(self.adapter, 'head_image'):
+            try:
+                result['avatar'] = _image_uri(self.adapter.head_image(uid))
+            except AppError:
+                pass  # The coloured initials stand in.
+        return result
 
     def find_people(self, query):
         """Company-wide directory matches for the contacts view search box."""

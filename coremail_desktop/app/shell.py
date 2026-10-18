@@ -50,6 +50,7 @@ BACKEND_METHODS = {
     'deliveryStatus': 'delivery_status', 'recall': 'recall', 'scheduled': 'scheduled', 'unschedule': 'unschedule',
     'sharedMailboxes': 'shared_mailboxes',
     'directory': 'directory', 'members': 'members', 'personalContacts': 'personal_contacts', 'findPeople': 'find_people',
+    'person': 'person',
     'searchCapabilities': 'search_capabilities',
     'rules': 'rules', 'saveRule': 'save_rule', 'setRuleEnabled': 'set_rule_enabled', 'deleteRule': 'delete_rule', 'moveRule': 'move_rule',
     'autoReply': 'auto_reply', 'setAutoReply': 'set_auto_reply', 'tags': 'tags', 'saveTag': 'save_tag', 'deleteTag': 'delete_tag',
@@ -58,7 +59,7 @@ BACKEND_METHODS = {
 }
 # Read-only calls may run beside a long send or list fetch.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
-                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates'}
+                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person'}
 # Events a pop-out reader may pass on to the main window.
 POPOUT_EVENTS = {'mailChanged', 'authRequired'}
 # One-shot documents for printing, served at hongyan://app/print/<token>.html.

@@ -263,6 +263,33 @@ class DemoAdapter:
         rows = [{'name': n, 'email': a, 'title': t, 'dept': self._dept_path(dn)} for n, a, t in self.STAFF.get(dn, [])]
         return {'rows': rows, 'total': len(rows)}
 
+    def person_details(self, email):
+        """Synthetic directory details in the real server's shape: fake numbers and a made-up address."""
+        self._need()
+        for dn, staff in self.STAFF.items():
+            for i, (name, address, title) in enumerate(staff):
+                if address.casefold() != email.casefold():
+                    continue
+                n = sum(len(s) for s in self.STAFF.values()) + i
+                public = title == '公共邮箱'
+                return {'uid': 'demo-' + address.split('@')[0], 'name': name, 'email': address, 'title': title, 'dept': self._dept_path(dn),
+                        'mobile': '' if public else f'100-0000-{n:04d}', 'phone': f'0000-{8000 + n}',
+                        'fax': '', 'address': '演示园区 A 座 %d 层' % (3 + len(dn) % 4)}
+        return None
+
+    def head_image(self, uid):
+        """A generated gradient PNG for two demo people; everyone else has no head image."""
+        import struct
+        import zlib
+        if uid not in ('demo-zhangxm', 'demo-sunyue'):
+            return None
+        size, hue = 64, (37, 99, 235) if uid == 'demo-zhangxm' else (219, 39, 119)
+        rows = b''.join(b'\x00' + bytes(c for x in range(size) for c in (
+            min(255, hue[0] + y * 2), min(255, hue[1] + x), min(255, hue[2] + (x + y) // 4))) for y in range(size))
+        chunk = lambda tag, data: struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+        return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
+                + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+
     def personal_contacts(self):
         self._need()
         return [{'name': '合作伙伴 · 外部', 'email': 'partner@external.example'}, {'name': '供应商联系人', 'email': 'vendor@external.example'}]
