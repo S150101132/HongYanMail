@@ -49,6 +49,8 @@ STEPS = [
     (700, "closeConversation(); S.prefs.threads = false; renderThreadToggle(); renderList(); selectMessage(S.rows[1].id); "
           "toggleItem(S.rows[2].id); toggleItem(S.rows[4].id); toggleItem(S.rows[5].id)", 'batch'),
     (700, "batchMove(null, { delete: true })", 'batch-undo'),
+    # Undo it, so later steps (tags, invitations) still find this mail outside the trash.
+    (400, "[...document.querySelectorAll('#toasts .toast button')].filter((b) => b.textContent === '撤销').forEach((b) => b.click())", None),
     (900, "clearSelection(false); startCompose('new', null, { to: ['rd@example.invalid'], subject: '周会材料' })", None),
     (600, "C.draft.scheduleAt = new Date(2026, 9, 18, 9, 0).getTime(); $('#cmp-receipt').checked = true; renderSchedule()", 'compose-schedule'),
     (600, "pickSchedule()", 'schedule-picker'),
@@ -140,6 +142,8 @@ def run(index=0):
     delay, script, name, *target = STEPS[index] + (None,)
 
     def act():
+        if os.environ.get('HONGYAN_WALK_TRACE'):
+            print(f'step {index}: {name or "-"}', flush=True)
         if callable(script):
             script()
         elif script:
