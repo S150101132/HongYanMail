@@ -34,7 +34,10 @@
     <div class="side-head">
       <span class="logo small"></span><span class="brand-name">鸿雁</span>
     </div>
-    <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>
+    <div class="compose-row">
+      <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>
+      <button id="btn-compose-more" class="btn primary compose-more" title="从模板新建…"><i data-icon="chevron"></i></button>
+    </div>
     <nav id="folder-list" class="folders" aria-label="文件夹"></nav>
     <nav class="folders"><a id="nav-scheduled" class="folder" data-local="scheduled" title="服务器上等待发出的定时邮件"><i data-icon="clock"></i><span class="fname">定时发送</span><span id="scheduled-count" class="count"></span></a></nav>
     <div id="shared-section" class="hidden"><div class="side-section">共享邮箱</div><nav id="shared-list" class="folders" aria-label="共享邮箱"></nav></div>
@@ -50,6 +53,7 @@
         <i data-icon="settings"></i>
       </button>
     </div>
+    <div id="split-side" class="splitter" title="拖动调整宽度，双击恢复默认"></div>
   </aside>
 
   <section class="list-pane">
@@ -87,6 +91,7 @@
     <div id="search-chips" class="search-chips hidden"></div>
     <div id="sync-bar" class="sync-bar hidden"></div>
     <div id="mail-list" class="mail-list" tabindex="0" role="listbox" aria-label="邮件列表"></div>
+    <div id="split-list" class="splitter" title="拖动调整宽度，双击恢复默认"></div>
   </section>
 
   <section id="contacts-view" class="contacts-view" aria-label="通讯录">
@@ -109,7 +114,7 @@
     <div id="reader-empty" class="empty">
       <div class="empty-art"></div>
       <p>选择一封邮件开始阅读</p>
-      <p class="muted small">快捷键：J/K 上下切换 · R 回复 · A 全部回复 · F 转发 · Delete 删除</p>
+      <p class="muted small">快捷键：J/K 上下切换 · Enter 新窗口打开 · R 回复 · A 全部回复 · F 转发 · Delete 删除</p>
     </div>
     <div id="reader-multi" class="multi hidden">
       <div class="reader-toolbar">
@@ -146,11 +151,12 @@
         <button class="tb sched-only hidden" data-act="unschedule" title="取消定时，邮件转为普通草稿"><i data-icon="clock"></i><span>取消定时</span></button>
         <span class="spacer"></span>
         <button class="tb" data-act="find" title="在正文中查找"><i data-icon="search"></i></button>
+        <button class="tb" data-act="print" title="打印 (Ctrl+P)"><i data-icon="print"></i></button>
+        <button class="tb main-only" data-act="popout" title="在新窗口中打开 (Enter / 双击)"><i data-icon="popout"></i></button>
+        <button class="tb" data-act="more" title="更多：导出为 PDF、导出为 .eml"><i data-icon="more"></i></button>
       </div>
       <div class="reader-scroll">
         <h1 id="r-subject"></h1>
-        <div id="r-thread-info" class="t-info muted small hidden"></div>
-        <div id="r-thread-newer" class="t-list"></div>
         <div class="r-message">
         <div class="r-meta">
           <span id="r-avatar" class="avatar"></span>
@@ -164,7 +170,6 @@
         <div id="r-attachments" class="attachments hidden"></div>
         <div class="r-content"><iframe id="r-frame" sandbox="allow-same-origin" title="邮件正文"></iframe></div>
         </div>
-        <div id="r-thread-older" class="t-list"></div>
         <div class="quick-reply">
           <button class="btn ghost" data-act="reply"><i data-icon="reply"></i>回复</button>
           <button class="btn ghost" data-act="reply_all"><i data-icon="replyall"></i>全部回复</button>
@@ -219,6 +224,7 @@
     <button id="cmp-send" class="btn primary" title="发送 (Ctrl+Enter)"><i data-icon="send"></i>发送</button>
     <button id="cmp-save" class="btn ghost" title="保存草稿 (Ctrl+S)">保存草稿</button>
     <button id="cmp-schedule" class="btn ghost" title="定时发送"><i data-icon="clock"></i><span>定时发送</span></button>
+    <button id="cmp-template" class="btn ghost" title="使用模板，或把当前邮件存为模板"><i data-icon="template"></i><span>模板</span></button>
     <span id="cmp-schedule-chip" class="sched-chip hidden"><i data-icon="clock"></i><span></span><button title="取消定时">×</button></span>
     <label class="check small" title="收件人打开邮件时，请求对方回复已读回执"><input type="checkbox" id="cmp-receipt"> 请求已读回执</label>
     <span class="spacer"></span>
@@ -264,6 +270,9 @@
         </div>
         <div id="pref-signature" class="sig-editor" contenteditable="true"></div>
         <div class="row-end"><button class="btn primary" id="btn-save-settings">保存设置</button></div>
+        <h3 id="tpl-section">邮件模板</h3>
+        <p class="muted small">在写信窗口点「模板」可把当前邮件存为模板；点「写邮件」旁的箭头从模板新建。模板只保存在这台电脑，已加密。以下修改立即生效。</p>
+        <div id="tpl-list" class="tpl-list"></div>
       </section>
     </div>
   </div>

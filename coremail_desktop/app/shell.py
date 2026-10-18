@@ -12,15 +12,17 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
-from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QObject, QTimer, QUrl, Qt, Signal, Slot
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QMarginsF, QObject, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QPageLayout, QPageSize, QShortcut
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import (QWebEnginePage, QWebEngineProfile, QWebEngineSettings,
                                      QWebEngineUrlRequestInfo, QWebEngineUrlRequestInterceptor,
                                      QWebEngineUrlRequestJob, QWebEngineUrlScheme, QWebEngineUrlSchemeHandler)
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, QMenu, QSystemTrayIcon
 
 from coremail_desktop.errors import AppError
 from coremail_desktop.ui.branding import app_icon
@@ -49,10 +51,15 @@ BACKEND_METHODS = {
     'sharedMailboxes': 'shared_mailboxes',
     'directory': 'directory', 'members': 'members', 'personalContacts': 'personal_contacts', 'findPeople': 'find_people',
     'searchCapabilities': 'search_capabilities',
+    'templates': 'templates', 'saveTemplate': 'save_template', 'renameTemplate': 'rename_template', 'deleteTemplate': 'delete_template',
 }
 # Read-only calls may run beside a long send or list fetch.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
-                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople'}
+                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates'}
+# Events a pop-out reader may pass on to the main window.
+POPOUT_EVENTS = {'mailChanged', 'authRequired'}
+# One-shot documents for printing, served at hongyan://app/print/<token>.html.
+_PRINT_DOCS = {}
 BACKGROUND_METHODS = {'prefetch'}
 
 
@@ -63,7 +70,12 @@ class _SchemeHandler(QWebEngineUrlSchemeHandler):
         if url.host() != 'app' or job.requestMethod() != b'GET':
             job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
             return
-        if name == 'qwebchannel.js':
+        if name.startswith('print/'):
+            data = _PRINT_DOCS.pop(name[6:].removesuffix('.html'), None)
+            if data is None:
+                job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
+                return
+        elif name == 'qwebchannel.js':
             source = QFile(':/qtwebchannel/qwebchannel.js')
             source.open(QIODevice.OpenModeFlag.ReadOnly)
             data = bytes(source.readAll())
@@ -118,18 +130,50 @@ class _Page(QWebEnginePage):
             print(f'[js] {source}:{line} {message}')
 
 
+def _lock_down(page, javascript=True):
+    settings = page.settings()
+    for attribute, value in ((QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False),
+                             (QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, False),
+                             (QWebEngineSettings.WebAttribute.PluginsEnabled, False),
+                             (QWebEngineSettings.WebAttribute.PdfViewerEnabled, False),
+                             (QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False),
+                             (QWebEngineSettings.WebAttribute.JavascriptEnabled, javascript),
+                             (QWebEngineSettings.WebAttribute.AutoLoadImages, True)):
+        settings.setAttribute(attribute, value)
+
+
+def _make_web(owner):
+    """An off-the-record profile serving the private scheme, with its own request
+    interceptor (so remote images are allowed per window), and a locked-down page."""
+    profile = QWebEngineProfile(owner)  # Off-the-record: nothing persisted by Chromium.
+    profile.installUrlSchemeHandler(SCHEME, _SchemeHandler(profile))
+    interceptor = _Interceptor(profile)
+    profile.setUrlRequestInterceptor(interceptor)
+    page = _Page(profile, owner)
+    _lock_down(page)
+    return profile, interceptor, page
+
+
 class Bridge(QObject):
     reply = Signal(str, bool, str)
     event = Signal(str, str)
     _done = Signal(str, bool, str)
 
-    def __init__(self, shell):
-        super().__init__(shell)
+    def __init__(self, shell, host=None, share=None):
+        """host: the window whose page this bridge serves (natives are looked up on it
+        first). share: another bridge whose worker threads to use, so the backend is
+        still called from one mail thread in order."""
+        super().__init__(host or shell)
         self.shell = shell
+        self.host = host or shell
         self.backend = shell.backend
-        self._serial = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-mail')
-        self._fast = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-fast')
-        self._background = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-prefetch')
+        self._owns_pools = share is None
+        if share is None:
+            self._serial = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-mail')
+            self._fast = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-fast')
+            self._background = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-prefetch')
+        else:
+            self._serial, self._fast, self._background = share._serial, share._fast, share._background
         self._done.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
 
     def emit_event(self, name, value=None):
@@ -167,7 +211,7 @@ class Bridge(QObject):
         except ValueError:
             self.reply.emit(request_id, False, json.dumps({'code': 'INVALID_REQUEST', 'message': '请求无效。'}))
             return
-        native = getattr(self.shell, 'native_' + method, None)
+        native = getattr(self.host, 'native_' + method, None) or getattr(self.shell, 'native_' + method, None)
         if native is not None:
             try:
                 result = native(**params)
@@ -184,12 +228,140 @@ class Bridge(QObject):
         self.run(request_id, method, params)
 
     def shutdown(self):
+        if not self._owns_pools:
+            return
         self._serial.shutdown(wait=False, cancel_futures=True)
         self._fast.shutdown(wait=False, cancel_futures=True)
         self._background.shutdown(wait=False, cancel_futures=True)
 
 
-class AppShell(QMainWindow):
+class _PrintHost:
+    """Print and export for a window with a profile, a bridge and the backend.
+    The document is built by the backend and laid out by a hidden, script-less view."""
+
+    def _render_print(self, mid, remote, ready):
+        token = os.urandom(12).hex()
+        _PRINT_DOCS[token] = self.backend.print_html(mid, bool(remote)).encode('utf-8')
+        view = QWebEngineView()  # Never shown.
+        page = _Page(self.profile, view)
+        _lock_down(page, javascript=False)
+        view.setPage(page)
+        self._printing = getattr(self, '_printing', set())
+        self._printing.add(view)
+
+        def loaded(ok):
+            page.loadFinished.disconnect(loaded)
+            _PRINT_DOCS.pop(token, None)
+            ready(view, ok) if ok else self._print_done(view, False)
+        page.loadFinished.connect(loaded)
+        page.load(QUrl(f'hongyan://app/print/{token}.html'))
+
+    def _print_done(self, view, ok, code='PRINT_FAILED', kind='print'):
+        self._printing.discard(view)
+        view.deleteLater()
+        self.bridge.emit_event('printed', {'kind': kind, 'ok': bool(ok), 'message': '' if ok else user_message(code)})
+
+    def native_printMessage(self, mid='', remote=False):
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setDocName(self.backend.file_stem(mid))
+        if QPrintDialog(printer, self).exec() != QDialog.DialogCode.Accepted:
+            return False
+
+        def ready(view, _ok):
+            view.printFinished.connect(lambda done: self._print_done(view, done))
+            view.print(printer)
+        self._print_printer = printer  # Kept alive until printing finishes.
+        self._render_print(mid, remote, ready)
+        return True
+
+    def native_exportPdf(self, mid='', remote=False):
+        name = self.backend.file_stem(mid) + '.pdf'
+        target, _ = QFileDialog.getSaveFileName(self, '导出为 PDF', str(Path.home() / 'Downloads' / name), 'PDF 文件 (*.pdf)')
+        if not target:
+            return False
+
+        def ready(view, _ok):
+            def written(data):
+                try:
+                    if not data:
+                        raise ValueError
+                    Path(target).write_bytes(bytes(data))
+                except OSError:
+                    self._print_done(view, False, 'WRITE_DENIED', 'pdf')
+                except ValueError:
+                    self._print_done(view, False, 'PRINT_FAILED', 'pdf')
+                else:
+                    self._print_done(view, True, kind='pdf')
+            layout = QPageLayout(QPageSize(QPageSize.PageSizeId.A4), QPageLayout.Orientation.Portrait,
+                                 QMarginsF(15, 15, 15, 15), QPageLayout.Unit.Millimeter)
+            view.page().printToPdf(written, layout)
+        self._render_print(mid, remote, ready)
+        return True
+
+    def native_exportEml(self, mid='', decrypted=False):
+        name, data = self.backend.export_eml(mid, decrypted is True)
+        target, _ = QFileDialog.getSaveFileName(self, '导出邮件', str(Path.home() / 'Downloads' / name), '邮件文件 (*.eml)')
+        if not target:
+            return False
+        Path(target).write_bytes(data)
+        return True
+
+
+class ReaderWindow(_PrintHost, QMainWindow):
+    """One message in its own window (双击弹出): the same page in reader-only layout,
+    its own locked-down profile and interceptor, and a bridge that shares the main
+    window's mail thread. Pop-outs stay usable while the main window is in the tray."""
+
+    def __init__(self, shell, mid):
+        super().__init__()
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.shell, self.backend, self.mid = shell, shell.backend, mid
+        self.setWindowTitle('鸿雁 · 邮件')
+        self.setWindowIcon(app_icon())
+        self.resize(980, 820)
+        self.setMinimumSize(560, 420)
+        self.profile, self.interceptor, self.page = _make_web(self)
+        self.page.link_requested.connect(shell._open_link)
+        self.page.titleChanged.connect(lambda title: self.setWindowTitle(title or '鸿雁 · 邮件'))
+        self.view = QWebEngineView(self)
+        self.view.setPage(self.page)
+        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.setCentralWidget(self.view)
+        self.bridge = Bridge(shell, host=self, share=shell.bridge)
+        self.channel = QWebChannel(self.page)
+        self.channel.registerObject('bridge', self.bridge)
+        self.page.setWebChannel(self.channel)
+        self.page.load(QUrl(APP_URL + '#reader=' + quote(mid, safe='')))
+        QShortcut(QKeySequence('Ctrl+W'), self, activated=self.close)
+
+    def native_allowRemoteImages(self, allow=False):
+        self.interceptor.allow_remote_images = bool(allow)
+        return True
+
+    def native_findText(self, text='', backward=False):
+        flags = QWebEnginePage.FindFlag.FindBackward if backward else QWebEnginePage.FindFlag(0)
+        self.page.findText(text, flags)
+        return True
+
+    def native_notifyMain(self, name='', value=None):
+        if name not in POPOUT_EVENTS:
+            raise AppError('OPERATION_NOT_ALLOWED')
+        self.shell.bridge.emit_event(name, value)
+        return True
+
+    def native_closeWindow(self):
+        QTimer.singleShot(0, self.close)
+        return True
+
+    def native_setUnread(self, count=0):
+        return True  # The main window owns the tray count.
+
+    def closeEvent(self, event):
+        self.page.setWebChannel(None)
+        event.accept()
+
+
+class AppShell(_PrintHost, QMainWindow):
     push_changed = Signal(str)
     push_state = Signal(str, str)
     PUSH_FALLBACK_SECONDS = 300  # Polling interval while the push channel is up.
@@ -211,19 +383,8 @@ class AppShell(QMainWindow):
         self.resize(1360, 860)
         self.setMinimumSize(960, 600)
 
-        self.profile = QWebEngineProfile(self)  # Off-the-record: nothing persisted by Chromium.
-        self.profile.installUrlSchemeHandler(SCHEME, _SchemeHandler(self.profile))
-        self.interceptor = _Interceptor(self.profile)
-        self.profile.setUrlRequestInterceptor(self.interceptor)
-        self.page = _Page(self.profile, self)
-        settings = self.page.settings()
-        for attribute, value in ((QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False),
-                                 (QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, False),
-                                 (QWebEngineSettings.WebAttribute.PluginsEnabled, False),
-                                 (QWebEngineSettings.WebAttribute.PdfViewerEnabled, False),
-                                 (QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False),
-                                 (QWebEngineSettings.WebAttribute.AutoLoadImages, True)):
-            settings.setAttribute(attribute, value)
+        self.readers = []  # Pop-out reader windows.
+        self.profile, self.interceptor, self.page = _make_web(self)
         self.page.link_requested.connect(self._open_link)
         self.page.loadFinished.connect(self._load_finished)
         self.page.renderProcessTerminated.connect(self._renderer_ended)
@@ -327,6 +488,7 @@ class AppShell(QMainWindow):
 
     def closeEvent(self, event):
         if self._quitting or not self.tray.isVisible() or self.demo:
+            self.native_closeReaders()
             self._stop_push()
             self.bridge.shutdown()
             event.accept()
@@ -447,8 +609,12 @@ class AppShell(QMainWindow):
         elif url.scheme().lower() in ('http', 'https') and url.host():
             QDesktopServices.openUrl(url)
 
+    def _parent(self):
+        """Dialogs open over the window the user is in: the main window or a pop-out."""
+        return QApplication.activeWindow() or self
+
     def native_pickFiles(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, '添加附件')
+        paths, _ = QFileDialog.getOpenFileNames(self._parent(), '添加附件')
         result = []
         for path in paths:
             data = Path(path).read_bytes() if Path(path).stat().st_size <= 10 * 1024 * 1024 else None
@@ -460,7 +626,7 @@ class AppShell(QMainWindow):
 
     def native_saveAttachment(self, mid='', part=''):
         name, _kind, data = self.backend.attachment(mid, part)
-        target, _ = QFileDialog.getSaveFileName(self, '保存附件', str(Path.home() / 'Downloads' / name))
+        target, _ = QFileDialog.getSaveFileName(self._parent(), '保存附件', str(Path.home() / 'Downloads' / name))
         if not target:
             return False
         Path(target).write_bytes(data)
@@ -468,7 +634,7 @@ class AppShell(QMainWindow):
 
     def native_saveAllAttachments(self, mid=''):
         document = self.backend._document(mid)
-        folder = QFileDialog.getExistingDirectory(self, '保存全部附件到', str(Path.home() / 'Downloads'))
+        folder = QFileDialog.getExistingDirectory(self._parent(), '保存全部附件到', str(Path.home() / 'Downloads'))
         if not folder:
             return 0
         count = 0
@@ -496,7 +662,7 @@ class AppShell(QMainWindow):
         return True
 
     def native_unlockCertificate(self, password='', remember=False):
-        path, _ = QFileDialog.getOpenFileName(self, '选择个人证书', str(Path.home()), '证书 (*.pfx *.p12)')
+        path, _ = QFileDialog.getOpenFileName(self._parent(), '选择个人证书', str(Path.home()), '证书 (*.pfx *.p12)')
         if not path:
             return False
         try:
@@ -507,6 +673,26 @@ class AppShell(QMainWindow):
     def native_findText(self, text='', backward=False):
         flags = QWebEnginePage.FindFlag.FindBackward if backward else QWebEnginePage.FindFlag(0)
         self.page.findText(text, flags)
+        return True
+
+    def native_openReader(self, mid=''):
+        if not isinstance(mid, str) or not mid or len(mid) > 300:
+            raise AppError('INVALID_MAIL_ACTION')
+        window = next((w for w in self.readers if w.mid == mid), None)
+        if window is None:
+            window = ReaderWindow(self, mid)
+            self.readers.append(window)
+            window.destroyed.connect(lambda _=None, w=window: self.readers.remove(w) if w in self.readers else None)
+            offset = 28 * (len(self.readers) % 6)
+            window.move(self.x() + 160 + offset, self.y() + 40 + offset)
+        window.showNormal() if window.isMinimized() else window.show()
+        window.raise_()
+        window.activateWindow()
+        return True
+
+    def native_closeReaders(self):
+        for window in list(self.readers):
+            window.close()
         return True
 
     def native_quit(self):

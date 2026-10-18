@@ -26,8 +26,10 @@ const S = {
   rows: [], total: null, more: false, loading: false, listToken: 0,
   selected: null, message: null, filter: 'all', search: null,
   allowRemote: new Set(), drafts: [], items: [], multi: new Set(), anchor: null,
-  shared: [], openBoxes: new Set(),
+  shared: [], openBoxes: new Set(), convo: null, convoScroll: 0, templates: [],
 };
+// A pop-out reader window loads this page as index.html#reader=<mid>.
+const READER_MID = (/^#reader=(.+)$/.exec(location.hash) || [])[1] ? decodeURIComponent(location.hash.slice(8)) : null;
 
 // ---------------------------------------------------------------- helpers
 const PALETTE = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#059669', '#0891b2', '#4f46e5', '#b45309', '#0d9488', '#9333ea'];
@@ -188,6 +190,7 @@ $('#login-form').addEventListener('submit', async (e) => {
 async function enterApp(profile) {
   S.profile = profile; S.prefs = profile.prefs;
   applyTheme(S.prefs.theme, S.prefs.density);
+  applyWidths();
   renderThreadToggle();
   $('#login').classList.add('hidden'); $('#boot').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#me-name').textContent = profile.name || profile.account;
@@ -202,6 +205,106 @@ async function enterApp(profile) {
   api('startSync', { seconds: S.prefs.pollSeconds });
   refreshDraftCount();
   setTimeout(refreshScheduled, 1500);
+  loadTemplates();
+}
+
+// ---------------------------------------------------------------- pop-out reader window
+async function enterReader(mid) {
+  document.documentElement.classList.add('reader-only');
+  const profile = await api('profile').catch(() => null);
+  $('#boot').classList.add('hidden');
+  if (!profile || !profile.account) { $('#login').classList.add('hidden'); api('closeWindow'); return; }
+  S.profile = profile; S.prefs = profile.prefs;
+  applyTheme(S.prefs.theme, S.prefs.density);
+  $('#app').classList.remove('hidden');
+  [S.folders, S.shared] = await Promise.all([api('folders', { refresh: false }).catch(() => []), api('sharedMailboxes', { refresh: false }).catch(() => [])]);
+  loadTemplates();
+  selectMessage(mid);
+}
+function popOut(id) { if (id && S.local !== 'drafts') api('openReader', { mid: id }).catch(fail); }
+// Changes made in a pop-out reach the main window's list (read state, star, deletion).
+function notifyMain(value) { if (READER_MID) api('notifyMain', { name: 'mailChanged', value }).catch(() => {}); }
+async function readerAct(act, m) {
+  if (act === 'flag' || act === 'unread') {
+    const flags = act === 'flag' ? { flagged: !m.flags.flagged } : { read: false };
+    const before = { ...m.flags };
+    Object.assign(m.flags, flags); renderFlagButton();
+    try {
+      await api('setFlags', { mid: m.id, read: flags.read ?? null, flagged: flags.flagged ?? null });
+      notifyMain({ kind: 'flags', id: m.id, flags });
+      if (flags.read === false) toast('已标为未读');
+    } catch (err) { m.flags = before; renderFlagButton(); fail(err); }
+    return true;
+  }
+  const leave = async (call, value) => {
+    try { await call; notifyMain(value); api('closeWindow'); } catch (err) { fail(err); }
+  };
+  if (act === 'delete') {
+    const trash = foldersFor(m.fid).find((f) => f.role === 'trash');
+    if (trash && m.fid === trash.id) { toast('邮件已在已删除文件夹中。为避免误删，本应用不提供彻底删除。'); return true; }
+    leave(api('delete', { mid: m.id }), { kind: 'removed', id: m.id, from: m.fid, deleted: true });
+    return true;
+  }
+  if (act === 'move') {
+    await promptDialog({ title: '移动到文件夹',
+      body: '<div class="pick-list">' + foldersFor(m.fid).filter((f) => f.id !== m.fid && f.role !== 'virus').map((f) =>
+        `<button data-fid="${esc(f.id)}"><i data-icon="${ROLE_ICON[f.role] || 'folder'}"></i>${esc(f.name)}</button>`).join('') + '</div>',
+      onOpen: (d, done) => $$('[data-fid]', d).forEach((b) => (b.onclick = () => {
+        done(true); leave(api('move', { mid: m.id, folder_id: b.dataset.fid }), { kind: 'removed', id: m.id, from: m.fid, to: b.dataset.fid });
+      })) });
+    return true;
+  }
+  return false;
+}
+on('mailChanged', (v) => {
+  const r = S.rows.find((x) => x.id === v.id);
+  if (v.kind === 'flags') {
+    if (r) {
+      const was = r.flags.read;
+      Object.assign(r.flags, v.flags); renderList();
+      const f = folderById(r.fid);
+      if ('read' in v.flags && was !== v.flags.read && f) { f.unread = Math.max(0, (f.unread || 0) + (v.flags.read ? -1 : 1)); renderFolders(); }
+    }
+    if (S.message && S.message.id === v.id) { Object.assign(S.message.flags, v.flags); renderFlagButton(); }
+  } else if (v.kind === 'removed') {
+    if (r) removeRow(v.id);
+    const name = v.deleted ? '已删除' : (folderById(v.to) || {}).name || '文件夹';
+    toast(`已移到「${name}」`, { ms: 8000, action: v.from ? { label: '撤销', run: () => moveMessage(v.id, v.from, true) } : null });
+    api('folders', { refresh: false }).then((f) => { S.folders = f; renderFolders(); }).catch(() => {});
+  }
+});
+
+// ---------------------------------------------------------------- resizable columns
+const SPLITS = { sidebarWidth: { el: '#split-side', prop: '--side-w', min: 180, max: 400, def: 232 },
+  listWidth: { el: '#split-list', prop: '--list-w', min: 280, max: 900, def: 400 } };
+const READER_MIN = 420;  // The reading pane never gets narrower than this while dragging.
+function applyWidths() {
+  for (const [key, sp] of Object.entries(SPLITS)) $('#app').style.setProperty(sp.prop, (S.prefs[key] || sp.def) + 'px');
+}
+function saveWidths() {
+  api('setPrefs', { values: { sidebarWidth: S.prefs.sidebarWidth, listWidth: S.prefs.listWidth } }).then((p) => { S.prefs = p; applyWidths(); }).catch(() => {});
+}
+for (const [key, sp] of Object.entries(SPLITS)) {
+  const handle = $(sp.el);
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const pane = handle.parentElement, other = key === 'sidebarWidth' ? $('.list-pane') : $('.sidebar');
+    const startX = e.clientX, startW = pane.getBoundingClientRect().width;
+    handle.setPointerCapture(e.pointerId); handle.classList.add('drag'); document.body.classList.add('resizing');
+    const move = (ev) => {
+      const room = innerWidth - other.getBoundingClientRect().width - READER_MIN;
+      S.prefs[key] = Math.round(Math.max(sp.min, Math.min(sp.max, room, startW + ev.clientX - startX)));
+      applyWidths();
+    };
+    const up = () => {
+      handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up);
+      handle.classList.remove('drag'); document.body.classList.remove('resizing');
+      saveWidths();
+    };
+    handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', up); handle.addEventListener('pointercancel', up);
+  });
+  handle.addEventListener('dblclick', () => { S.prefs[key] = sp.def; applyWidths(); saveWidths(); });
 }
 
 const ROLE_ICON = { inbox: 'inbox', drafts: 'drafts', sent: 'sent', trash: 'trash', spam: 'spam', virus: 'virus' };
@@ -271,7 +374,7 @@ function applyFolders(res) { if (res.shared) S.shared = res.shared; if (res.fold
 
 function selectFolder(id) {
   S.folderId = String(id); S.local = null; S.search = null; $('#search').value = ''; SF.reset();
-  S.rows = []; S.total = null; S.more = false; S.multi.clear(); renderSelection();
+  S.rows = []; S.total = null; S.more = false; S.multi.clear(); S.convo = null; renderSelection();
   const box = boxOf(id); if (box) S.openBoxes.add(box.id);
   renderFolders();
   const f = folderById(id);
@@ -319,21 +422,42 @@ function threadKey(subject) {
   for (let prev = null; prev !== s;) { prev = s; s = s.replace(SUBJECT_PREFIX, '').trim(); }
   return s.replace(/\s+/g, ' ').toLowerCase();
 }
-// The list shows items: one per message, or one per conversation (newest first).
-function listItems() {
-  const rows = visibleRows();
-  if (!S.prefs.threads || S.local) return rows.map((r) => ({ id: r.id, ids: [r.id], rows: [r] }));
+// The list shows items: one per message, or in conversation mode one per conversation
+// (newest first). An opened conversation (S.convo) lists its own messages instead.
+function conversations(rows) {
   const byKey = new Map(); const items = [];
   for (const r of rows) {
-    const key = threadKey(r.subject);
-    const item = key && byKey.get(key);
+    const key = threadKey(r.subject) || 'id:' + r.id;
+    const item = byKey.get(key);
     if (item) { item.ids.push(r.id); item.rows.push(r); continue; }
-    const fresh = { id: r.id, ids: [r.id], rows: [r] };
-    if (key) byKey.set(key, fresh);
+    const fresh = { id: r.id, ids: [r.id], rows: [r], key };
+    byKey.set(key, fresh);
     items.push(fresh);
   }
   for (const it of items) if (it.rows.length > 1) { it.rows.sort((a, b) => (b.ts || 0) - (a.ts || 0)); it.ids = it.rows.map((r) => r.id); it.id = it.ids[0]; }
   return items;
+}
+function listItems() {
+  const rows = visibleRows();
+  const single = (r) => ({ id: r.id, ids: [r.id], rows: [r] });
+  if (!S.prefs.threads || S.local) { S.convo = null; return rows.map(single); }
+  const items = conversations(rows);
+  if (S.convo) {
+    const open = items.find((it) => it.key === S.convo);
+    if (open) return open.rows.map(single);
+    S.convo = null;  // Its last message was moved or deleted.
+  }
+  return items;
+}
+function openConversation(item) {
+  S.convo = item.key; S.convoScroll = $('#mail-list').scrollTop;
+  renderList(); $('#mail-list').scrollTop = 0;
+  selectMessage(item.ids[0]);
+}
+function closeConversation() {
+  if (!S.convo) return false;
+  S.convo = null; renderList(); $('#mail-list').scrollTop = S.convoScroll;
+  return true;
 }
 function itemOf(id) { return S.items.find((it) => it.ids.includes(id)) || { id, ids: [id], rows: S.rows.filter((r) => r.id === id) }; }
 function participants(item) {
@@ -370,9 +494,13 @@ function renderList() {
   S.items = listItems();
   let html = '';
   let group = null;
+  if (S.convo && S.items.length) {
+    html += `<div class="convo-head"><button class="convo-back" id="convo-back" title="返回会话列表 (Backspace)">← 返回会话列表</button>
+      <span class="convo-title" title="${esc(S.items[0].rows[0].subject || '')}">${esc(S.items[0].rows[0].subject || '（无主题）')}</span><span class="tcount">${S.items.length}</span></div>`;
+  }
   for (const it of S.items) {
     const r = it.rows[0];
-    const g = S.search ? null : groupOf(parseTs(r));
+    const g = S.search || S.convo ? null : groupOf(parseTs(r));
     if (g && g !== group) { group = g; html += `<div class="group-head">${g}</div>`; }
     html += rowHtml(r, it);
   }
@@ -399,16 +527,20 @@ $('#mail-list').addEventListener('scroll', () => {
 });
 $('#mail-list').addEventListener('click', (e) => {
   if (e.target.closest('#search-more')) { moreSearch(); return; }
+  if (e.target.closest('#convo-back')) { closeConversation(); return; }
   const row = e.target.closest('.row'); if (!row) return;
   if (S.local === 'drafts') { openLocalDraft(row.dataset.id); return; }
+  if (e.detail > 1) return;  // The second click of a double-click pops the message out instead.
   if (e.ctrlKey || e.metaKey) { toggleItem(row.dataset.id); return; }
   if (e.shiftKey) { selectRange(row.dataset.id); return; }
   clearSelection(false);
   S.anchor = row.dataset.id;
+  const item = S.items.find((it) => it.ids.includes(row.dataset.id));
+  if (!S.convo && item && item.ids.length > 1) { openConversation(item); return; }
   selectMessage(row.dataset.id);
 });
 $('#mail-list').addEventListener('dblclick', (e) => {
-  const row = e.target.closest('.row'); if (row && !S.local) startCompose('reply', row.dataset.id);
+  if (e.target.closest('.row') && !S.local) popOut(S.selected);
 });
 $('#mail-list').addEventListener('dragstart', (e) => {
   const row = e.target.closest('.row'); if (!row || S.local) return;
@@ -464,7 +596,7 @@ async function runSearch(q) {
   const filters = SF.active();  // Advanced-search conditions (contacts.js); a search may have only these.
   if (!q && !Object.keys(filters).length) { clearSearch(); return; }
   const token = ++searchToken;
-  S.search = q || ' '; S.local = null; S.filter = 'all'; S.multi.clear(); S.searchMore = null; renderSelection(); renderFolders();
+  S.search = q || ' '; S.local = null; S.filter = 'all'; S.multi.clear(); S.searchMore = null; S.convo = null; renderSelection(); renderFolders();
   $$('#filter-seg button').forEach((x) => x.classList.toggle('on', x.dataset.filter === 'all'));
   $('#list-title').textContent = '搜索结果';
   SF.renderChips();
@@ -534,17 +666,16 @@ async function selectMessage(id, opts = {}) {
     $('#r-attachments').classList.add('hidden'); $('#r-banners').innerHTML = '';
     writeFrame('<div style="color:#98a2b3">正在加载…</div>');
   }
-  renderThread(id);
   api('allowRemoteImages', { allow: S.allowRemote.has(id) });
   try {
     const m = await api('openMessage', { mid: id });
     if (token !== openToken) return;
     S.message = m;
     renderMessage(m);
+    if (READER_MID) { document.title = (m.subject || '（无主题）') + ' · 鸿雁'; if (m.markedRead) notifyMain({ kind: 'flags', id, flags: { read: true } }); }
     if (m.markedRead && summary) {
       summary.flags.read = true;
       row && row.classList.toggle('unread', itemOf(id).rows.some((r) => !r.flags.read));
-      renderThread(id);
       const f = folderById(summary.fid); if (f && f.unread > 0) { f.unread--; renderFolders(); }
     }
   } catch (err) {
@@ -553,24 +684,6 @@ async function selectMessage(id, opts = {}) {
     writeFrame(`<div style="color:#d92d20">${esc(err.message)}</div>`);
   }
 }
-
-// The open conversation: newer messages above the open one, older below, all collapsed.
-function renderThread(id) {
-  const item = S.prefs.threads ? itemOf(id) : null;
-  const on = !!item && item.ids.length > 1;
-  $('.reader-scroll').classList.toggle('threaded', on);
-  $('#r-thread-info').classList.toggle('hidden', !on);
-  if (!on) { $('#r-thread-newer').innerHTML = $('#r-thread-older').innerHTML = ''; return; }
-  const i = Math.max(0, item.ids.indexOf(id));
-  const card = (r) => `<div class="t-card${r.flags.read ? '' : ' unread'}" data-mid="${esc(r.id)}" title="展开这封邮件">${avatarHtml(r.fromName, r.fromEmail, 'sm')}
-    <span class="t-who">${esc(r.fromName || r.fromEmail)}</span><span class="t-prev">${esc(r.preview || r.subject || '')}</span><span class="t-when">${esc(shortDate(parseTs(r)))}</span></div>`;
-  $('#r-thread-info').textContent = `会话 · 共 ${item.ids.length} 封 · ${participants(item)}`;
-  $('#r-thread-newer').innerHTML = item.rows.slice(0, i).map(card).join('');
-  $('#r-thread-older').innerHTML = item.rows.slice(i + 1).map(card).join('');
-}
-$('.reader-scroll').addEventListener('click', (e) => {
-  const card = e.target.closest('.t-card'); if (card) selectMessage(card.dataset.mid);
-});
 
 function renderRecipients(m) {
   const box = $('#r-to');
@@ -599,7 +712,7 @@ function renderMessage(m) {
   const d = m.date ? new Date(String(m.date).replace(' ', 'T')) : null;
   $('#r-date').textContent = d && !isNaN(d) ? longDate(d) : (m.date || '');
   renderRecipients(m);
-  $$('.reader-toolbar [data-act="flag"]').forEach((b) => b.classList.toggle('on', !!m.flags.flagged));
+  renderFlagButton();
   const role = (folderById(m.fid) || {}).role;
   const panel = $('#ds-panel'); if (panel) panel.remove();
   $$('#reader-body .sent-only').forEach((b) => b.classList.toggle('hidden', role !== 'sent'));
@@ -716,6 +829,7 @@ async function unscheduleMessage(m) {
 function linkify(text) {
   return esc(text).replace(/(https?:\/\/[^\s<>"']+)/g, '<a href="$1">$1</a>');
 }
+function renderFlagButton() { $$('.reader-toolbar [data-act="flag"]').forEach((b) => b.classList.toggle('on', !!(S.message && S.message.flags.flagged))); }
 function renderBody(m) {
   if (m.html) writeFrame(m.html, { remote: S.allowRemote.has(m.id), paper: true });
   else writeFrame(`<div style="white-space:pre-wrap">${linkify(m.text || '')}</div>`, {});
@@ -750,22 +864,63 @@ $('#r-frame').addEventListener('load', () => {
   doc.addEventListener('keydown', (e) => handleKey(e));
 });
 
-$('#reader-body').addEventListener('click', (e) => {
+$('#reader-body').addEventListener('click', async (e) => {
   const b = e.target.closest('[data-act]'); if (!b || !S.message) return;
   const m = S.message;
+  if (READER_MID && (await readerAct(b.dataset.act, m))) return;
   ({
     reply: () => startCompose('reply', m.id), reply_all: () => startCompose('reply_all', m.id), forward: () => startCompose('forward', m.id),
     delete: () => deleteMessage(m.id), move: () => pickFolder(m.id), unread: () => setFlags(m.id, { read: false }),
     flag: () => setFlags(m.id, { flagged: !m.flags.flagged }), find: openFind,
     recall: () => recallMessage(m), status: () => loadDeliveryStatus(m, true), unschedule: () => unscheduleMessage(m),
+    print: () => printMessage(m), popout: () => popOut(m.id), more: () => moreMenu(b, m),
   }[b.dataset.act] || (() => {}))();
+});
+
+// ---------------------------------------------------------------- print and export
+function printMessage(m) {
+  if (m.encryption === 'locked') { toast('加密邮件需要先解锁证书才能打印', { error: true }); return; }
+  api('printMessage', { mid: m.id, remote: S.allowRemote.has(m.id) }).catch(fail);
+}
+const PLAIN_COPY_TEXT = '导出的文件不再加密，任何能打开这个文件的人都能阅读邮件内容。请只保存到受保护的位置。';
+async function exportPdf(m) {
+  if (m.encryption === 'locked') { toast('加密邮件需要先解锁证书才能导出 PDF', { error: true }); return; }
+  if (m.encryption === 'decrypted' && !(await confirmDialog('导出未加密的 PDF', PLAIN_COPY_TEXT, '仍然导出'))) return;
+  api('exportPdf', { mid: m.id, remote: S.allowRemote.has(m.id) }).catch(fail);
+}
+async function exportEml(m) {
+  let decrypted = false;
+  if (m.encryption === 'decrypted') {
+    const choice = await promptDialog({ title: '导出加密邮件', okText: '导出',
+      text: '这是一封加密邮件。默认导出服务器上的原始加密邮件（.eml），需要你的证书才能打开。',
+      body: `<div class="pick-radio"><label class="check"><input type="radio" name="eml-kind" value="orig" checked> 原始加密邮件（推荐）</label>
+        <label class="check"><input type="radio" name="eml-kind" value="plain"> 解密后的副本（不加密保存）</label></div>`,
+      collect: () => ($('input[name="eml-kind"]:checked') || {}).value });
+    if (!choice) return;
+    decrypted = choice === 'plain';
+    if (decrypted && !(await confirmDialog('保存未加密的副本', PLAIN_COPY_TEXT, '保存解密副本'))) return;
+  }
+  try { if (await api('exportEml', { mid: m.id, decrypted })) toast(decrypted ? '已导出解密副本' : '邮件已导出'); } catch (err) { fail(err); }
+}
+function moreMenu(button, m) {
+  const r = button.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 4, [
+    { label: '打印…', icon: 'print', run: () => printMessage(m) },
+    { label: '导出为 PDF…', icon: 'file', run: () => exportPdf(m) },
+    { label: m.encryption === 'none' ? '导出为 .eml…' : '导出为 .eml（加密原件或解密副本）…', icon: 'download', run: () => exportEml(m) },
+    ...(READER_MID ? [] : ['-', { label: '在新窗口中打开', icon: 'popout', run: () => popOut(m.id) }]),
+  ]);
+}
+on('printed', (v) => {
+  if (v.ok) toast(v.kind === 'pdf' ? 'PDF 已导出' : '已发送到打印机');
+  else toast(v.message || '打印未完成', { error: true });
 });
 
 async function setFlags(id, flags) {
   const r = S.rows.find((x) => x.id === id);
   const before = r ? { ...r.flags } : null;
   if (r) { Object.assign(r.flags, flags); renderList(); }
-  if (S.message && S.message.id === id) { Object.assign(S.message.flags, flags); $$('.reader-toolbar [data-act="flag"]').forEach((b) => b.classList.toggle('on', !!S.message.flags.flagged)); }
+  if (S.message && S.message.id === id) { Object.assign(S.message.flags, flags); renderFlagButton(); }
   try {
     await api('setFlags', { mid: id, read: flags.read ?? null, flagged: flags.flagged ?? null });
     if ('read' in flags && r && before && before.read !== flags.read) {
@@ -776,8 +931,11 @@ async function setFlags(id, flags) {
 }
 
 function neighbour(id) {
-  const rows = visibleRows(); const i = rows.findIndex((r) => r.id === id);
-  return rows[i + 1] || rows[i - 1] || null;
+  const i = S.items.findIndex((it) => it.ids.includes(id)); if (i < 0) return null;
+  const rest = S.items[i].ids.filter((x) => x !== id);
+  if (rest.length) return { id: rest[0] };
+  const next = S.items[i + 1] || S.items[i - 1];
+  return next ? { id: next.id } : null;
 }
 function removeRow(id) {
   const next = S.selected === id ? neighbour(id) : null;
@@ -931,10 +1089,10 @@ async function pickBatchFolder() {
 function renderThreadToggle() {
   const b = $('#btn-threads');
   b.classList.toggle('on', !!S.prefs.threads);
-  b.title = S.prefs.threads ? '按会话分组：已开启' : '按会话分组：已关闭';
+  b.title = S.prefs.threads ? '会话视图：已开启（点击会话查看其中的邮件）' : '会话视图：已关闭';
 }
 $('#btn-threads').onclick = async () => {
-  S.prefs.threads = !S.prefs.threads;
+  S.prefs.threads = !S.prefs.threads; S.convo = null;
   renderThreadToggle(); renderList(); renderSelection();
   if (S.selected) selectMessage(S.selected, { noScroll: true });
   try { S.prefs = await api('setPrefs', { values: { threads: S.prefs.threads } }); } catch (err) { fail(err); }
@@ -1380,6 +1538,92 @@ composer.addEventListener('keydown', (e) => {
   e.stopPropagation();
 });
 
+// ---------------------------------------------------------------- templates (local, encrypted)
+async function loadTemplates() { try { S.templates = await api('templates'); } catch (e) { S.templates = []; } return S.templates; }
+async function pickTemplate(title) {
+  await loadTemplates();
+  if (!S.templates.length) { toast('还没有模板：在写信窗口点「模板」→「将当前邮件存为模板」'); return null; }
+  return promptDialog({ title,
+    body: '<div class="pick-list tpl-pick">' + S.templates.map((t, i) => `<button data-i="${i}"><i data-icon="template"></i><span class="tpl-name">${esc(t.name)}</span><span class="muted small tpl-sub">${esc(t.subject || '（无主题）')}</span></button>`).join('') + '</div>',
+    onOpen: (d, done) => $$('[data-i]', d).forEach((b) => (b.onclick = () => done(S.templates[+b.dataset.i]))) });
+}
+async function newFromTemplate() {
+  const t = await pickTemplate('从模板新建'); if (!t) return;
+  startCompose('new', null, { subject: t.subject, html: t.html, to: t.to, cc: t.cc, bcc: t.bcc });
+}
+async function applyTemplate(t) {
+  const body = $('#cmp-editor').innerText.replace(/\s+/g, '');
+  const typed = C.dirty && (body || $('#cmp-subject').value.trim());
+  if (typed && !(await confirmDialog('使用模板', `用模板「${t.name}」替换当前的主题和正文吗？`, '替换'))) return;
+  if (t.subject) $('#cmp-subject').value = t.subject;
+  $('#cmp-editor').innerHTML = t.html || '<p><br></p>';
+  for (const field of ['to', 'cc', 'bcc']) {
+    const have = new Set(chipsValue(field).map((a) => (parseAddressList(a)[0] || {}).email));
+    const box = $(`.chips[data-field="${field}"]`), input = $('input', box);
+    for (const a of t[field] || []) { const p = parseAddressList(a)[0]; if (p && !have.has(p.email)) addChip(box, input, p); }
+    if ((t[field] || []).length && field !== 'to') $('#row-' + field).classList.remove('hidden');
+  }
+  C.dirty = true; renderEncrypt();
+}
+async function saveAsTemplate() {
+  const value = collectDraft();
+  const got = await promptDialog({ title: '存为模板', okText: '保存',
+    text: '保存当前邮件的主题和正文，以后可以从模板新建。模板只保存在本机，已加密；附件不会保存。',
+    body: `<input type="text" id="tpl-name" maxlength="60" placeholder="模板名称" value="${esc(value.subject.slice(0, 60))}">
+      <label class="check" style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" id="tpl-rcpt"> 同时保存收件人、抄送和密送</label>`,
+    collect: () => ({ name: $('#tpl-name').value.trim(), recipients: $('#tpl-rcpt').checked }) });
+  if (!got) return;
+  if (!got.name) { toast('请填写模板名称', { error: true }); return; }
+  await loadTemplates();
+  if (S.templates.some((t) => t.name.toLowerCase() === got.name.toLowerCase()) &&
+      !(await confirmDialog('替换模板', `已有名为「${got.name}」的模板，要用当前邮件替换它吗？`, '替换'))) return;
+  try {
+    await api('saveTemplate', { name: got.name, recipients: got.recipients,
+      value: { subject: value.subject, html: value.html, to: value.to, cc: value.cc, bcc: value.bcc } });
+    loadTemplates(); toast(`已存为模板「${got.name}」`);
+  } catch (err) { fail(err); }
+}
+async function templateMenu(button) {
+  await loadTemplates();
+  const r = button.getBoundingClientRect();
+  const used = S.templates.slice(0, 12).map((t) => ({ label: t.name, icon: 'template', run: () => applyTemplate(t) }));
+  showMenu(r.left, r.top, [...used, ...(used.length ? ['-'] : []),
+    { label: '将当前邮件存为模板…', icon: 'draft', run: saveAsTemplate },
+    ...(S.templates.length ? [{ label: '管理模板…', icon: 'settings', run: () => { openSettings(); $('#tpl-section').scrollIntoView(); } }] : [])]);
+  const m = $('#menu'), h = m.getBoundingClientRect().height;
+  m.style.top = Math.max(8, r.top - h - 4) + 'px';  // Opens upwards from the composer foot.
+}
+$('#cmp-template').onclick = (e) => templateMenu(e.currentTarget);
+$('#btn-compose-more').onclick = (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 4, [{ label: '写邮件', icon: 'pen', run: () => startCompose('new') },
+    { label: '从模板新建…', icon: 'template', run: newFromTemplate }]);
+};
+function renderTemplates() {
+  const box = $('#tpl-list');
+  box.innerHTML = S.templates.length ? S.templates.map((t) => `<div class="tpl-row" data-id="${esc(t.id)}"><i data-icon="template"></i>
+      <div class="tpl-text"><b>${esc(t.name)}</b><span class="muted small">${esc(t.subject || '（无主题）')}${(t.to || []).length ? ' · 含收件人' : ''} · ${esc(t.modified)}</span></div>
+      <button class="btn ghost sm" data-tpl="rename">重命名</button><button class="btn ghost sm danger" data-tpl="delete">删除</button></div>`).join('')
+    : '<p class="muted small">还没有模板。</p>';
+  renderIcons(box);
+}
+$('#tpl-list').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-tpl]'); if (!b) return;
+  const t = S.templates.find((x) => x.id === b.closest('.tpl-row').dataset.id); if (!t) return;
+  try {
+    if (b.dataset.tpl === 'rename') {
+      const name = await promptDialog({ title: '重命名模板', okText: '保存', body: `<input type="text" id="tpl-rename" maxlength="60" value="${esc(t.name)}">`,
+        collect: () => $('#tpl-rename').value.trim() });
+      if (!name || name === t.name) return;
+      S.templates = await api('renameTemplate', { template_id: t.id, name });
+    } else {
+      if (!(await confirmDialog('删除模板', `确定删除模板「${t.name}」吗？`, '删除'))) return;
+      S.templates = await api('deleteTemplate', { template_id: t.id });
+    }
+    renderTemplates();
+  } catch (err) { fail(err); }
+});
+
 // ---------------------------------------------------------------- settings
 function openSettings() {
   const p = S.prefs;
@@ -1392,6 +1636,7 @@ function openSettings() {
   $('#pref-signature').innerHTML = p.signature || '';
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
   renderCertStatus();
+  renderTemplates(); loadTemplates().then(renderTemplates);
   api('runtimeStatus').then((r) => { $('#runtime-note').classList.toggle('hidden', r.sandboxed); $('#data-dir').textContent = '本机数据（已加密）：' + r.dataDir; }).catch(() => {});
   api('certificateStatus').then((c) => { S.profile.certificate = c; renderCertStatus(); }).catch(() => {});
 }
@@ -1420,6 +1665,7 @@ $('#btn-logout').onclick = async () => {
   if (!(await confirmDialog('退出登录', '退出后需要重新输入密码。本机缓存保持加密保存。', '退出登录'))) return;
   $('#settings').classList.add('hidden');
   await api('logout', { forget: true }).catch(() => {});
+  await api('closeReaders').catch(() => {});
   location.reload();
 };
 
@@ -1430,7 +1676,9 @@ function handleKey(e) {
     if (e.key === 'Escape') { $$('#prompt [data-close], #settings [data-close]').forEach((b) => !b.closest('.hidden') && b.click()); }
     return;
   }
-  if (e.key === 'Escape') { hideMenu(); closeFind(); if (!isTyping(t)) clearSelection(); }
+  if (READER_MID) { readerKey(e); return; }
+  if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); if (S.message && S.multi.size < 2 && !$('#reader-body').classList.contains('hidden')) printMessage(S.message); return; }
+  if (e.key === 'Escape') { const menu = !$('#menu').classList.contains('hidden'); hideMenu(); closeFind(); if (!isTyping(t) && !clearSelection() && !menu) closeConversation(); }
   if (e.ctrlKey && (e.key === 'a' || e.key === 'A') && !isTyping(t) && t.ownerDocument === document && !(t.closest && t.closest('.reader-scroll, #composer'))
       && !$('#app').classList.contains('hidden') && !S.local) { e.preventDefault(); selectAll(); return; }
   if (e.ctrlKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); startCompose('new'); return; }
@@ -1445,6 +1693,8 @@ function handleKey(e) {
   if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); const n = items[Math.min(items.length - 1, i + 1)]; if (n) selectMessage(n.id); }
   else if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); const n = items[Math.max(0, i - 1)]; if (n) selectMessage(n.id); }
   else if (k === 'c') startCompose('new');
+  else if (k === 'Enter' && i >= 0 && !many && (t === document.body || t.closest('#mail-list'))) { e.preventDefault(); if (!S.convo && items[i].ids.length > 1) openConversation(items[i]); else popOut(S.selected); }
+  else if (k === 'Backspace' && S.convo) { e.preventDefault(); closeConversation(); }
   else if (k === 'x') { if (S.selected && !S.local) toggleItem(S.selected); }
   else if (many && (k === 'Delete' || k === '#')) batchMove(null, { delete: true });
   else if (many && k === 'u') batchFlags({ read: false });
@@ -1458,6 +1708,21 @@ function handleKey(e) {
   else if (k === 'u') setFlags(m.id, { read: false });
   else if (k === 's') setFlags(m.id, { flagged: !m.flags.flagged });
   else if (k === 'v') pickFolder(m.id);
+}
+// A pop-out window: the open message only. Escape or Ctrl+W closes the window.
+function readerKey(e) {
+  const t = e.target, k = e.key, m = S.message;
+  if (e.ctrlKey && (k === 'p' || k === 'P')) { e.preventDefault(); if (m) printMessage(m); return; }
+  if (k === 'Escape') {
+    if (!$('#menu').classList.contains('hidden') || !$('#find-bar').classList.contains('hidden')) { hideMenu(); closeFind(); }
+    else if ($('#composer').classList.contains('hidden')) api('closeWindow');
+    return;
+  }
+  if (isTyping(t) || e.ctrlKey || e.altKey || !m || !$('#composer').classList.contains('hidden')) return;
+  const act = { r: 'reply', a: 'reply_all', f: 'forward', Delete: 'delete', '#': 'delete', u: 'unread', s: 'flag', v: 'move' }[k];
+  if (!act) return;
+  e.preventDefault();
+  if (['reply', 'reply_all', 'forward'].includes(act)) startCompose(act, m.id); else readerAct(act, m);
 }
 function isTyping(t) { return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
 document.addEventListener('keydown', handleKey);
@@ -1483,7 +1748,11 @@ on('synced', (v) => {
 on('syncError', (err) => {
   if (err && err.code === 'NETWORK_ERROR') { $('#sync-bar').textContent = '网络不可用，稍后自动重试。正在显示本机缓存。'; $('#sync-bar').classList.remove('hidden'); }
 });
-on('authRequired', () => showLogin('会话已失效，请重新登录。'));
+on('authRequired', () => {
+  if (READER_MID) { api('notifyMain', { name: 'authRequired' }).catch(() => {}); api('closeWindow'); return; }
+  api('closeReaders').catch(() => {});
+  showLogin('会话已失效，请重新登录。');
+});
 on('compose', () => startCompose('new'));
 on('mailto', (addr) => startCompose('new', null, { to: [decodeURIComponent(addr || '')] }));
 on('openMessage', async (id) => {
@@ -1506,6 +1775,7 @@ on('openMessage', async (id) => {
       ok ? p.resolve(value) : p.reject(value || { message: '操作未完成' });
     });
     bridge.event.connect((name, payload) => { const fn = handlers[name]; if (fn) fn(payload ? JSON.parse(payload) : null); });
+    if (READER_MID) { await enterReader(READER_MID); return; }
     const saved = await api('savedLogin').catch(() => ({}));
     if (saved.remember) {
       try { await enterApp(await api('autoLogin')); return; }

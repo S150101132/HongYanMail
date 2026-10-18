@@ -24,7 +24,10 @@ from coremail_desktop.mime.parser import parse_mime
 
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
                  'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'threads': False,
-                 'autostart': False}
+                 'autostart': False, 'sidebarWidth': 232, 'listWidth': 400}
+# Column widths the page may store (px); the page enforces the same bounds while dragging.
+WIDTH_LIMITS = {'sidebarWidth': (180, 400), 'listWidth': (280, 900)}
+TEMPLATE_LIMIT = 100
 # Coremail system folder ids. Used only for icons and ordering; the name shown is
 # always the server's own folder name.
 SYSTEM_ROLES = {'1': 'inbox', '2': 'drafts', '3': 'sent', '4': 'trash', '5': 'spam', '6': 'virus'}
@@ -285,6 +288,8 @@ class MailBackend:
                 prefs[key] = value
         prefs['pollSeconds'] = max(30, min(int(prefs['pollSeconds']), 3600))
         prefs['signature'] = prefs['signature'][:20000]
+        for key, (low, high) in WIDTH_LIMITS.items():
+            prefs[key] = max(low, min(int(prefs[key]), high))
         if self.autostart is not None and type(values.get('autostart')) is bool:
             prefs['autostart'] = self.autostart.set_enabled(values['autostart'])
         self.cache.set('prefs', prefs)
@@ -443,15 +448,19 @@ class MailBackend:
             view['directory'] = self._signer_directory.get(key)
         return view
 
-    def _document(self, mid):
-        if mid in self._docs:
-            return self._docs[mid]
+    def _raw(self, mid):
+        """The message exactly as the server stores it (still encrypted if it was)."""
         raw = self.cache.get_body(mid)
         if raw is None:
             remote, box = self._locate(mid)
             raw = self._online(self.adapter.fetch_mime, remote, **self._box_args(box))
             self.cache.put_body(mid, raw)
-        document = self._parse(raw, mid)
+        return raw
+
+    def _document(self, mid):
+        if mid in self._docs:
+            return self._docs[mid]
+        document = self._parse(self._raw(mid), mid)
         if document.encryption_state != 'locked':
             self._docs = {mid: document, **dict(list(self._docs.items())[:7])}
         return document
@@ -864,6 +873,109 @@ class MailBackend:
     def delete_draft(self, local_id):
         self.services['delete_draft'](local_id=local_id)
         return True
+
+    # Templates: named subject + body (+ recipients), in the encrypted cache kv -----
+    def templates(self):
+        return sorted(self.cache.get('templates', []), key=lambda t: t['name'].casefold())
+
+    def _template_name(self, name):
+        name = str(name or '').strip()
+        if not name or len(name) > 60 or '\n' in name:
+            raise AppError('INVALID_TEMPLATE')
+        return name
+
+    def save_template(self, name, value, recipients=False):
+        name = self._template_name(name)
+        value = dict(value or {})
+        listify = lambda key: [str(v).strip() for v in value.get(key, ()) if str(v).strip()][:100] if recipients else []
+        body, subject = str(value.get('html', '')), str(value.get('subject', ''))
+        if len(body) > 500_000 or len(subject) > 1000 or '\n' in subject:
+            raise AppError('INVALID_TEMPLATE')
+        stored = self.cache.get('templates', [])
+        same = next((t for t in stored if t['name'].casefold() == name.casefold()), None)  # Same name replaces.
+        if same is None and len(stored) >= TEMPLATE_LIMIT:
+            raise AppError('TEMPLATE_LIMIT')
+        template = {'id': same['id'] if same else uuid.uuid4().hex, 'name': name, 'subject': subject, 'html': body,
+                    'to': listify('to'), 'cc': listify('cc'), 'bcc': listify('bcc'),
+                    'modified': datetime.now().strftime('%Y-%m-%d %H:%M')}
+        self.cache.set('templates', [t for t in stored if t is not same] + [template])
+        return template
+
+    def rename_template(self, template_id, name):
+        name = self._template_name(name)
+        stored = self.cache.get('templates', [])
+        if not any(t['id'] == template_id for t in stored):
+            raise AppError('INVALID_TEMPLATE')
+        if any(t['name'].casefold() == name.casefold() and t['id'] != template_id for t in stored):
+            raise AppError('TEMPLATE_EXISTS')
+        self.cache.set('templates', [{**t, 'name': name} if t['id'] == template_id else t for t in stored])
+        return self.templates()
+
+    def delete_template(self, template_id):
+        self.cache.set('templates', [t for t in self.cache.get('templates', []) if t['id'] != template_id])
+        return self.templates()
+
+    # Print and export --------------------------------------------------------
+    def file_stem(self, mid):
+        """A file name for saving the message: its subject without path characters."""
+        subject = (self.cache.summary(mid) or {}).get('subject') or ', '.join(self._document(mid).headers.get('subject', ()))
+        stem = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', ' ', subject).strip(' .')[:80]
+        return stem or '邮件'
+
+    def export_eml(self, mid, decrypted=False):
+        """(file name, bytes) of the message. By default the original as stored on the
+        server, so encrypted mail stays encrypted; decrypted=True gives the readable
+        copy (outer headers + decrypted inner MIME) and needs the certificate."""
+        raw = self._raw(mid)
+        name = self.file_stem(mid) + '.eml'
+        if not decrypted:
+            return name, raw
+        from email import policy
+        from email.parser import BytesHeaderParser
+        from coremail_desktop.crypto.formats import detect_envelope_format
+        if not detect_envelope_format(raw):
+            return name, raw  # Nothing to decrypt.
+        if self.crypto is None or self.crypto.certificate_info is None:
+            raise AppError('CERT_LOCKED')
+        outer = BytesHeaderParser(policy=policy.default).parsebytes(raw)
+        inner = self.crypto.decrypt(raw, parseaddr(str(outer.get('from', '')))[1]).mime_bytes
+        head = re.split(rb'\r?\n\r?\n', inner, maxsplit=1)[0]
+        own = {line.split(b':', 1)[0].strip().lower() for line in head.splitlines() if b':' in line and line[:1] not in b' \t'}
+        keep = []
+        for key in ('From', 'To', 'Cc', 'Subject', 'Date', 'Message-ID', 'In-Reply-To', 'References', 'Reply-To'):
+            if key.lower().encode() not in own:
+                keep += [f'{key}: {value}'.encode('utf-8') for value in outer.get_all(key) or ()]
+        if b'mime-version' not in own:
+            keep.append(b'MIME-Version: 1.0')
+        return name, b'\r\n'.join(keep) + b'\r\n' + inner
+
+    def print_html(self, mid, remote_images=False):
+        """A standalone document for printing or PDF export: header, attachment names
+        and the sanitized body. Its policy refuses scripts; remote images load only
+        when the user allowed them for this message."""
+        view = self.open_message(mid, mark_read=False)
+        esc = html.escape
+        names = lambda people: '、'.join(f'{p["name"]} <{p["email"]}>' if p['name'] else p['email'] for p in people)
+        rows = [(label, value) for label, value in (('发件人', names(view['from'])), ('收件人', names(view['to'])),
+                                                    ('抄送', names(view['cc'])), ('时间', view['date'] or '')) if value]
+        if view['attachments']:
+            rows.append(('附件', '、'.join(a['name'] for a in view['attachments'])))
+        body = view['html'] or '<div style="white-space:pre-wrap">' + esc(view['text'] or '') + '</div>'
+        if view['encryption'] == 'locked':
+            body = '<p>（加密邮件：解锁个人证书后才能打印正文）</p>'
+        csp = "default-src 'none'; style-src 'unsafe-inline'; img-src data:" + (' https: http:' if remote_images else '') + '; font-src data:'
+        return ('<!doctype html><html><head><meta charset="utf-8">'
+                f'<meta http-equiv="Content-Security-Policy" content="{csp}"><title>{esc(view["subject"])}</title>'
+                '<style>body{margin:0;color:#101828;font:13.5px/1.6 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif}'
+                'h1{font-size:19px;margin:0 0 10px}table.hy-head{border-collapse:collapse;margin-bottom:14px;width:100%}'
+                'table.hy-head td{padding:2px 0;vertical-align:top;font-size:12.5px}'
+                'table.hy-head td:first-child{color:#667085;width:4.5em;white-space:nowrap}'
+                'hr{border:0;border-top:1px solid #d0d5dd;margin:0 0 14px}img{max-width:100%;height:auto}'
+                '.hy-body{overflow-wrap:anywhere}blockquote{margin:0 0 0 4px;padding-left:12px;border-left:3px solid #d0d5dd;color:#475467}'
+                '</style></head>'
+                f'<body><h1>{esc(view["subject"] or "（无主题）")}</h1><table class="hy-head">'
+                + ''.join(f'<tr><td>{label}</td><td>{esc(value)}</td></tr>' for label, value in rows)
+                + f'</table><hr><div class="hy-body">{body}</div></body></html>')
 
     def send(self, value):
         draft = self._draft(value)
