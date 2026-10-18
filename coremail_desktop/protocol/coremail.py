@@ -18,7 +18,9 @@ class DesktopSession(CoremailSession):
     """Retain the verified login/redirect parser, classify production failures."""
     ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare','oab:autoMatch','pab:searchContacts','cert:listPublicKey','cert:get',
                                        'user:listDeliveryHistory','mbox:recallMessage2','mbox:cancelDeliver','mbox:getMessageInfos','mbox:listSharedAccessMbox',
-                                       'oab:getDirectories','oab:listEx'}
+                                       'oab:getDirectories','oab:listEx',
+                                       'user:getMailRules','user:addMailRules','user:updateMailRules','user:removeMailRules','user:adjustMailRuleOrder',
+                                       'user:setAttrs','mbox:listTags','mbox:manageTags','mbox:updateMessageTags','cal:respond'}
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -203,7 +205,8 @@ def _summary(item,folder_id,sender):
     size=item.get('size') if type(item.get('size')) is int else None
     return MessageSummary(item['id'],folder_id,str(item.get('subject','')),str(sender),str(item.get('date',item.get('receivedDate',''))),flags,
                           preview=str(item.get('summary','') or '')[:300],recipients=str(item.get('to','') or ''),size=size,
-                          schedule_at=_schedule_at(item,flags))
+                          schedule_at=_schedule_at(item,flags),
+                          tags=tuple(str(t) for t in item.get('tag') or () if isinstance(t,(str,int))) if isinstance(item.get('tag'),list) else ())
 
 class CoremailAdapter:
     supports_reply_headers = True
@@ -505,6 +508,105 @@ class CoremailAdapter:
         if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
         return [{'name':str(r.get('FN') or ''),'email':r['EMAIL;PREF']} for r in rows
                 if isinstance(r,dict) and isinstance(r.get('EMAIL;PREF'),str) and '@' in r['EMAIL;PREF']]
+    # Mail rules, auto-reply, tags (shapes: coremail_desktop/protocol/rules.py) ---------------
+    def mail_rules(self):
+        """The account's mail rules as the server stores them, in their order."""
+        rows=self._call('user:getMailRules',{},True).get('var')
+        if rows is None: return []
+        if not isinstance(rows,list) or any(not isinstance(r,dict) or type(r.get('id')) not in (int,str) for r in rows): raise AppError('INVALID_RESPONSE')
+        return rows
+    def add_mail_rule(self,rule):
+        # Webmail: user:addMailRules {items:[rule]} with disabled defaulting to false (X.03931.js module 88812).
+        self._call('user:addMailRules',{'items':[{'disabled':False,**rule}]})
+        return True
+    def update_mail_rule(self,rule):
+        if type(rule.get('id')) not in (int,str): raise AppError('INVALID_RULE')
+        self._call('user:updateMailRules',{'items':[rule]})
+        return True
+    def remove_mail_rule(self,rule_id):
+        if type(rule_id) not in (int,str): raise AppError('INVALID_RULE')
+        self._call('user:removeMailRules',{'ids':[rule_id]})
+        return True
+    def move_mail_rule(self,rule_id,ref_id):
+        """Swap a rule with its neighbour ref, as webmail's up/down buttons do:
+        user:adjustMailRuleOrder {id, ref, value:0} (S.03931.js setting.filter.letter)."""
+        if type(rule_id) not in (int,str) or type(ref_id) not in (int,str): raise AppError('INVALID_RULE')
+        self._call('user:adjustMailRuleOrder',{'id':rule_id,'ref':ref_id,'value':0})
+        return True
+    def set_mail_rule_disabled(self,rule_id,disabled):
+        # Webmail's on/off switch sends only {id, disabled} through user:updateMailRules.
+        return self.update_mail_rule({'id':rule_id,'disabled':bool(disabled)})
+    def auto_reply(self):
+        from coremail_desktop.protocol.rules import AUTOREPLY_ATTRS
+        value=self._call('user:getAttrs',{'optionalAttrIds':AUTOREPLY_ATTRS+['time_zone']},True).get('var')
+        if not isinstance(value,dict): raise AppError('INVALID_RESPONSE')
+        return value
+    def set_auto_reply(self,attrs):
+        # Webmail's updateUser: user:setAttrs {attrs} (public-login.js).
+        self._call('user:setAttrs',{'attrs':dict(attrs)})
+        return True
+    def account_now(self):
+        """The current time in the account's zone, as the server writes times."""
+        if self._zone is None:
+            value=self._call('user:getAttrs',{'optionalAttrIds':['time_zone']},True).get('var')
+            self._zone=account_zone(value.get('time_zone') if isinstance(value,dict) else None)
+        return datetime.now(timezone.utc).astimezone(self._zone).strftime('%Y-%m-%d %H:%M:%S')
+    def list_tags(self,mboxa=''):
+        return self._call('mbox:listTags',{**_box(mboxa)},True).get('var') or []
+    def manage_tags(self,op,payload):
+        """op: add/update -> [[id, {name, color}]], delete -> [id] (webmail 173.03931.js module 91424)."""
+        if op not in ('add','update','delete') or not isinstance(payload,list) or not payload: raise AppError('INVALID_TAG')
+        self._call('mbox:manageTags',{op:payload})
+        return True
+    def update_message_tags(self,message_ids,add=(),remove=(),mboxa=''):
+        """mbox:updateMessageTags {ids, add, delete} (webmail X.03931.js je())."""
+        ids=list(dict.fromkeys(message_ids))
+        if not ids or len(ids)>100 or any(not isinstance(i,str) or not i for i in ids) or not (add or remove): raise AppError('INVALID_MAIL_ACTION')
+        self._call('mbox:updateMessageTags',{'ids':ids,**({'add':list(add)} if add else {}),**({'delete':list(remove)} if remove else {}),**_box(mboxa)})
+        return ids
+    def tagged_messages(self,tag_id,offset,limit=50):
+        """A tag's mail across folders, as webmail lists a tag view (X.03931.js ke(): fids
+        without the trash, skipLockedFolders, tags). Verified read-only 2026-10-18."""
+        if offset<0 or not 1<=limit<=100: raise AppError('INVALID_PAGE')
+        fids=[int(f.remote_id) if f.remote_id.isdigit() else f.remote_id for f in self.list_folders() if f.remote_id!=self.TRASH_FOLDER_ID]
+        response=self._call('mbox:listMessages',{'fids':fids,'skipLockedFolders':True,'tags':[str(tag_id)],'start':offset,'limit':limit,'mode':'count',
+                                                 'order':'date','desc':True,'returnTotal':True,'returnTag':True,'summaryWindowSize':self.SUMMARY_WINDOW},True)
+        rows=response.get('var'); total=response.get('total')
+        if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
+        result=[]
+        for item in rows:
+            if not isinstance(item,dict) or not isinstance(item.get('id'),str) or not isinstance(item.get('fid'),(int,str)): raise AppError('INVALID_RESPONSE')
+            sender=item.get('from','')
+            if isinstance(sender,list): sender=', '.join(str(x) for x in sender)
+            result.append(_summary(item,str(item['fid']),sender))
+        return {'messages':result,'total':total if type(total) is int else None}
+    # Meeting invitations ---------------------------------------------------------------
+    def invitation_meta(self,message_id):
+        """The server's calendar record for an invitation mail: webmail's readMessage
+        (mail.jsp) returns mail.calendar {calFid, calUid, meetingRequestMethod, ...}."""
+        if self._session is None or not self._session.sid: raise AppError('NOT_AUTHENTICATED')
+        url=urljoin(self._session.base_url,'XT/jsp/mail.jsp')+'?'+urlencode({'func':'readMessage','sid':self._session.sid})
+        raw,_=self._session._fetch(Request(url,data=urlencode({'mid':message_id}).encode('utf-8'),headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
+        var=self._session._decode_response(raw).get('var')
+        mail=var.get('mail') if isinstance(var,dict) and isinstance(var.get('mail'),dict) else {}
+        calendar=mail.get('calendar') if isinstance(mail.get('calendar'),dict) else (var.get('calendar') if isinstance(var,dict) else None)
+        return calendar if isinstance(calendar,dict) else None
+    def respond_invitation(self,message_id,answer):
+        """Answer an invitation as webmail does: cal:respond {fid: calFid, eventId: calUid,
+        type: 2 tentative / 3 accept / 4 decline, inform: true} (the server mails the
+        organizer), then mark the mail with partStat."""
+        kind={'tentative':2,'accept':3,'decline':4}.get(answer)
+        if kind is None: raise AppError('INVALID_MAIL_ACTION')
+        meta=self.invitation_meta(message_id)
+        if not meta or meta.get('calUid') in (None,''): raise AppError('INVITE_UNAVAILABLE')
+        params={'eventId':meta['calUid'],'type':kind,'inform':True}
+        if meta.get('calFid') not in (None,''): params['fid']=meta['calFid']
+        exception=(meta.get('meetingRequest') or {}).get('exceptionDate') if isinstance(meta.get('meetingRequest'),dict) else None
+        if exception: params['exceptionDate']=exception
+        self._call('cal:respond',params)
+        try: self._call('mbox:updateMessageInfos',{'ids':[message_id],'attrs':{'partStat':kind}})
+        except AppError: pass  # Only the list marker; the answer itself went out.
+        return {'answer':answer,'type':kind}
     def push_credentials(self):
         getter=getattr(self._session,'push_credentials',None)
         return getter() if getter else None

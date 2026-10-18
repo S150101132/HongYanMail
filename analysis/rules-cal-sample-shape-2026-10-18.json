@@ -1,0 +1,73 @@
+{
+ "date": "2026-10-18 14:02",
+ "rules_count": 3,
+ "sample_found": 1,
+ "sample": [
+  {
+   "keys": [
+    "actions",
+    "condictions",
+    "continue",
+    "id",
+    "name",
+    "operator"
+   ],
+   "id_type": "int",
+   "continue": true,
+   "disabled": null,
+   "operator": "or",
+   "condictions_rich": [
+    {
+     "field": "subject",
+     "ignoreCase": true,
+     "listOfValues": true,
+     "operand": "str(len 9)",
+     "operator": "contains"
+    }
+   ],
+   "conditions_rich": null,
+   "actions_rich": [
+    {
+     "target": 975274,
+     "type": "move"
+    },
+    {
+     "type": "flags",
+     "value": {
+      "flagged": true
+     }
+    }
+   ],
+   "other": {
+    "continue": true,
+    "operator": "or"
+   }
+  }
+ ],
+ "sample_conditions": [
+  {
+   "field": "subject",
+   "ignoreCase": true,
+   "listOfValues": true,
+   "operator": "contains",
+   "operand": {
+    "len": 9,
+    "commas": 0,
+    "semicolons": 0,
+    "digits_only": false,
+    "has_at": false
+   }
+  }
+ ],
+ "sample_actions": [
+  {
+   "target": 975274,
+   "type": "move"
+  },
+  {
+   "type": "flags",
+   "value": "dict"
+  }
+ ],
+ "self_invites": []
+}

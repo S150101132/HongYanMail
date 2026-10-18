@@ -74,6 +74,25 @@ STEPS = [
     (900, "mailsWith({ name: '张晓明', email: 'zhangxm@example.invalid' })", None),
     (900, "selectMessage(S.rows[0].id)", 'contacts-mails'),
     (900, "S.message && writeFrame && 0; document.body.offsetWidth", None),
+    # v0.4: meeting invitations, tags, rules and holiday auto-reply.
+    (900, "selectFolder('1')", None),
+    (1200, "selectMessage('demo10')", 'invite'),
+    (700, "$('#iv-people').click()", 'invite-people'),
+    (700, "$('[data-answer=\"accept\"]').click()", 'invite-confirm'),
+    (900, "$('#prompt-ok').click()", 'invite-answered'),
+    (900, "selectMessage('demo14')", 'invite-cancelled'),
+    (900, "selectMessage('demo5')", None),
+    (700, "TG.pick(['demo5'])", 'tag-picker'),
+    (700, "$('#prompt').classList.add('hidden'); TG.open('x19a1f0c0001')", None),
+    (1200, "selectMessage(S.rows[0].id)", 'tag-view'),
+    (700, "openSettings(); RL.show('rules')", None),
+    (900, "document.body.offsetWidth", 'settings-rules'),
+    (700, "RL.edit(RL.rules[1])", 'rule-editor'),
+    (700, "$('#prompt').classList.add('hidden'); RL.show('autoreply')", None),
+    (900, "document.body.offsetWidth", 'settings-autoreply'),
+    (700, "RL.show('tags')", None),
+    (900, "document.body.offsetWidth", 'settings-tags'),
+    (500, "$('#settings').classList.add('hidden')", None),
 ]
 
 

@@ -37,6 +37,7 @@ class MessageSummary(_ImmutableMappings):
     recipients: str = ''
     size: int | None = None
     schedule_at: str | None = None  # UTC 'YYYY-MM-DDTHH:MM:SSZ' for a scheduled draft.
+    tags: tuple = ()  # Tag ids (mbox:listMessages returnTag).
 
 @dataclass(frozen=True)
 class AttachmentInfo:
