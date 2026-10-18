@@ -198,14 +198,23 @@ def main():
         if 'respond-invite' in ONLY:
             def respond():
                 for row in backend.messages('1', 0, 40)['rows']:
-                    if ACCOUNT.casefold() not in row['fromEmail'].casefold():
+                    # Only the test invitation the user sent from their own Gmail calendar.
+                    if not row['fromEmail'].casefold().endswith('@gmail.com'):
                         continue
                     m = backend.open_message(row['id'], mark_read=False)
                     card = m.get('invitation')
                     if card and card['method'] == 'REQUEST' and not card['cancelled']:
                         meta = adapter.invitation_meta(row['id'])
                         result = backend.respond_invitation(row['id'], 'tentative')
-                        return {'meta_keys': sorted(meta or {}), 'method': (meta or {}).get('meetingRequestMethod'), 'type': result['type']}
+                        after = adapter.invitation_meta(row['id']) or {}
+                        info = (adapter._call('mbox:getMessageInfos', {'ids': [row['id']]}, True).get('var') or [{}])[0]
+                        mine = lambda c: next((a.get('status', a.get('partStat')) for a in c.get('attendees') or [] if isinstance(a, dict)
+                                              and str(a.get('email', '')).casefold() == ACCOUNT.casefold()), None)
+                        return {'meta_keys': sorted(meta or {}), 'method': (meta or {}).get('meetingRequestMethod'), 'type': result['type'],
+                                'status_before': (meta or {}).get('meetingRequestStatus'), 'status_after': after.get('meetingRequestStatus'),
+                                'attendee_keys': sorted({k for a in after.get('attendees') or [] if isinstance(a, dict) for k in a}),
+                                'my_status_before': mine(meta or {}), 'my_status_after': mine(after),
+                                'partStat_on_mail': info.get('partStat') if isinstance(info, dict) else None}
                 raise AppError('INVITE_UNAVAILABLE')
             check('invite_respond', respond)
     finally:

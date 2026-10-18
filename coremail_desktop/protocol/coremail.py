@@ -582,14 +582,12 @@ class CoremailAdapter:
         return {'messages':result,'total':total if type(total) is int else None}
     # Meeting invitations ---------------------------------------------------------------
     def invitation_meta(self,message_id):
-        """The server's calendar record for an invitation mail: webmail's readMessage
-        (mail.jsp) returns mail.calendar {calFid, calUid, meetingRequestMethod, ...}."""
-        if self._session is None or not self._session.sid: raise AppError('NOT_AUTHENTICATED')
-        url=urljoin(self._session.base_url,'XT/jsp/mail.jsp')+'?'+urlencode({'func':'readMessage','sid':self._session.sid})
-        raw,_=self._session._fetch(Request(url,data=urlencode({'mid':message_id}).encode('utf-8'),headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
-        var=self._session._decode_response(raw).get('var')
-        mail=var.get('mail') if isinstance(var,dict) and isinstance(var.get('mail'),dict) else {}
-        calendar=mail.get('calendar') if isinstance(mail.get('calendar'),dict) else (var.get('calendar') if isinstance(var,dict) else None)
+        """The server's calendar record for an invitation mail. mbox:readMessage {id} returns
+        var.calendar {calFid, calUid, isAttendee, meetingRequestMethod, meetingRequestStatus, ...}
+        (verified read-only 2026-10-18 on an invitation from an external calendar; webmail's
+        XT/jsp/readMessage.jsp returns the same record under var.mail.calendar)."""
+        var=self._call('mbox:readMessage',{'id':message_id},True).get('var')
+        calendar=var.get('calendar') if isinstance(var,dict) else None
         return calendar if isinstance(calendar,dict) else None
     def respond_invitation(self,message_id,answer):
         """Answer an invitation as webmail does: cal:respond {fid: calFid, eventId: calUid,

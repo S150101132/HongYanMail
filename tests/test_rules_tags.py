@@ -106,16 +106,11 @@ class Recording:
         self.calls.append((op, params))
         if op == 'mbox:getAllFolders':
             return {'code': 'S_OK', 'var': [{'id': 1, 'name': 'Inbox'}, {'id': 4, 'name': 'Trash', 'flags': {'system': True}}, {'id': 975274, 'name': 'A'}]}
+        if op == 'mbox:readMessage':
+            return {'code': 'S_OK', 'var': {'subject': 's', 'calendar': self.calendar}}
         if op == 'mbox:listMessages':
             return {'code': 'S_OK', 'var': [{'id': 'm1', 'fid': 1, 'subject': 's', 'from': 'a@example.invalid', 'flags': {}, 'tag': ['19', 7]}], 'total': 1}
         return {'code': 'S_OK', 'var': []}
-
-    def _fetch(self, request):
-        self.calls.append(('readMessage', request.data.decode()))
-        return b'', request.full_url
-
-    def _decode_response(self, raw):
-        return {'code': 'S_OK', 'var': {'mail': {'calendar': self.calendar}}}
 
 
 class AdapterTest(unittest.TestCase):
@@ -157,7 +152,7 @@ class AdapterTest(unittest.TestCase):
         adapter = self.adapter(calendar={'calFid': 3, 'calUid': 'u-1', 'meetingRequestMethod': 'request'})
         self.assertEqual(adapter.respond_invitation('m1', 'tentative'), {'answer': 'tentative', 'type': 2})
         calls = adapter._session.calls
-        self.assertEqual(calls[0], ('readMessage', 'mid=m1'))
+        self.assertEqual(calls[0], ('mbox:readMessage', {'id': 'm1'}))
         self.assertEqual(calls[1], ('cal:respond', {'eventId': 'u-1', 'type': 2, 'inform': True, 'fid': 3}))
         self.assertEqual(calls[2][1]['attrs'], {'partStat': 2})
         with self.assertRaises(AppError) as caught:
