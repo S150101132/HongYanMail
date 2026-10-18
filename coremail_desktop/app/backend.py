@@ -864,7 +864,8 @@ class MailBackend:
         document = self._document(mid)
         if mode in ('reply', 'reply_all'):
             draft = build_reply(document, set(self.identities) | ({info['email']} if info else set()), mode == 'reply_all', identity)
-            return {**base, 'mode': draft.mode, 'to': list(draft.to), 'cc': list(draft.cc), 'subject': draft.subject,
+            named = self._named_addresses(document)
+            return {**base, 'mode': draft.mode, 'to': named(draft.to), 'cc': named(draft.cc), 'subject': draft.subject,
                     'html': '<p><br></p>' + self._signature_html() + _quote_html(document),
                     'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
                     'encrypt': True if document.encryption_state != 'none' else None}
@@ -877,6 +878,29 @@ class MailBackend:
                     'html': '<p><br></p>' + self._signature_html() + _quote_html(document), 'attachments': attachments,
                     'encrypt': True if document.encryption_state != 'none' else None}
         raise AppError('INVALID_MAIL_ACTION')
+
+    def _named_addresses(self, document):
+        """Recipients as '"Name" <addr>' so the composer shows who they are. Names come
+        from the original message's headers, then from mail history; bare otherwise."""
+        names = {}
+        for key in ('reply-to', 'from', 'to', 'cc'):
+            for name, addr in getaddresses([str(v) for v in document.headers.get(key, ())]):
+                name = name.strip().strip('"\'')
+                if name and addr and name.casefold() != addr.casefold():
+                    names.setdefault(addr.casefold(), name)
+        try:
+            known = self._local_contacts()
+        except Exception:
+            known = {}
+
+        def named(addresses):
+            result = []
+            for addr in addresses:
+                name = names.get(addr.casefold()) or (known.get(addr.casefold()) or {}).get('name', '')
+                name = name.replace('"', '').replace('<', '').replace('>', '').strip()
+                result.append(f'"{name}" <{addr}>' if name else addr)
+            return result
+        return named
 
     def _draft(self, value):
         attachments = tuple(DraftAttachment(str(a['name']), str(a.get('type') or 'application/octet-stream'),

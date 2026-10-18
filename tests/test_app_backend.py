@@ -101,11 +101,21 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(base64.b64decode(draft['attachments'][0]['data']), data)
         self.assertTrue(draft['subject'].startswith('Fwd: '))
 
+    def test_reply_recipients_carry_display_names_and_still_send(self):
+        self.backend.folders()
+        draft = self.backend.compose('reply_all', 'demo3')  # Outlook-style: named To and Cc.
+        self.assertTrue(all(r.startswith('"') and r.endswith('@example.invalid>') for r in draft['to'] + draft['cc']))
+        self.assertIn('"李华" <lihua@example.invalid>', draft['to'])
+        draft['html'] = '<p>收到</p>' + draft['html']
+        self.assertEqual(self.backend.send(draft)['state'], 'Accepted')
+        sent = self.backend.adapter.sent[-1]
+        self.assertIn('lihua@example.invalid', ' '.join(sent.to))
+
     def test_reply_threads_and_sends_html_with_signature(self):
         self.backend.set_prefs({'signature': '<b>签名</b>'})
         row = self.backend.messages('1', 0, 50)['rows'][0]
         draft = self.backend.compose('reply', row['id'])
-        self.assertEqual(draft['to'], ['product@example.invalid'])
+        self.assertEqual(draft['to'], ['"产品协作组" <product@example.invalid>'])  # The sender's display name is kept.
         self.assertTrue(draft['referenceHeaders']['In-Reply-To'])
         self.assertIn('<b>签名</b>', draft['html'])
         self.assertIn('原始邮件', draft['html'])

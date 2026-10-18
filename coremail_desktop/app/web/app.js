@@ -1365,6 +1365,10 @@ composer.addEventListener('drop', async (e) => {
   addAttachments(await Promise.all(Array.from(e.dataTransfer.files).map(readFile)));
 });
 $('#cmp-editor').addEventListener('paste', async (e) => {
+  // Excel and Word put an HTML table AND a picture of it on the clipboard: when HTML
+  // is there, let the normal paste keep the table. Only a pure image (a screenshot)
+  // is taken as an attachment.
+  if (Array.from(e.clipboardData.types || []).includes('text/html')) return;
   const files = Array.from(e.clipboardData.files || []);
   if (files.length) { e.preventDefault(); addAttachments(await Promise.all(files.map(readFile))); toast('粘贴的图片已作为附件添加'); }
 });
