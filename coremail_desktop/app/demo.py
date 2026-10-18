@@ -44,6 +44,31 @@ def demo_certificate(email):
     return _DEMO_KEYS[email]
 
 
+OUTLOOK_DEMO_ID = 'demo3'
+_TINY_PNG = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
+             b'\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\xa7\xc1\x9b\xb7\x00\x00\x00\x00IEND\xaeB`\x82')
+
+
+def _outlook_style(message):
+    """A long reply-all thread as Outlook sends it: many recipients, signature logos
+    as inline cid: images (image001.png...), and two real attachments."""
+    del message['To']
+    message['To'] = ', '.join(f'"同事{i}" <colleague{i}@example.invalid>' for i in range(1, 4))
+    message['Cc'] = ', '.join(f'"抄送成员{i}" <cc{i}@example.invalid>' for i in range(1, 10))
+    message.set_content('各位：请查看部署进展。（合成演示数据）')
+    logos = ''.join(f'<img src="cid:image00{i}.png@01DC0000.00000000" width="24" height="24" alt="logo"> ' for i in range(1, 6))
+    message.add_alternative('<div style="font-family:Calibri"><p>各位：</p><p>附件是本周部署进展和下一步所需支持，请审阅。</p>'
+                            f'<p>谢谢！<br>项目经理</p><p>{logos}</p><p style="color:#98a2b3">（合成演示数据）</p></div>', subtype='html')
+    html = message.get_payload()[1]
+    for i in range(1, 6):
+        html.add_related(_TINY_PNG, maintype='image', subtype='png', cid=f'<image00{i}.png@01DC0000.00000000>',
+                         filename=f'image00{i}.png', disposition='inline')
+    message.add_attachment(b'%PDF-1.4 demo', maintype='application', subtype='pdf', filename='部署进展报告.pdf')
+    message.add_attachment(b'PK demo', maintype='application', subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                           filename='支持需求清单.xlsx')
+    return bytes(message)
+
+
 class DemoAdapter:
     supports_reply_headers = True
     supports_encrypted_submission = False
@@ -120,6 +145,8 @@ class DemoAdapter:
         message['From'], message['To'], message['Subject'] = r['from'], r['to'], r['subject']
         message['Date'] = r['date']
         message['Message-ID'] = f'<{message_id}@example.invalid>'
+        if message_id == OUTLOOK_DEMO_ID:
+            return _outlook_style(message)
         message.set_content('各位同事：本周的设计评审已经完成。（合成演示数据）')
         message.add_alternative(BODY, subtype='html')
         if r['flags'].get('attached'):

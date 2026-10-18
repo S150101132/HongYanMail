@@ -512,6 +512,24 @@ $('.reader-scroll').addEventListener('click', (e) => {
   const card = e.target.closest('.t-card'); if (card) selectMessage(card.dataset.mid);
 });
 
+function renderRecipients(m) {
+  const box = $('#r-to');
+  const total = m.to.length + m.cc.length;
+  const parts = [];
+  if (m.to.length) parts.push('收件人：' + people(m.to));
+  if (m.cc.length) parts.push('抄送：' + people(m.cc));
+  box.innerHTML = `<span class="r-list">${parts.join('<span class="r-sep">·</span>')}</span>` +
+    `<a class="r-more hidden" title="显示全部收件人和抄送">展开（共 ${total} 人）</a>`;
+  box.classList.add('clamped');
+  $$('.r-list a', box).forEach((a) => (a.onclick = () => startCompose('new', null, { to: [a.dataset.mailto] })));
+  const more = $('.r-more', box);
+  more.onclick = () => {
+    const open = box.classList.toggle('clamped');
+    more.textContent = open ? `展开（共 ${total} 人）` : '收起';
+  };
+  // Only offer the toggle when the single line actually overflows.
+  requestAnimationFrame(() => { const list = $('.r-list', box); more.classList.toggle('hidden', !list || list.scrollWidth <= list.clientWidth + 1); });
+}
 function people(list) { return list.map((p) => `<a title="${esc(p.email)}" data-mailto="${esc(p.email)}">${esc(p.name || p.email)}</a>`).join('、'); }
 function renderMessage(m) {
   $('#r-subject').textContent = m.subject || '（无主题）';
@@ -520,8 +538,7 @@ function renderMessage(m) {
   avatar($('#r-avatar'), from.name, from.email);
   const d = m.date ? new Date(String(m.date).replace(' ', 'T')) : null;
   $('#r-date').textContent = d && !isNaN(d) ? longDate(d) : (m.date || '');
-  $('#r-to').innerHTML = (m.to.length ? '收件人：' + people(m.to) : '') + (m.cc.length ? '<br>抄送：' + people(m.cc) : '');
-  $$('#r-to a').forEach((a) => (a.onclick = () => startCompose('new', null, { to: [a.dataset.mailto] })));
+  renderRecipients(m);
   $$('.reader-toolbar [data-act="flag"]').forEach((b) => b.classList.toggle('on', !!m.flags.flagged));
   const role = (folderById(m.fid) || {}).role;
   const panel = $('#ds-panel'); if (panel) panel.remove();
@@ -542,16 +559,25 @@ function renderMessage(m) {
   // Attachments
   const atts = $('#r-attachments');
   if (m.attachments.length) {
-    atts.innerHTML = m.attachments.map((a) => { const [c, e] = extColor(a.name); return `<div class="att" title="${esc(a.name)}">
-      <span class="ext" style="background:${c}">${esc(e)}</span><div class="meta"><div class="name">${esc(a.name)}</div><div class="size">${size(a.size)}</div></div>
+    const n = m.attachments.length, fold = n > 4, total = m.attachments.reduce((s, a) => s + (a.size || 0), 0);
+    atts.innerHTML = `<div class="att-head"><i data-icon="clip"></i><span>${n} 个附件 · 共 ${size(total)}</span>` +
+      (n > 1 ? '<a id="save-all">全部保存</a>' : '') + '</div><div class="att-list">' +
+      m.attachments.map((a, i) => { const [c, e] = extColor(a.name); return `<div class="att${fold && i >= 3 ? ' extra hidden' : ''}" title="${esc(a.name)}">
+      <span class="ext" style="background:${c}">${esc(e)}</span><span class="name">${esc(a.name)}</span><span class="size">${size(a.size)}</span>
       <button class="icon-btn" data-open="${esc(a.part)}" title="打开"><i data-icon="open"></i></button>
       <button class="icon-btn" data-save="${esc(a.part)}" title="另存为"><i data-icon="download"></i></button></div>`; }).join('') +
-      (m.attachments.length > 1 ? '<button class="btn ghost" id="save-all"><i data-icon="download"></i>全部保存</button>' : '');
+      (fold ? `<button class="att-more" id="att-more">+${n - 3} 个</button>` : '') + '</div>';
     renderIcons(atts);
     atts.classList.remove('hidden');
     $$('[data-open]', atts).forEach((b) => (b.onclick = () => api('openAttachment', { mid: m.id, part: b.dataset.open }).catch(fail)));
     $$('[data-save]', atts).forEach((b) => (b.onclick = () => api('saveAttachment', { mid: m.id, part: b.dataset.save }).then((ok) => ok && toast('附件已保存')).catch(fail)));
     const all = $('#save-all'); if (all) all.onclick = () => api('saveAllAttachments', { mid: m.id }).then((n) => n && toast(`已保存 ${n} 个附件`)).catch(fail);
+    const moreAtts = $('#att-more', atts);
+    if (moreAtts) moreAtts.onclick = () => {
+      const hidden = $$('.att.extra', atts).some((el) => el.classList.contains('hidden'));
+      $$('.att.extra', atts).forEach((el) => el.classList.toggle('hidden', !hidden));
+      moreAtts.textContent = hidden ? '收起' : `+${$$('.att.extra', atts).length} 个`;
+    };
   } else { atts.classList.add('hidden'); atts.innerHTML = ''; }
   renderBody(m);
   $('.reader-scroll').scrollTop = 0;
@@ -638,7 +664,7 @@ function writeFrame(html, opts = {}) {
   const fg = dark && !paper ? '#e6e9ef' : '#1d2433';
   const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src data: ${opts.remote ? 'https: http:' : ''}; font-src data:`;
   frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
-    <style>html{background:${paper ? '#fff' : 'transparent'};${paper ? 'border-radius:10px;' : ''}}
+    <style>html{background:${paper ? '#fff' : 'transparent'};${paper ? 'border-radius:10px;' : ''}overflow-y:hidden}
     body{margin:0;padding:${paper ? '18px 20px' : '0'};color:${fg};font:14.5px/1.7 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;word-wrap:break-word;overflow-wrap:anywhere;overflow-x:auto}
     img{max-width:100%;height:auto} a{color:${dark && !paper ? '#7aa2ff' : '#2563eb'}} pre{white-space:pre-wrap}
     blockquote{margin:0 0 0 4px;padding-left:12px;border-left:3px solid #d0d5dd;color:${dark && !paper ? '#b3bac7' : '#475467'}}
@@ -648,11 +674,14 @@ $('#r-frame').addEventListener('load', () => {
   const frame = $('#r-frame');
   const doc = frame.contentDocument; if (!doc) return;
   let last = 0;
+  // The frame grows to its content and never scrolls itself: one scroll area (the
+  // reading pane) is easier to read long mail in than a scroller inside a scroller.
   const fit = () => {
-    const h = Math.max(120, doc.body.scrollHeight + 24);
+    const h = Math.max(120, doc.documentElement.scrollHeight, doc.body.scrollHeight) + 8;
     if (Math.abs(h - last) > 2) { last = h; frame.style.height = h + 'px'; }
   };
   fit();
+  setTimeout(fit, 250); setTimeout(fit, 1000);  // Fonts and data: images settle after load.
   $$('img', doc).forEach((img) => img.addEventListener('load', fit));
   try { new ResizeObserver(() => requestAnimationFrame(fit)).observe(doc.body); } catch (e) { /* optional */ }
   doc.addEventListener('keydown', (e) => handleKey(e));

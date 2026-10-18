@@ -57,6 +57,7 @@ def parse_mime(raw: bytes, message_id: str, rich: bool = False) -> MessageDocume
             return result('加密邮件已锁定，请解锁证书后解密。' if recognized else '加密或签名封装格式尚不支持，未加载正文。',
                           headers=headers, state='locked' if recognized else 'unsupported')
         attachments, resources, payloads, attachment_payloads = [], {}, {}, {}
+        inline_cids = {}  # attachment part id -> Content-ID, for images the body may show inline
         stack, total = [(message, '1', 0, False, raw)], 0
         while stack:
             part, part_id, depth, hidden, original = stack.pop()
@@ -83,6 +84,9 @@ def parse_mime(raw: bytes, message_id: str, rich: bool = False) -> MessageDocume
                 size = len(payload) if payload is not None else None
                 attachments.append(AttachmentInfo(part_id, name or '未命名附件', part.get_content_type(), size))
                 if payload is not None: attachment_payloads[part_id] = payload
+                cid = normalize_cid(str(part.get('Content-ID', '')))
+                if cid and part.get_content_type() in IMAGE_TYPES and part.get_content_disposition() != 'attachment':
+                    inline_cids[part_id] = cid
             if not hidden and part.get_content_disposition() != 'attachment' and payload is not None and part.get_content_type() in IMAGE_TYPES:
                 cid = normalize_cid(str(part.get('Content-ID', '')))
                 if cid and cid not in resources:
@@ -118,6 +122,12 @@ def parse_mime(raw: bytes, message_id: str, rich: bool = False) -> MessageDocume
                 decoded = payload.decode('utf-8', errors='replace')
             return (decoded, None) if part.get_content_type() == 'text/plain' else ('', (sanitize_rich_html if rich else sanitize_html)(decoded, resources))
         text, html = body(message)
+        if html and inline_cids:
+            # Signature logos and pasted pictures (Outlook's image001.png...) are part of
+            # the body when the HTML shows them via cid:, not files the user attached.
+            # Images the body does not reference stay listed, so they can still be saved.
+            shown = {normalize_cid(ref) for ref in re.findall(r'''cid:([^"'\s>)]+)''', html)}
+            attachments = [a for a in attachments if inline_cids.get(a.part_id) not in shown]
         return result(text or (html_to_text(html) if html else '此邮件没有可显示的正文。'), html, attachments, headers, resources, attachment_payloads=attachment_payloads)
     except (RecursionError, ValueError, TypeError):
         return result('邮件格式损坏或层级超出限制，未加载正文。')

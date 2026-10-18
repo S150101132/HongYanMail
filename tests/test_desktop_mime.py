@@ -50,6 +50,23 @@ class MimeTests(unittest.TestCase):
         self.assertIn('picture', doc.cid_resources)
         self.assertIn('cid:picture', doc.html)
 
+    def test_signature_images_shown_inline_are_not_listed_as_attachments(self):
+        png = b'\x89PNG\r\n\x1a\n' + b'0' * 32
+        msg = EmailMessage()
+        msg['From'], msg['To'], msg['Subject'] = 'a@example.test', 'b@example.test', 's'
+        msg.set_content('text')
+        msg.add_alternative('<p>hi</p><img src="cid:image001.png@01DC">', subtype='html')
+        html = msg.get_payload()[1]
+        html.add_related(png, maintype='image', subtype='png', cid='<image001.png@01DC>', filename='image001.png', disposition='inline')
+        html.add_related(png, maintype='image', subtype='png', cid='<image002.png@01DC>', filename='image002.png', disposition='inline')
+        msg.add_attachment(png, maintype='image', subtype='png', filename='photo.png')
+        doc = parse_mime(bytes(msg), 'remote', rich=True)
+        names = [a.name for a in doc.attachments]
+        self.assertNotIn('image001.png', names)        # Shown in the body via cid:.
+        self.assertIn('image002.png', names)           # Inline but not shown: still saveable.
+        self.assertIn('photo.png', names)              # A real attachment.
+        self.assertIn('image001.png@01DC', doc.cid_resources)
+
     def test_limits_return_visible_reason_and_never_partial_body(self):
         with patch('coremail_desktop.mime.parser.MAX_RAW_BYTES', 8):
             doc = parse_mime(b'Subject: Summary\r\n\r\nSecret body', 'x')
