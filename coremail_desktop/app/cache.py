@@ -123,16 +123,18 @@ class MailCache:
                 self.remove(mid)
                 self._db.execute('DELETE FROM bodies WHERE mid=?', (mid,))
 
-    def search(self, query, limit=200):
+    def search(self, query, limit=200, match=None):
+        """Rows holding every term; match, when given, is an extra row predicate
+        (advanced-search filters) and then an empty query lists every match."""
         terms = [t for t in query.casefold().split() if t]
-        if not terms:
+        if not terms and match is None:
             return []
         with self._lock:
             rows = [row for row in self._rows.values() if not row.get('mailbox')]
         hits = []
         for row in rows:
             hay = ' '.join((row['subject'], row['from'], row.get('to', ''), row.get('preview', ''))).casefold()
-            if all(t in hay for t in terms):
+            if all(t in hay for t in terms) and (match is None or match(row)):
                 hits.append(row)
         hits.sort(key=lambda r: r['ts'], reverse=True)
         return hits[:limit]

@@ -183,9 +183,58 @@ class DemoAdapter:
             message.add_attachment('演示附件内容\n'.encode('utf-8'), maintype='text', subtype='plain', filename='会议纪要.txt')
         return bytes(message)
 
-    def search_messages(self, pattern, offset, limit=50):
-        rows = [r for r in self.rows.values() if pattern.casefold() in (r['subject'] + r['from']).casefold()]
+    # Mirrors the deployment: every advanced-search filter is applied by the server.
+    SEARCH_FILTERS = frozenset({'from', 'to', 'with', 'scope', 'since', 'until', 'folder', 'attachment', 'unread', 'flagged'})
+
+    def search_messages(self, pattern, offset, limit=50, filters=None):
+        from coremail_desktop.app.backend import filter_match
+        from coremail_desktop.app.cache import date_ts
+        filters = dict(filters or {})
+        if not pattern.strip() and not filters:
+            raise AppError('INVALID_SEARCH')
+        match = filter_match(filters, pattern)
+        text = (lambda r: r['subject']) if filters.get('scope') == 'subject' else (lambda r: r['subject'] + r['from'])
+        rows = sorted((r for r in self.rows.values() if pattern.casefold() in text(r).casefold()
+                       and match({**r, 'ts': date_ts(r['date'])})), key=lambda r: r['date'], reverse=True)
         return {'messages': [self._summary(r) for r in rows[offset:offset + limit]], 'total': len(rows)}
+
+    # Synthetic directory: a root, departments and people (example.invalid only).
+    DIRECTORY = [('d/rd', '研发中心', [('d/rd-fe', '前端组', []), ('d/rd-be', '后端组', [])]),
+                 ('d/product', '产品部', []), ('d/hr', '人力资源部', []), ('d/it', 'IT 服务部', [])]
+    STAFF = {'d/rd': [('研发团队', 'rd@example.invalid', '公共邮箱')],
+             'd/rd-fe': [('张晓明', 'zhangxm@example.invalid', '前端工程师'), ('王芳', 'wangfang@example.invalid', '高级工程师'),
+                         ('赵磊', 'zhaolei@example.invalid', '工程师')],
+             'd/rd-be': [('李华', 'lihua@example.invalid', '架构师'), ('陈静', 'chenjing@example.invalid', '工程师'),
+                         ('刘洋', 'liuyang@example.invalid', '测试工程师')],
+             'd/product': [('产品协作组', 'product@example.invalid', '公共邮箱'), ('孙悦', 'sunyue@example.invalid', '产品经理'),
+                           ('周婷', 'zhouting@example.invalid', '交互设计师')],
+             'd/hr': [('人力资源部', 'hr@example.invalid', '公共邮箱'), ('吴敏', 'wumin@example.invalid', 'HRBP')],
+             'd/it': [('IT 服务台', 'itsupport@example.invalid', '公共邮箱'), ('郑凯', 'zhengkai@example.invalid', '运维工程师')]}
+
+    def directory_tree(self):
+        self._need()
+        build = lambda nodes: [{'id': i, 'name': n, 'children': build(c)} for i, n, c in nodes]
+        return [{'id': 'd', 'name': '演示公司', 'children': build(self.DIRECTORY)}]
+
+    def _dept_path(self, dn):
+        def find(nodes, trail):
+            for i, n, c in nodes:
+                if i == dn:
+                    return trail + [n]
+                found = find(c, trail + [n])
+                if found:
+                    return found
+            return None
+        return ' / '.join(['演示公司'] + (find(self.DIRECTORY, []) or []))
+
+    def directory_members(self, dn):
+        self._need()
+        rows = [{'name': n, 'email': a, 'title': t, 'dept': self._dept_path(dn)} for n, a, t in self.STAFF.get(dn, [])]
+        return {'rows': rows, 'total': len(rows)}
+
+    def personal_contacts(self):
+        self._need()
+        return [{'name': '合作伙伴 · 外部', 'email': 'partner@external.example'}, {'name': '供应商联系人', 'email': 'vendor@external.example'}]
 
     def move_message(self, message_id, folder_id, mboxa=''):
         self._store(mboxa)[1][message_id]['fid'] = folder_id
@@ -208,7 +257,8 @@ class DemoAdapter:
         return list(message_ids)
 
     def match_contacts(self, keyword, limit=8):
-        return [{'name': n, 'email': a} for n, a in PEOPLE if keyword.casefold() in (n + a).casefold()][:limit]
+        people = dict.fromkeys(PEOPLE + [(n, a) for staff in self.STAFF.values() for n, a, _ in staff])
+        return [{'name': n, 'email': a} for n, a in people if keyword.casefold() in (n + a).casefold()][:limit]
 
     def create_compose(self, draft):
         self._counter += 1

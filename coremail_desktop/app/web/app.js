@@ -223,6 +223,9 @@ function renderFolders() {
   });
   $('#nav-drafts').classList.toggle('on', S.local === 'drafts');
   $('#nav-scheduled').classList.toggle('on', S.local === 'scheduled');
+  $('#nav-contacts').classList.toggle('on', S.local === 'contacts');
+  $('#app').classList.toggle('contacts-mode', S.local === 'contacts');
+  SF.renderChips();
   const current = folderById(S.folderId);
   if (current && !S.local && !S.search) $('#list-title').textContent = folderTitle(current);
   const inbox = S.folders.find((f) => f.role === 'inbox');
@@ -267,7 +270,7 @@ function renderShared() {
 function applyFolders(res) { if (res.shared) S.shared = res.shared; if (res.folders.length) S.folders = res.folders; renderFolders(); }
 
 function selectFolder(id) {
-  S.folderId = String(id); S.local = null; S.search = null; $('#search').value = '';
+  S.folderId = String(id); S.local = null; S.search = null; $('#search').value = ''; SF.reset();
   S.rows = []; S.total = null; S.more = false; S.multi.clear(); renderSelection();
   const box = boxOf(id); if (box) S.openBoxes.add(box.id);
   renderFolders();
@@ -378,7 +381,7 @@ function renderList() {
   } else if (S.more && !S.search) {
     html += `<div class="list-foot" id="load-more">正在加载更多…</div>`;
   } else {
-    html += `<div class="list-foot">${S.search ? `共 ${rows.length} 封` : '已全部加载'}</div>`;
+    html += `<div class="list-foot">${S.search && S.searchMore ? `已显示 ${rows.length} 封 · <button class="btn ghost sm" id="search-more">加载更多结果</button>` : S.search ? `共 ${rows.length} 封` : '已全部加载'}</div>`;
   }
   const top = list.scrollTop;
   list.innerHTML = html;
@@ -395,6 +398,7 @@ $('#mail-list').addEventListener('scroll', () => {
   if (S.more && !S.loading && !S.search && l.scrollTop + l.clientHeight > l.scrollHeight - 400) loadList(false);
 });
 $('#mail-list').addEventListener('click', (e) => {
+  if (e.target.closest('#search-more')) { moreSearch(); return; }
   const row = e.target.closest('.row'); if (!row) return;
   if (S.local === 'drafts') { openLocalDraft(row.dataset.id); return; }
   if (e.ctrlKey || e.metaKey) { toggleItem(row.dataset.id); return; }
@@ -457,38 +461,54 @@ $('#btn-refresh').onclick = () => { api('syncNow'); if (!S.local) loadList(true)
 let searchToken = 0;
 async function runSearch(q) {
   q = q.trim();
-  if (!q) { clearSearch(); return; }
+  const filters = SF.active();  // Advanced-search conditions (contacts.js); a search may have only these.
+  if (!q && !Object.keys(filters).length) { clearSearch(); return; }
   const token = ++searchToken;
-  S.search = q; S.local = null; S.filter = 'all'; S.multi.clear(); renderSelection();
+  S.search = q || ' '; S.local = null; S.filter = 'all'; S.multi.clear(); S.searchMore = null; renderSelection(); renderFolders();
   $$('#filter-seg button').forEach((x) => x.classList.toggle('on', x.dataset.filter === 'all'));
   $('#list-title').textContent = '搜索结果';
-  S.rows = await api('searchLocal', { query: q }).catch(() => []);
+  SF.renderChips();
+  S.rows = await api('searchLocal', { query: q, filters }).catch(() => []);
   if (token !== searchToken) return;
   renderList();
   $('#list-sub').textContent = '本机结果 · 正在搜索服务器…';
   try {
-    const remote = await api('searchServer', { query: q });
+    const remote = await api('searchServer', { query: q, filters });
     if (token !== searchToken) return;
     S.rows = dedupe(S.rows.concat(remote.rows)).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    S.searchMore = remote.more ? { query: q, filters, offset: 50, token } : null;
     renderList();
-    $('#list-sub').textContent = `服务器 ${remote.total} 封匹配`;
+    $('#list-sub').textContent = `服务器 ${remote.total} 封匹配` + (remote.local.length ? ' · 部分条件仅筛选已取回的邮件' : '');
+    SF.renderChips(remote.local);
   } catch (err) {
     if (token === searchToken) $('#list-sub').textContent = '服务器搜索不可用，显示本机结果';
   }
 }
-function clearSearch() { if (S.search) { searchToken++; selectFolder(S.folderId); } }
+async function moreSearch() {
+  const m = S.searchMore; if (!m || m.token !== searchToken || m.busy) return;
+  m.busy = true;
+  try {
+    const remote = await api('searchServer', { query: m.query, filters: m.filters, offset: m.offset });
+    if (m.token !== searchToken) return;
+    S.rows = dedupe(S.rows.concat(remote.rows)).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    S.searchMore = remote.more ? { ...m, offset: m.offset + 50, busy: false } : null;
+    renderList();
+  } catch (err) { m.busy = false; fail(err); }
+}
+function clearSearch() { if (S.search) { searchToken++; selectFolder(S.folderId); } else SF.reset(); }
 $('#search').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') runSearch(e.target.value);
   if (e.key === 'Escape') { e.target.value = ''; clearSearch(); e.target.blur(); }
+  if (e.key === 'ArrowDown' && e.altKey) { e.preventDefault(); SF.open(); }
 });
 let searchTimer = null;
 $('#search').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
-  if (!e.target.value.trim()) { clearSearch(); return; }
+  if (!e.target.value.trim()) { if (!Object.keys(SF.active()).length) clearSearch(); return; }
   searchTimer = setTimeout(async () => {  // Instant local results while typing.
     const q = e.target.value.trim(); if (!q) return;
     const token = ++searchToken;
-    S.search = q; S.rows = await api('searchLocal', { query: q }).catch(() => []);
+    S.search = q; S.searchMore = null; S.rows = await api('searchLocal', { query: q, filters: SF.active() }).catch(() => []);
     if (token !== searchToken) return;
     $('#list-title').textContent = '搜索结果'; renderList(); $('#list-sub').textContent = '本机结果 · 回车搜索服务器';
   }, 220);

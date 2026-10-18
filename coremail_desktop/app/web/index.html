@@ -41,6 +41,7 @@
     <div class="side-section">本机</div>
     <nav class="folders">
       <a id="nav-drafts" class="folder" data-local="drafts"><i data-icon="draft"></i><span class="fname">本机草稿</span><span id="draft-count" class="count"></span></a>
+      <a id="nav-contacts" class="folder" data-local="contacts" title="公司通讯录和个人通讯录（只读）"><i data-icon="contacts"></i><span class="fname">通讯录</span></a>
     </nav>
     <div class="side-foot">
       <button id="btn-account" class="account-btn" title="设置">
@@ -56,6 +57,21 @@
       <div class="search">
         <i data-icon="search"></i>
         <input id="search" type="search" placeholder="搜索邮件（Ctrl+F 或 /）" spellcheck="false">
+        <button id="btn-search-filters" class="icon-btn sm" title="高级搜索：发件人、日期、附件等条件"><i data-icon="filter"></i></button>
+      </div>
+      <div id="search-panel" class="search-panel hidden" role="dialog" aria-label="高级搜索">
+        <div class="sp-row"><label>关键词</label><div class="seg" id="sp-scope"><button data-scope="all" class="on">全文</button><button data-scope="subject">仅主题</button></div></div>
+        <div class="sp-row"><label for="sp-from">发件人</label><input id="sp-from" type="text" placeholder="姓名或邮箱的一部分" spellcheck="false"></div>
+        <div class="sp-row"><label for="sp-to">收件人</label><input id="sp-to" type="text" placeholder="姓名或邮箱的一部分" spellcheck="false"></div>
+        <div class="sp-row"><label>日期</label><div class="sp-dates"><input id="sp-since" type="date"><span class="muted">至</span><input id="sp-until" type="date"></div></div>
+        <div class="sp-row"><label></label><div class="sp-quick" id="sp-quick"><button data-days="7">近 7 天</button><button data-days="30">近 30 天</button><button data-days="90">近 3 个月</button><button data-days="365">近 1 年</button></div></div>
+        <div class="sp-row"><label for="sp-folder">文件夹</label><select id="sp-folder"></select></div>
+        <div class="sp-row"><label>条件</label><div class="sp-checks">
+          <label class="check"><input type="checkbox" id="sp-attachment"> 有附件</label>
+          <label class="check"><input type="checkbox" id="sp-unread"> 未读</label>
+          <label class="check"><input type="checkbox" id="sp-flagged"> 星标</label></div></div>
+        <p id="sp-note" class="muted small sp-note"></p>
+        <div class="sp-foot"><button class="btn ghost" id="sp-clear">清除条件</button><span class="spacer"></span><button class="btn primary" id="sp-run">搜索</button></div>
       </div>
       <div class="list-title-row">
         <h2 id="list-title">收件箱</h2>
@@ -68,8 +84,25 @@
         <button id="btn-refresh" class="icon-btn" title="收信 (F5)"><i data-icon="refresh"></i></button>
       </div>
     </header>
+    <div id="search-chips" class="search-chips hidden"></div>
     <div id="sync-bar" class="sync-bar hidden"></div>
     <div id="mail-list" class="mail-list" tabindex="0" role="listbox" aria-label="邮件列表"></div>
+  </section>
+
+  <section id="contacts-view" class="contacts-view" aria-label="通讯录">
+    <aside class="ct-tree-pane">
+      <div class="ct-head"><h2>通讯录</h2><span class="spacer"></span><button id="ct-refresh" class="icon-btn" title="从服务器刷新"><i data-icon="refresh"></i></button></div>
+      <div id="ct-tree" class="ct-tree" role="tree"></div>
+      <div id="ct-tree-note" class="muted small ct-note"></div>
+    </aside>
+    <section class="ct-list-pane">
+      <div class="list-head">
+        <div class="search"><i data-icon="search"></i><input id="ct-search" type="search" placeholder="筛选本部门 · 回车搜索全公司" spellcheck="false"></div>
+        <div class="list-title-row"><h2 id="ct-title">通讯录</h2><span id="ct-sub" class="muted small"></span></div>
+      </div>
+      <div id="ct-list" class="mail-list ct-list" role="listbox" aria-label="联系人"></div>
+    </section>
+    <section id="ct-card" class="ct-card-pane"></section>
   </section>
 
   <section class="reader-pane" id="reader">
@@ -252,5 +285,6 @@
 <script src="qwebchannel.js"></script>
 <script src="icons.js"></script>
 <script src="app.js"></script>
+<script src="contacts.js"></script>
 </body>
 </html>

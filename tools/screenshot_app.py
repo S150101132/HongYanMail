@@ -62,6 +62,17 @@ STEPS = [
     (800, "startCompose('reply', S.selected)", 'shared-reply'),
     # Read-only view, drawn client-side only: the demo mailbox itself has full rights.
     (800, "closeComposer(true); renderMessage({ ...S.message, mailbox: { ...S.message.mailbox, rw: false, send: false } })", 'shared-readonly'),
+    (900, "selectFolder('1')", None),
+    (900, "$('#search').value = '演示'; $('#btn-search-filters').click()", None),
+    (500, "$('#sp-attachment').checked = true; $('#sp-quick button[data-days=\"30\"]').click()", 'search-panel'),
+    (600, "$('#sp-run').click()", None),
+    (900, "selectMessage(S.rows[0].id)", 'search-filters'),
+    (800, "openContacts()", None),
+    (1200, "CT.open.add('d/rd'); openDepartment('d/rd-fe', '前端组')", None),
+    (900, "$('#ct-list .ct-row').click()", 'contacts'),
+    (700, "$('#ct-search').value = '李'; $('#ct-search').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))", 'contacts-search'),
+    (900, "mailsWith({ name: '张晓明', email: 'zhangxm@example.invalid' })", None),
+    (900, "selectMessage(S.rows[0].id)", 'contacts-mails'),
     (900, "S.message && writeFrame && 0; document.body.offsetWidth", None),
 ]
 

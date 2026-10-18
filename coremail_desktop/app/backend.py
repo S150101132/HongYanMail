@@ -65,6 +65,61 @@ def _summary_dict(item):
             'scheduleAt': _schedule_ms(getattr(item, 'schedule_at', None))}
 
 
+SEARCH_TEXT = ('from', 'to', 'with')  # Address substrings; 'with' is either side (往来邮件).
+SEARCH_FLAGS = ('attachment', 'unread', 'flagged')
+
+
+def search_filters(value):
+    """Advanced-search filters from the page, validated: unknown keys are dropped."""
+    value = dict(value or {})
+    result = {}
+    for key in SEARCH_TEXT:
+        text = value.get(key)
+        if isinstance(text, str) and text.strip():
+            if len(text) > 200:
+                raise AppError('INVALID_SEARCH')
+            result[key] = text.strip()
+    if value.get('scope') == 'subject':
+        result['scope'] = 'subject'
+    for key in ('since', 'until'):
+        text = value.get(key)
+        if text:
+            try:
+                datetime.strptime(str(text), '%Y-%m-%d')
+            except ValueError:
+                raise AppError('INVALID_SEARCH') from None
+            result[key] = str(text)
+    if result.get('since') and result.get('until') and result['since'] > result['until']:
+        raise AppError('INVALID_SEARCH')
+    if value.get('folder') not in (None, ''):
+        result['folder'] = str(value['folder'])
+    for key in SEARCH_FLAGS:
+        if value.get(key) is True:
+            result[key] = True
+    return result
+
+
+def filter_match(filters, query=''):
+    """Row predicate for the filters a server did not apply (and for the local cache)."""
+    terms = [t for t in str(query).casefold().split() if t]
+    since = date_ts(filters['since']) if filters.get('since') else None
+    until = date_ts(filters['until']) + 86400 if filters.get('until') else None
+
+    def match(row):
+        flags = row.get('flags') or {}
+        sender, rcpt = str(row.get('from', '')).casefold(), str(row.get('to', '')).casefold()
+        return ((not filters.get('from') or filters['from'].casefold() in sender)
+                and (not filters.get('to') or filters['to'].casefold() in rcpt)
+                and (not filters.get('with') or filters['with'].casefold() in sender + ' ' + rcpt)
+                and (filters.get('scope') != 'subject' or all(t in str(row.get('subject', '')).casefold() for t in terms))
+                and (since is None or (row.get('ts') or 0) >= since) and (until is None or (row.get('ts') or 0) < until)
+                and (not filters.get('folder') or str(row.get('fid')) == filters['folder'])
+                and (not filters.get('attachment') or bool(flags.get('attached')))
+                and (not filters.get('unread') or not flags.get('read'))
+                and (not filters.get('flagged') or bool(flags.get('flagged'))))
+    return match
+
+
 def _quote_html(document):
     header = lambda key: ', '.join(document.headers.get(key, ()))
     rows = ''.join(f'<div><b>{label}：</b>{html.escape(header(key))}</div>'
@@ -607,13 +662,76 @@ class MailBackend:
         return {**self.move(movable, trash), 'skipped': [m for m in ids if m not in movable]}
 
     # Search ----------------------------------------------------------------
-    def search_local(self, query):
-        return self.cache.search(query)  # The user's own mail only: shared rows are skipped.
+    def search_local(self, query, filters=None):
+        # The user's own mail only: the cache skips shared-mailbox rows.
+        filters = search_filters(filters)
+        return self.cache.search(query or '', match=filter_match(filters, query) if filters else None)
 
-    def search_server(self, query, offset=0):
-        result = self._online(self.adapter.search_messages, query, offset, 50)
+    def search_server(self, query, offset=0, filters=None):
+        """Server search. Filters the server applies go with the request; the rest
+        narrow the returned rows here, and the reply says which were which."""
+        query = (query or '').strip()
+        filters = search_filters(filters)
+        supported = getattr(self.adapter, 'SEARCH_FILTERS', frozenset())
+        remote = {k: v for k, v in filters.items() if k in supported}
+        local = {k: v for k, v in filters.items() if k not in supported}
+        if not query and not remote:
+            raise AppError('INVALID_SEARCH')  # Nothing the server could search for.
+        if remote:
+            result = self._online(self.adapter.search_messages, query, offset, 50, filters=remote)
+        else:
+            result = self._online(self.adapter.search_messages, query, offset, 50)
         rows = [_summary_dict(item) for item in result['messages']]
-        return {'rows': rows, 'total': result['total']}
+        if local:
+            rows = [r for r in rows if filter_match(local, query)(r)]
+        return {'rows': rows, 'total': result['total'], 'server': sorted(remote), 'local': sorted(local),
+                'more': offset + len(result['messages']) < result['total']}
+
+    def search_capabilities(self):
+        return {'server': sorted(getattr(self.adapter, 'SEARCH_FILTERS', frozenset()))}
+
+    # Directory (通讯录) ---------------------------------------------------------
+    # Read-only. The tree and each department's members are kept in the encrypted
+    # cache so the view opens instantly; kv keys for departments are hashed so no
+    # org data sits in plaintext.
+    def _stale(self, key, fetch, refresh):
+        cached = self.cache.get(key)
+        if cached is not None and not refresh:
+            return {**cached, 'cached': True}
+        try:
+            value = {'data': self._online(fetch), 'at': int(datetime.now(timezone.utc).timestamp())}
+        except AppError as error:
+            if cached is not None and error.code in ('NETWORK_ERROR', 'TLS_ERROR'):
+                return {**cached, 'cached': True}
+            raise
+        self.cache.set(key, value)
+        return {**value, 'cached': False}
+
+    def directory(self, refresh=False):
+        if not hasattr(self.adapter, 'directory_tree'):
+            return {'tree': [], 'at': None, 'cached': False}
+        value = self._stale('directory', self.adapter.directory_tree, refresh)
+        return {'tree': value['data'], 'at': value['at'], 'cached': value['cached']}
+
+    def members(self, dn, refresh=False):
+        if not isinstance(dn, str) or not dn or len(dn) > 500 or not hasattr(self.adapter, 'directory_members'):
+            raise AppError('INVALID_CONTACT')
+        key = 'members:' + hashlib.sha256(dn.encode('utf-8')).hexdigest()[:24]
+        value = self._stale(key, lambda: self.adapter.directory_members(dn), refresh)
+        return {**value['data'], 'at': value['at'], 'cached': value['cached']}
+
+    def personal_contacts(self, refresh=False):
+        if not hasattr(self.adapter, 'personal_contacts'):
+            return {'rows': [], 'at': None, 'cached': False}
+        value = self._stale('pab', self.adapter.personal_contacts, refresh)
+        return {'rows': value['data'], 'at': value['at'], 'cached': value['cached']}
+
+    def find_people(self, query):
+        """Company-wide directory matches for the contacts view search box."""
+        query = (query or '').strip()
+        if not query or not hasattr(self.adapter, 'match_contacts'):
+            return []
+        return self._online(self.adapter.match_contacts, query, 20)
 
     # Contacts --------------------------------------------------------------
     def _local_contacts(self):
