@@ -86,6 +86,10 @@ MESSAGES = {
     'RECALL_UNCONFIRMED': '服务器没有返回撤回结果，请稍后在投递状态中核对，不要当作已撤回。',
     'RECALL_LATER': '撤回需要等待更长时间，请稍后再试。',
     'DELIVERY_STATUS_EXPIRED': '投递记录只保留一段时间，这封邮件的记录已过期。',
+    'SHARED_READ_ONLY': '你对这个共享邮箱只有查看权限，不能更改邮件的状态或位置。',
+    'SHARED_SEND_DENIED': '你没有以这个共享邮箱身份发信的权限，请改用自己的地址发送。',
+    'SHARED_MOVE_OUTSIDE': '共享邮箱的邮件只能在该邮箱的文件夹之间移动。',
+    'SHARED_UNAVAILABLE': '无法打开这个共享邮箱，可能已不再与你共享。',
 }
 
 GENERIC = '操作未完成。请检查连接或稍后重试，本应用不会自动重发邮件。'
