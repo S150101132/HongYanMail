@@ -75,4 +75,4 @@ Condition / action shapes (all stored and read back on the test rule):
 - Answers given outside Hongyan are not shown on the card (see above).
 - Turning auto-reply on (only the unchanged save was exercised).
 - `forward` variants `attachForward` / `quoteForward` are shown read-only.
-- The sample rule HY-SAMPLE the user created in webmail is still on the account (see the session report).
+- The sample rule HY-SAMPLE the user created in webmail was deleted afterwards (user:removeMailRules, confirmed gone; the other 2 rules unchanged).
