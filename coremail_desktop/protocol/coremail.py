@@ -17,7 +17,7 @@ from coremail_desktop.compose.recipients import normalize_recipients
 class DesktopSession(CoremailSession):
     """Retain the verified login/redirect parser, classify production failures."""
     ALLOWED=CoremailSession.ALLOWED|{'mbox:updateMessageInfos','upload:prepare','oab:autoMatch','pab:searchContacts','cert:listPublicKey','cert:get',
-                                       'user:listDeliveryHistory','mbox:recallMessage2','mbox:cancelDeliver','mbox:getMessageInfos'}
+                                       'user:listDeliveryHistory','mbox:recallMessage2','mbox:cancelDeliver','mbox:getMessageInfos','mbox:listSharedAccessMbox'}
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -89,10 +89,10 @@ class DesktopSession(CoremailSession):
         if not any(c.startswith('Coremail.sid=') for c in cookies): cookies.append('Coremail.sid='+sid)
         return {'origin':origin,'cookie':'; '.join(cookies),'opener':self._opener,'sid':sid,
                 'username':str(config.get('dnemail') or ''),'topics':topics(config),'alive':lambda: self.sid==sid}
-    def prepare_reply(self,source_id,reply_all=False,is_html=False):
+    def prepare_reply(self,source_id,reply_all=False,is_html=False,mboxa=''):
         if not self.sid: raise AppError('NOT_AUTHENTICATED')
         url=urljoin(self.base_url,'XT/jsp/compose.jsp')+'?'+urlencode({'sid':self.sid})
-        data=urlencode({'ctype':'replyall' if reply_all else 'reply','mid':source_id,'isHtml':'true' if is_html else 'false'}).encode('utf-8')
+        data=urlencode({'ctype':'replyall' if reply_all else 'reply','mid':source_id,'isHtml':'true' if is_html else 'false',**({'mboxa':mboxa} if mboxa else {})}).encode('utf-8')
         raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
         value=self._decode_response(raw).get('var')
         if not isinstance(value,dict) or not isinstance(value.get('id'),str) or not value['id']: raise AppError('INVALID_RESPONSE')
@@ -181,6 +181,20 @@ def _schedule_at(item,flags):
     except ValueError: return None
     return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
+def _box(mboxa):
+    """The mboxa parameter naming a shared mailbox ('@'+id), or nothing for the user's own.
+
+    Webmail (analysis/web-login X.03931.js) passes mboxa in the JSON body of
+    every mail call and in the query only for mbox-data URLs. The account used
+    for the 2026-10-18 probe has no shared mailbox (mbox:listSharedAccessMbox
+    answers an empty list), so the shared paths follow webmail unverified."""
+    if not mboxa: return {}
+    if not isinstance(mboxa,str) or not re.fullmatch(r'@[^\s/?&#]{1,200}',mboxa): raise AppError('INVALID_MAIL_ACTION')
+    return {'mboxa':mboxa}
+
+def _flag(value):
+    return value is True or value == 1 or value in ('1','true')
+
 def _summary(item,folder_id,sender):
     flags=item.get('flags',{}) if isinstance(item.get('flags',{}),dict) else {}
     size=item.get('size') if type(item.get('size')) is int else None
@@ -235,10 +249,10 @@ class CoremailAdapter:
             except (CoremailError,AppError) as error:
                 if error.code in ('TRANSPORT_ERROR','NETWORK_ERROR') and read and attempt < 2: continue
                 raise AppError(error.code) from None
-    def list_folders(self):
+    def list_folders(self, mboxa=''):
         # stats:true is verified read-only on the deployment (2026-10-17): each
         # folder then carries messageCount/unreadMessageCount.
-        value = self._call('mbox:getAllFolders', {'stats':True}, True).get('var')
+        value = self._call('mbox:getAllFolders', {'stats':True,**_box(mboxa)}, True).get('var')
         if not isinstance(value, list): raise AppError('INVALID_RESPONSE')
         result = []
         for item in value:
@@ -251,9 +265,9 @@ class CoremailAdapter:
             counts = item.get('stats') if isinstance(item.get('stats'), dict) else {}
             result.append(Folder(str(item['id']),str(item.get('name','')),role, counts))
         return result
-    def list_messages(self, folder_id, offset, limit=50):
+    def list_messages(self, folder_id, offset, limit=50, mboxa=''):
         if offset < 0 or limit < 1 or limit > 100: raise AppError('INVALID_PAGE')
-        response = self._call('mbox:listMessages', {'fid':int(folder_id) if str(folder_id).isdigit() else folder_id, 'start':offset,'limit':limit,'mode':'count','order':'date','desc':True,'returnTotal':True,'returnTag':True,'summaryWindowSize':self.SUMMARY_WINDOW},True)
+        response = self._call('mbox:listMessages', {'fid':int(folder_id) if str(folder_id).isdigit() else folder_id, 'start':offset,'limit':limit,'mode':'count','order':'date','desc':True,'returnTotal':True,'returnTag':True,'summaryWindowSize':self.SUMMARY_WINDOW,**_box(mboxa)},True)
         value = response.get('var')
         if isinstance(value,dict):
             total = value.get('total')
@@ -264,7 +278,7 @@ class CoremailAdapter:
             # The server reports the folder total on the list response, so the
             # interface can show a real count without inventing one.
             self.last_folder_total = total
-            self.last_folder_id = str(folder_id)
+            self.last_folder_id = str(folder_id) + (mboxa or '')  # A shared folder reads as 'fid@id'.
         if not isinstance(value,list): raise AppError('INVALID_RESPONSE')
         result = []
         for item in value:
@@ -273,10 +287,11 @@ class CoremailAdapter:
             if isinstance(sender,list): sender = ', '.join(str(x) for x in sender)
             result.append(_summary(item,str(folder_id),sender))
         return result
-    def fetch_mime(self, message_id):
+    def fetch_mime(self, message_id, mboxa=''):
         if self._session is None: raise AppError('NOT_AUTHENTICATED')
+        extra = _box(mboxa)
         for attempt in range(3):
-            try: raw = self._session.get_message(message_id); break
+            try: raw = self._session.get_message(message_id, **extra); break
             except (CoremailError,AppError) as error:
                 if error.code in ('TRANSPORT_ERROR','NETWORK_ERROR') and attempt < 2: continue
                 raise AppError(error.code) from None
@@ -297,10 +312,10 @@ class CoremailAdapter:
             if isinstance(sender,list): sender=', '.join(str(x) for x in sender)
             messages.append(_summary(item,str(item['fid']),sender))
         return {'messages':messages,'total':total}
-    def move_message(self,message_id,folder_id):
+    def move_message(self,message_id,folder_id,mboxa=''):
         if not isinstance(message_id,str) or not message_id or not isinstance(folder_id,str) or not folder_id: raise AppError('INVALID_MAIL_ACTION')
-        if folder_id not in {folder.remote_id for folder in self.list_folders()}: raise AppError('INVALID_MAIL_ACTION')
-        response=self._call('mbox:updateMessageInfos',{'ids':[message_id],'attrs':{'fid':int(folder_id) if folder_id.isdigit() else folder_id},'returnOriginalMsgInfos':True})
+        if folder_id not in {folder.remote_id for folder in self.list_folders(mboxa)}: raise AppError('INVALID_MAIL_ACTION')
+        response=self._call('mbox:updateMessageInfos',{'ids':[message_id],'attrs':{'fid':int(folder_id) if folder_id.isdigit() else folder_id},'returnOriginalMsgInfos':True,**_box(mboxa)})
         affected=response.get('originalMsgInfos')
         if not isinstance(affected,list) or not any(isinstance(item,dict) and item.get('id')==message_id for item in affected): raise AppError('MAIL_UPDATE_UNCONFIRMED')
         return {'message_id':message_id,'folder_id':folder_id}
@@ -309,28 +324,47 @@ class CoremailAdapter:
         getter=getattr(self._session,'account_identities',None)
         if getter: self._identities=set(getter())
         return set(self._identities)
-    def set_message_flags(self,message_id,flags):
+    def set_message_flags(self,message_id,flags,mboxa=''):
         if not isinstance(message_id,str) or not message_id or not isinstance(flags,dict) or not flags or set(flags)-{'read','flagged'} or any(type(v) is not bool for v in flags.values()):
             raise AppError('INVALID_MAIL_ACTION')
-        response=self._call('mbox:updateMessageInfos',{'ids':[message_id],'attrs':{'flags':dict(flags)},'returnOriginalMsgInfos':True})
+        response=self._call('mbox:updateMessageInfos',{'ids':[message_id],'attrs':{'flags':dict(flags)},'returnOriginalMsgInfos':True,**_box(mboxa)})
         affected=response.get('originalMsgInfos')
         if not isinstance(affected,list) or not any(isinstance(item,dict) and item.get('id')==message_id for item in affected): raise AppError('MAIL_UPDATE_UNCONFIRMED')
         return {'message_id':message_id,'flags':dict(flags)}
-    def _update_many(self,message_ids,attrs):
+    def _update_many(self,message_ids,attrs,mboxa=''):
         """One mbox:updateMessageInfos for many ids; returns only the ids the server confirmed."""
         ids=list(dict.fromkeys(message_ids))
         if not ids or len(ids)>100 or any(not isinstance(i,str) or not i for i in ids): raise AppError('INVALID_MAIL_ACTION')
-        response=self._call('mbox:updateMessageInfos',{'ids':ids,'attrs':attrs,'returnOriginalMsgInfos':True})
+        response=self._call('mbox:updateMessageInfos',{'ids':ids,'attrs':attrs,'returnOriginalMsgInfos':True,**_box(mboxa)})
         affected=response.get('originalMsgInfos')
         if not isinstance(affected,list): raise AppError('MAIL_UPDATE_UNCONFIRMED')
         return [i for i in ids if any(isinstance(item,dict) and item.get('id')==i for item in affected)]
-    def set_flags_many(self,message_ids,flags):
+    def set_flags_many(self,message_ids,flags,mboxa=''):
         if not isinstance(flags,dict) or not flags or set(flags)-{'read','flagged'} or any(type(v) is not bool for v in flags.values()):
             raise AppError('INVALID_MAIL_ACTION')
-        return self._update_many(message_ids,{'flags':dict(flags)})
-    def move_many(self,message_ids,folder_id):
-        if not isinstance(folder_id,str) or folder_id not in {folder.remote_id for folder in self.list_folders()}: raise AppError('INVALID_MAIL_ACTION')
-        return self._update_many(message_ids,{'fid':int(folder_id) if folder_id.isdigit() else folder_id})
+        return self._update_many(message_ids,{'flags':dict(flags)},mboxa)
+    def move_many(self,message_ids,folder_id,mboxa=''):
+        if not isinstance(folder_id,str) or folder_id not in {folder.remote_id for folder in self.list_folders(mboxa)}: raise AppError('INVALID_MAIL_ACTION')
+        return self._update_many(message_ids,{'fid':int(folder_id) if folder_id.isdigit() else folder_id},mboxa)
+    def list_shared_mailboxes(self):
+        """Shared / department mailboxes this account may open, with the account's rights.
+
+        mbox:listSharedAccessMbox {showHidden, v:2} as webmail calls it (X.03931.js
+        module 88812); verified read-only 2026-10-18 only as far as an account
+        without shared mailboxes allows: S_OK with an empty list
+        (analysis/shared-mailbox-shape-2026-10-18.json). Row fields follow webmail's
+        compose code: id (mboxa is '@'+id), email, remark, send, rw, recallable."""
+        rows=self._call('mbox:listSharedAccessMbox',{'showHidden':True,'v':2},True).get('var')
+        if rows is None: return []
+        if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
+        result=[]
+        for row in rows:
+            if not isinstance(row,dict) or type(row.get('id')) not in (int,str) or not str(row['id']) or not isinstance(row.get('email'),str) or '@' not in row['email']: continue
+            try: _box('@'+str(row['id']))
+            except AppError: continue
+            result.append({'id':str(row['id']),'email':row['email'],'name':str(row.get('remark') or ''),
+                           'send':_flag(row.get('send')),'rw':_flag(row.get('rw')),'recallable':_flag(row.get('recallable'))})
+        return result
     def _attrs(self,draft,encrypted=False):
         from coremail_desktop.compose.attachments import validate_attachments
         validate_attachments(draft.attachments)
@@ -362,10 +396,11 @@ class CoremailAdapter:
             # Restoring a draft under another session must not bind its reply to
             # an unrelated remote message. The parent Message-ID is the contract.
             from email.parser import BytesHeaderParser
-            original=BytesHeaderParser(policy=policy.default).parsebytes(self.fetch_mime(draft.reply_source_id))
+            mboxa=getattr(draft,'reply_mailbox','')
+            original=BytesHeaderParser(policy=policy.default).parsebytes(self.fetch_mime(draft.reply_source_id,mboxa))
             expected=' '.join(str(item) for item in original.get_all('Message-ID',[]))
             if not expected or expected!=draft.reference_headers.get('In-Reply-To',''): raise AppError('REPLY_SOURCE_MISMATCH')
-            value=self._session.prepare_reply(draft.reply_source_id,draft.mode=='reply_all',**({'is_html':True} if getattr(draft,'is_html',False) else {}))
+            value=self._session.prepare_reply(draft.reply_source_id,draft.mode=='reply_all',**({'is_html':True} if getattr(draft,'is_html',False) else {}),**_box(mboxa))
             if not isinstance(value,dict) or not isinstance(value.get('id'),str) or not value['id']: raise AppError('INVALID_RESPONSE')
             compose_id=value['id']
         else:
@@ -435,7 +470,7 @@ class CoremailAdapter:
         fields={'returnInfo':'true','account':attrs['account'],'to':','.join(attrs['to']),'cc':','.join(attrs['cc']),'bcc':','.join(attrs['bcc']),
                 'subject':attrs['subject'],'isHtml':'false','saveSentCopy':'true'}
         return self._session.deliver_preencoded(compose_id,fields,payload.decode('ascii'))
-    def delivery_history(self,message_id):
+    def delivery_history(self,message_id,mboxa=''):
         """Per-recipient delivery records of a sent message.
 
         user:listDeliveryHistory {mid} verified on the deployment 2026-10-17
@@ -443,7 +478,7 @@ class CoremailAdapter:
         {to, to_name, result, rclResult, recallable, modtime, ...}. A send-to-self
         went result 100 (delivered) -> 509 after the copy was read (x % 100 == 9)."""
         if not isinstance(message_id,str) or not message_id: raise AppError('INVALID_MAIL_ACTION')
-        rows=self._call('user:listDeliveryHistory',{'mid':message_id},True).get('var')
+        rows=self._call('user:listDeliveryHistory',{'mid':message_id,**_box(mboxa)},True).get('var')
         if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
         result=[]
         for row in rows:

@@ -84,6 +84,8 @@ class DraftDocument(_ImmutableMappings):
     # UTC instant 'YYYY-MM-DDTHH:MM:SSZ' for scheduled send; None sends now.
     schedule_at: str | None = None
     request_receipt: bool = False
+    # mboxa ('@'+id) of the shared mailbox holding reply_source_id; '' for the user's own.
+    reply_mailbox: str = ''
 
 @dataclass(frozen=True)
 class SendJob:

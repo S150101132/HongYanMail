@@ -26,6 +26,7 @@ const S = {
   rows: [], total: null, more: false, loading: false, listToken: 0,
   selected: null, message: null, filter: 'all', search: null,
   allowRemote: new Set(), drafts: [], items: [], multi: new Set(), anchor: null,
+  shared: [], openBoxes: new Set(),
 };
 
 // ---------------------------------------------------------------- helpers
@@ -197,6 +198,7 @@ async function enterApp(profile) {
   const inbox = (S.folders.find((f) => f.role === 'inbox') || { id: '1' }).id;
   selectFolder(inbox);
   api('folders').then((f) => { S.folders = f; renderFolders(); }).catch(fail);
+  loadShared();
   api('startSync', { seconds: S.prefs.pollSeconds });
   refreshDraftCount();
   setTimeout(refreshScheduled, 1500);
@@ -222,18 +224,55 @@ function renderFolders() {
   $('#nav-drafts').classList.toggle('on', S.local === 'drafts');
   $('#nav-scheduled').classList.toggle('on', S.local === 'scheduled');
   const current = folderById(S.folderId);
-  if (current && !S.local && !S.search) $('#list-title').textContent = current.name;
+  if (current && !S.local && !S.search) $('#list-title').textContent = folderTitle(current);
   const inbox = S.folders.find((f) => f.role === 'inbox');
   api('setUnread', { count: (inbox && inbox.unread) || 0 });
+  renderShared();
 }
-const folderById = (id) => S.folders.find((f) => f.id === String(id));
+const folderById = (id) => S.folders.find((f) => f.id === String(id)) || S.shared.flatMap((b) => b.folders).find((f) => f.id === String(id));
+
+// ---------------------------------------------------------------- shared mailboxes
+// Folders of a shared mailbox have ids 'fid@box' and carry `mailbox`; its rights
+// (rw: change state, send: send as it) are enforced again by the backend.
+const boxById = (id) => S.shared.find((b) => b.id === id);
+function boxOf(fid) { const f = folderById(fid); return f && f.mailbox ? boxById(f.mailbox) || null : null; }
+function currentBox() { return !S.local && !S.search ? boxOf(S.folderId) : null; }
+function foldersFor(fid) { const b = boxOf(fid); return b ? b.folders : S.folders; }
+function folderTitle(f) { const b = f.mailbox && boxById(f.mailbox); return b ? `${f.name} · ${b.name || b.email}` : f.name; }
+function writable(items) {
+  const b = currentBox(); if (!b || b.rw) return items;
+  return items.filter((it) => it === '-' || !it.write).filter((it, i, a) => it !== '-' || (i > 0 && i < a.length - 1 && a[i + 1] !== '-'));
+}
+function loadShared() { api('sharedMailboxes').then((b) => { S.shared = b; renderFolders(); }).catch(() => {}); }
+function renderShared() {
+  const nav = $('#shared-list');
+  $('#shared-section').classList.toggle('hidden', !S.shared.length);
+  const here = !S.local && !S.search;
+  nav.innerHTML = S.shared.map((b) => {
+    const open = S.openBoxes.has(b.id);
+    const rights = (b.rw ? '' : ' · 只读') + (b.send ? '' : ' · 不能以此身份发信');
+    return `<a class="folder box${open ? ' open' : ''}" data-box="${esc(b.id)}" title="${esc(b.email + rights)}">
+      <i data-icon="chevron" class="chev"></i><i data-icon="shared"></i><span class="fname">${esc(b.name || b.email)}</span>
+      <span class="count">${!open && b.unread ? b.unread : ''}</span></a>` + (open ? b.folders.filter((f) => f.role !== 'virus').map((f) =>
+      `<a class="folder sub${here && f.id === S.folderId ? ' on' : ''}" data-id="${esc(f.id)}" title="${esc(f.name)}">
+      <i data-icon="${ROLE_ICON[f.role] || 'folder'}"></i><span class="fname">${esc(f.name)}</span>
+      <span class="count">${f.unread && f.role !== 'sent' && f.role !== 'trash' ? f.unread : ''}</span></a>`).join('') : '');
+  }).join('');
+  renderIcons(nav);
+  $$('[data-box]', nav).forEach((a) => (a.onclick = () => {
+    const id = a.dataset.box; if (S.openBoxes.has(id)) S.openBoxes.delete(id); else S.openBoxes.add(id); renderShared();
+  }));
+  $$('[data-id]', nav).forEach((a) => (a.onclick = () => selectFolder(a.dataset.id)));
+}
+function applyFolders(res) { if (res.shared) S.shared = res.shared; if (res.folders.length) S.folders = res.folders; renderFolders(); }
 
 function selectFolder(id) {
   S.folderId = String(id); S.local = null; S.search = null; $('#search').value = '';
   S.rows = []; S.total = null; S.more = false; S.multi.clear(); renderSelection();
+  const box = boxOf(id); if (box) S.openBoxes.add(box.id);
   renderFolders();
   const f = folderById(id);
-  $('#list-title').textContent = f ? f.name : '邮件';
+  $('#list-title').textContent = f ? folderTitle(f) : '邮件';
   loadList(true);
 }
 
@@ -383,35 +422,36 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
   }
   const r = S.rows.find((x) => x.id === row.dataset.id); if (!r) return;
   if (S.multi.size > 1 && itemOf(r.id).ids.every((id) => S.multi.has(id))) {
-    showMenu(e.clientX, e.clientY, [
-      { label: `标为已读（${S.multi.size} 封）`, icon: 'check', run: () => batchFlags({ read: true }) },
-      { label: '标为未读', icon: 'mail', run: () => batchFlags({ read: false }) },
-      { label: '添加星标', icon: 'star', run: () => batchFlags({ flagged: true }) },
-      { label: '取消星标', icon: 'star', run: () => batchFlags({ flagged: false }) },
-      { label: '移动到…', icon: 'folder', run: () => pickBatchFolder() },
+    const items = writable([
+      { label: `标为已读（${S.multi.size} 封）`, icon: 'check', run: () => batchFlags({ read: true }), write: true },
+      { label: '标为未读', icon: 'mail', run: () => batchFlags({ read: false }), write: true },
+      { label: '添加星标', icon: 'star', run: () => batchFlags({ flagged: true }), write: true },
+      { label: '取消星标', icon: 'star', run: () => batchFlags({ flagged: false }), write: true },
+      { label: '移动到…', icon: 'folder', run: () => pickBatchFolder(), write: true },
       '-',
-      { label: '删除', icon: 'trash', run: () => batchMove(null, { delete: true }) },
+      { label: '删除', icon: 'trash', run: () => batchMove(null, { delete: true }), write: true },
     ]);
+    if (items.length) showMenu(e.clientX, e.clientY, items);
     return;
   }
-  showMenu(e.clientX, e.clientY, [
+  showMenu(e.clientX, e.clientY, writable([
     { label: '回复', icon: 'reply', run: () => startCompose('reply', r.id) },
     { label: '全部回复', icon: 'replyall', run: () => startCompose('reply_all', r.id) },
     { label: '转发', icon: 'forward', run: () => startCompose('forward', r.id) },
     '-',
-    { label: r.flags.read ? '标为未读' : '标为已读', icon: 'mail', run: () => setFlags(r.id, { read: !r.flags.read }) },
-    { label: r.flags.flagged ? '取消星标' : '添加星标', icon: 'star', run: () => setFlags(r.id, { flagged: !r.flags.flagged }) },
-    { label: '移动到…', icon: 'folder', run: () => pickFolder(r.id) },
+    { label: r.flags.read ? '标为未读' : '标为已读', icon: 'mail', run: () => setFlags(r.id, { read: !r.flags.read }), write: true },
+    { label: r.flags.flagged ? '取消星标' : '添加星标', icon: 'star', run: () => setFlags(r.id, { flagged: !r.flags.flagged }), write: true },
+    { label: '移动到…', icon: 'folder', run: () => pickFolder(r.id), write: true },
     '-',
-    { label: '删除', icon: 'trash', run: () => deleteMessage(r.id) },
-  ]);
+    { label: '删除', icon: 'trash', run: () => deleteMessage(r.id), write: true },
+  ]));
 });
 
 $$('#filter-seg button').forEach((b) => (b.onclick = () => {
   $$('#filter-seg button').forEach((x) => x.classList.toggle('on', x === b));
   S.filter = b.dataset.filter; renderList();
 }));
-$('#btn-refresh').onclick = () => { api('syncNow'); if (!S.local) loadList(true); api('folders').then((f) => { S.folders = f; renderFolders(); }).catch(() => {}); };
+$('#btn-refresh').onclick = () => { api('syncNow'); if (!S.local) loadList(true); api('folders').then((f) => { S.folders = f; renderFolders(); }).catch(() => {}); loadShared(); };
 
 // ---------------------------------------------------------------- search
 let searchToken = 0;
@@ -543,10 +583,13 @@ function renderMessage(m) {
   const role = (folderById(m.fid) || {}).role;
   const panel = $('#ds-panel'); if (panel) panel.remove();
   $$('#reader-body .sent-only').forEach((b) => b.classList.toggle('hidden', role !== 'sent'));
-  setRecallAllowed(true);
+  const box = m.mailbox;
+  $$('#reader-body .rw-only').forEach((b) => b.classList.toggle('hidden', !!box && !box.rw));
+  setRecallAllowed(!box, '共享邮箱的邮件请在网页版中撤回');
   $$('#reader-body .sched-only').forEach((b) => b.classList.toggle('hidden', !m.scheduled));
   // Banners
   const banners = [];
+  if (box) banners.push(`<div class="banner info"><i data-icon="shared"></i><span>共享邮箱「${esc(box.name || box.email)}」${box.rw ? '' : ' · 只读'} · 回复${box.send ? '将以该邮箱身份发出' : '将以你自己的地址发出'}。</span></div>`);
   if (m.scheduled) banners.push(`<div class="banner info"><i data-icon="clock"></i><span>这是一封定时邮件${m.scheduleAt ? `，将于 <b>${esc(scheduleText(m.scheduleAt))}</b> 由服务器发出` : '，到时间由服务器发出'}。</span><span class="spacer"></span><button class="btn ghost" data-act="unschedule">取消定时</button></div>`);
   if (m.encryption === 'locked') banners.push(`<div class="banner"><i data-icon="lock"></i><span>这是一封证书加密邮件，解锁个人证书后即可阅读。</span><span class="spacer"></span><button class="btn primary" id="b-unlock">解锁证书</button></div>`);
   if (m.encryption === 'decrypted') banners.push(`<div class="banner info"><i data-icon="lock"></i><span>此邮件已使用你的证书在本机解密。</span></div>`);
@@ -726,7 +769,7 @@ function removeRow(id) {
 }
 async function deleteMessage(id) {
   const r = S.rows.find((x) => x.id === id);
-  const trash = S.folders.find((f) => f.role === 'trash');
+  const trash = foldersFor(r ? r.fid : S.folderId).find((f) => f.role === 'trash');
   if (r && trash && r.fid === trash.id) { toast('邮件已在已删除文件夹中。为避免误删，本应用不提供彻底删除。'); return; }
   removeRow(id);
   try {
@@ -743,12 +786,13 @@ async function moveMessage(id, folderId, undo) {
     if (undo) { toast('已撤销'); loadList(true); }
     else toast(`已移动到「${(folderById(folderId) || {}).name || '文件夹'}」`);
     api('folders').then((f) => { S.folders = f; renderFolders(); }).catch(() => {});
+    if (boxOf(folderId)) loadShared();
   } catch (err) { fail(err); loadList(true); }
 }
 async function pickFolder(id) {
   const r = S.rows.find((x) => x.id === id) || {};
   await promptDialog({ title: '移动到文件夹',
-    body: '<div class="pick-list">' + S.folders.filter((f) => f.id !== r.fid && f.role !== 'virus').map((f) =>
+    body: '<div class="pick-list">' + foldersFor(r.fid || S.folderId).filter((f) => f.id !== r.fid && f.role !== 'virus').map((f) =>
       `<button data-fid="${esc(f.id)}"><i data-icon="${ROLE_ICON[f.role] || 'folder'}"></i>${esc(f.name)}</button>`).join('') + '</div>',
     onOpen: (d, done) => $$('[data-fid]', d).forEach((b) => (b.onclick = () => { done(true); moveMessage(id, b.dataset.fid); })) });
 }
@@ -813,7 +857,7 @@ async function batchFlags(flags) {
   try {
     const res = await api('setFlags', { mid: ids, read: flags.read ?? null, flagged: flags.flagged ?? null });
     for (const id of res.failed) { const r = rows.find((x) => x.id === id); if (r) r.flags = before.get(id); }
-    if (res.folders.length) { S.folders = res.folders; renderFolders(); }
+    applyFolders(res);
     redraw();
     const what = 'read' in flags ? (flags.read ? '标为已读' : '标为未读') : (flags.flagged ? '添加星标' : '取消星标');
     if (res.failed.length) toast(`${res.done.length} 封已${what}，${res.failed.length} 封未完成，请稍后重试`, { error: true });
@@ -828,7 +872,7 @@ function removeRows(ids) {
 }
 async function batchMove(folderId, opts = {}) {
   const ids = opts.ids || [...S.multi];
-  const trash = S.folders.find((f) => f.role === 'trash');
+  const trash = foldersFor(S.folderId).find((f) => f.role === 'trash');
   const target = opts.delete ? (trash ? trash.id : '4') : String(folderId);
   const rows = S.rows.filter((r) => ids.includes(r.id));
   const origin = new Map(rows.map((r) => [r.id, r.fid]));
@@ -839,7 +883,7 @@ async function batchMove(folderId, opts = {}) {
   renderSelection();
   try {
     const res = opts.delete ? await api('delete', { mid: moving }) : await api('move', { mid: moving, folder_id: target });
-    if (res.folders.length) { S.folders = res.folders; renderFolders(); }
+    applyFolders(res);
     const name = (folderById(target) || {}).name || (opts.delete ? '已删除' : '文件夹');
     toast(`已将 ${res.done.length} 封移到「${name}」` + (res.failed.length ? `，${res.failed.length} 封未完成` : ''),
       { ms: 8000, error: !!res.failed.length, action: res.done.length ? { label: '撤销', run: () => undoMove(res.done, origin) } : null });
@@ -858,7 +902,7 @@ async function undoMove(ids, origin) {
 async function pickBatchFolder() {
   const n = S.multi.size;
   await promptDialog({ title: `移动 ${n} 封邮件到文件夹`,
-    body: '<div class="pick-list">' + S.folders.filter((f) => f.role !== 'virus').map((f) =>
+    body: '<div class="pick-list">' + foldersFor(S.folderId).filter((f) => f.role !== 'virus').map((f) =>
       `<button data-fid="${esc(f.id)}"><i data-icon="${ROLE_ICON[f.role] || 'folder'}"></i>${esc(f.name)}</button>`).join('') + '</div>',
     onOpen: (d, done) => $$('[data-fid]', d).forEach((b) => (b.onclick = () => { done(true); batchMove(b.dataset.fid); })) });
 }
@@ -963,7 +1007,8 @@ async function startCompose(mode, mid, extra = {}) {
     if (C.dirty) await saveDraft(true);
   }
   try {
-    const draft = await api('compose', { mode, mid });
+    const box = mode === 'new' && !mid ? currentBox() : null;
+    const draft = await api('compose', box ? { mode, mid, mailbox: box.id } : { mode, mid });
     Object.assign(draft, extra);
     openComposer(draft);
   } catch (err) { fail(err); }
@@ -976,7 +1021,7 @@ function openComposer(draft) {
   box.classList.remove('hidden');
   $('#cmp-title').textContent = { new: '写邮件', reply: '回复', reply_all: '全部回复', forward: '转发' }[draft.mode] || '写邮件';
   $('#cmp-status').textContent = '';
-  const ids = S.profile.identities || [S.profile.account];
+  const ids = draft.fromChoices || S.profile.identities || [S.profile.account];
   $('#cmp-from').innerHTML = ids.map((i) => `<option${i === draft.from ? ' selected' : ''}>${esc(i)}</option>`).join('');
   $('#row-from').classList.toggle('hidden', ids.length < 2);
   for (const field of ['to', 'cc', 'bcc']) setChips(field, draft[field] || []);
@@ -1401,6 +1446,7 @@ document.addEventListener('contextmenu', (e) => { if (!isTyping(e.target) && !e.
 
 // ---------------------------------------------------------------- push events from Python
 on('synced', (v) => {
+  if (v.shared) S.shared = v.shared;
   S.folders = v.folders; renderFolders();
   if (!S.local && !S.search && S.folderId === v.inbox && !S.loading) {
     const known = new Set(S.rows.map((r) => r.id));

@@ -10,6 +10,11 @@ PEOPLE = [('产品协作组', 'product@example.invalid'), ('研发团队', 'rd@e
           ('合作伙伴 · 外部', 'partner@external.example')]
 SUBJECTS = ['项目进展与本周计划', '关于设计评审的会议纪要', '【通知】办公网络维护安排', '研发周报 · 第 42 周',
             'Re: 接口联调时间确认', '季度预算申请表（请于周五前反馈）', '新员工入职培训安排', '服务器迁移方案评审']
+# One synthetic department mailbox shared with the demo user. Its message ids repeat
+# the user's own ('demo0'...) on purpose: the client must keep the two apart.
+SHARED_BOX = {'id': 'rd', 'email': 'rd-office@example.invalid', 'name': '研发部公共邮箱', 'send': True, 'rw': True, 'recallable': False}
+SHARED_SUBJECTS = ['【部门】服务器采购需求汇总', '外部合作方接口文档更新', '部门例会时间调整', '测试环境账号申请',
+                   '【提醒】季度安全检查', '客户问题反馈汇总']
 BODY = ('<div style="font-family:Microsoft YaHei;font-size:14px"><p>各位同事：</p>'
         '<p>本周的设计评审已经完成，请查看以下安排：</p>'
         '<table border="1" cellpadding="6" style="border-collapse:collapse"><tr style="background:#eef4ff">'
@@ -93,6 +98,18 @@ class DemoAdapter:
                                    'to': '"研发团队" <rd@example.invalid>', 'date': (now + timedelta(hours=20)).strftime('%Y-%m-%d %H:%M:%S'),
                                    'flags': {'read': True, 'scheduleDelivery': True},
                                    'scheduleAt': (now + timedelta(hours=20)).astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
+        shared_rows = {}
+        for i in range(16):
+            name, addr = PEOPLE[(i + 2) % len(PEOPLE)]
+            fid = '1' if i < 13 else '3'
+            when = now - timedelta(hours=i * 7 + 1)
+            shared_rows[f'demo{i}'] = {'id': f'demo{i}', 'fid': fid, 'subject': SHARED_SUBJECTS[i % len(SHARED_SUBJECTS)] + '（演示）',
+                                       'from': f'"{name}" <{addr}>' if fid == '1' else '"研发部公共邮箱" <rd-office@example.invalid>',
+                                       'to': 'rd-office@example.invalid' if fid == '1' else f'"{name}" <{addr}>',
+                                       'date': when.strftime('%Y-%m-%d %H:%M:%S'),
+                                       'flags': {'read': i % 3 != 0 or fid == '3', 'attached': i % 4 == 1, 'flagged': i == 2}}
+        self.shared = {'@rd': {'info': dict(SHARED_BOX), 'folders': {'1': '收件箱', '2': '草稿箱', '3': '已发送', '4': '已删除'},
+                               'rows': shared_rows}}
         self.last_folder_total = None
         self.last_folder_id = None
         self.signed_in = False
@@ -116,11 +133,24 @@ class DemoAdapter:
     def display_name(self):
         return '演示用户'
 
-    def list_folders(self):
+    def _store(self, mboxa=''):
+        """(folders, rows) of the user's own mailbox, or of a shared one named by mboxa."""
+        if not mboxa:
+            return self.folders, self.rows
+        if mboxa not in self.shared:
+            raise AppError('RPC_REJECTED')
+        return self.shared[mboxa]['folders'], self.shared[mboxa]['rows']
+
+    def list_shared_mailboxes(self):
         self._need()
+        return [dict(box['info']) for box in self.shared.values()]
+
+    def list_folders(self, mboxa=''):
+        self._need()
+        folders, store = self._store(mboxa)
         result = []
-        for fid, name in self.folders.items():
-            rows = [r for r in self.rows.values() if r['fid'] == fid]
+        for fid, name in folders.items():
+            rows = [r for r in store.values() if r['fid'] == fid]
             result.append(Folder(fid, name, None, {'messageCount': len(rows),
                                                    'unreadMessageCount': sum(not r['flags']['read'] for r in rows)}))
         return result
@@ -130,22 +160,22 @@ class DemoAdapter:
                               preview='本周的设计评审已经完成，请查看以下安排：邮箱工作台交互优化、草稿与阅读流程验证……',
                               recipients=r['to'], size=24000, schedule_at=r.get('scheduleAt'))
 
-    def list_messages(self, folder_id, offset, limit=50):
+    def list_messages(self, folder_id, offset, limit=50, mboxa=''):
         self._need()
-        rows = sorted((r for r in self.rows.values() if r['fid'] == str(folder_id)), key=lambda r: r['date'], reverse=True)
-        self.last_folder_total, self.last_folder_id = len(rows), str(folder_id)
+        rows = sorted((r for r in self._store(mboxa)[1].values() if r['fid'] == str(folder_id)), key=lambda r: r['date'], reverse=True)
+        self.last_folder_total, self.last_folder_id = len(rows), str(folder_id) + mboxa
         return [self._summary(r) for r in rows[offset:offset + limit]]
 
-    def fetch_mime(self, message_id):
+    def fetch_mime(self, message_id, mboxa=''):
         self._need()
-        r = self.rows.get(message_id)
+        r = self._store(mboxa)[1].get(message_id)
         if r is None:
             raise AppError('MESSAGE_UNAVAILABLE')
         message = EmailMessage()
         message['From'], message['To'], message['Subject'] = r['from'], r['to'], r['subject']
         message['Date'] = r['date']
-        message['Message-ID'] = f'<{message_id}@example.invalid>'
-        if message_id == OUTLOOK_DEMO_ID:
+        message['Message-ID'] = f'<{message_id}{mboxa.replace("@", ".")}@example.invalid>'
+        if message_id == OUTLOOK_DEMO_ID and not mboxa:
             return _outlook_style(message)
         message.set_content('各位同事：本周的设计评审已经完成。（合成演示数据）')
         message.add_alternative(BODY, subtype='html')
@@ -157,24 +187,24 @@ class DemoAdapter:
         rows = [r for r in self.rows.values() if pattern.casefold() in (r['subject'] + r['from']).casefold()]
         return {'messages': [self._summary(r) for r in rows[offset:offset + limit]], 'total': len(rows)}
 
-    def move_message(self, message_id, folder_id):
-        self.rows[message_id]['fid'] = folder_id
+    def move_message(self, message_id, folder_id, mboxa=''):
+        self._store(mboxa)[1][message_id]['fid'] = folder_id
         return {'message_id': message_id, 'folder_id': folder_id}
 
-    def set_message_flags(self, message_id, flags):
-        self.rows[message_id]['flags'].update(flags)
+    def set_message_flags(self, message_id, flags, mboxa=''):
+        self._store(mboxa)[1][message_id]['flags'].update(flags)
         return {'message_id': message_id, 'flags': flags}
 
     batch_updates = True
 
-    def set_flags_many(self, message_ids, flags):
+    def set_flags_many(self, message_ids, flags, mboxa=''):
         for mid in message_ids:
-            self.rows[mid]['flags'].update(flags)
+            self._store(mboxa)[1][mid]['flags'].update(flags)
         return list(message_ids)
 
-    def move_many(self, message_ids, folder_id):
+    def move_many(self, message_ids, folder_id, mboxa=''):
         for mid in message_ids:
-            self.rows[mid]['fid'] = folder_id
+            self._store(mboxa)[1][mid]['fid'] = folder_id
         return list(message_ids)
 
     def match_contacts(self, keyword, limit=8):
@@ -208,15 +238,15 @@ class DemoAdapter:
         row['scheduleAt'] = None
         return {'message_id': message_id, 'draft_id': message_id}
 
-    def _recipients(self, message_id):
+    def _recipients(self, message_id, mboxa=''):
         from email.utils import getaddresses
-        row = self.rows.get(message_id)
+        row = self._store(mboxa)[1].get(message_id)
         if row is None or row['fid'] != '3':
             raise AppError('MESSAGE_UNAVAILABLE')
         return row, [(n, a) for n, a in getaddresses([row['to']]) if a]
 
-    def delivery_history(self, message_id):
-        row, people = self._recipients(message_id)
+    def delivery_history(self, message_id, mboxa=''):
+        row, people = self._recipients(message_id, mboxa)
         result = []
         for name, addr in people:
             external = not addr.endswith('@example.invalid')

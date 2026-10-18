@@ -4,6 +4,7 @@ Every public method takes and returns JSON-compatible values so the web UI can
 call it through the bridge. Calls are made from one worker thread, in order.
 """
 import base64
+import functools
 import hashlib
 import html
 import json
@@ -96,6 +97,7 @@ class MailBackend:
         self._password = None  # Kept in memory only when the user chose to stay signed in.
         self._signed_in = False
         self._folders = []
+        self._shared = {}  # Shared mailbox id -> {id, email, name, send, rw, folders, unread}
         self._contact_index = None
         self._contact_index_size = -1
         self._docs = {}
@@ -159,6 +161,7 @@ class MailBackend:
         if self.cache:
             self.cache.close()
         self.cache = self.account = None
+        self._shared = {}
         return True
 
     def _open_account(self, server, username, online=True):
@@ -172,6 +175,7 @@ class MailBackend:
         self._auto_unlock_certificate()
         identity = self.cache.get('identity', {})
         self.identities, self.display_name = identity.get('identities') or [username], identity.get('name', '')
+        self._shared = {b['id']: b for b in self.cache.get('shared') or []}
         if online:
             try:
                 self.identities = sorted(self.adapter.get_account_identities()) or [username]
@@ -232,11 +236,76 @@ class MailBackend:
         return prefs
 
     # Folders and lists -----------------------------------------------------
-    def _folder_dict(self, folder):
+    def _folder_dict(self, folder, box=None):
         counts = dict(folder.counts)
         role = folder.role or SYSTEM_ROLES.get(folder.remote_id)
-        return {'id': folder.remote_id, 'name': folder.name, 'role': role,
-                'total': counts.get('messageCount'), 'unread': counts.get('unreadMessageCount', 0)}
+        result = {'id': folder.remote_id, 'name': folder.name, 'role': role,
+                  'total': counts.get('messageCount'), 'unread': counts.get('unreadMessageCount', 0)}
+        if box:
+            result.update(id=folder.remote_id + '@' + box, mailbox=box)
+        return result
+
+    # Shared mailboxes --------------------------------------------------------
+    # A shared mailbox's folders and messages carry ids qualified as 'fid@box' and
+    # 'mid@box' (webmail's own folder notation), so its mail is cached under its own
+    # keys and never mixes with the user's; the server gets the bare id plus mboxa.
+    def _locate(self, value):
+        value = str(value)
+        for box in self._shared:
+            if value.endswith('@' + box) and len(value) > len(box) + 1:
+                return value[:-len(box) - 1], box
+        return value, None
+
+    def _box_args(self, box):
+        return {'mboxa': '@' + box} if box else {}
+
+    def _qualify(self, row, box):
+        if box:
+            row.update(id=row['id'] + '@' + box, fid=row['fid'] + '@' + box, mailbox=box)
+        return row
+
+    def _box_view(self, box):
+        info = self._shared.get(box) if box else None
+        return {k: info[k] for k in ('id', 'email', 'name', 'send', 'rw')} if info else None
+
+    def shared_mailboxes(self, refresh=True):
+        """The shared / department mailboxes this account may open, each with its folders."""
+        if not hasattr(self.adapter, 'list_shared_mailboxes'):
+            return []
+        if refresh or not self._shared:
+            try:
+                boxes = self._online(self.adapter.list_shared_mailboxes)
+            except AppError as error:
+                if self._shared and error.code in ('NETWORK_ERROR', 'TLS_ERROR'):
+                    return list(self._shared.values())
+                raise
+            order = {'inbox': 0, 'drafts': 2, 'sent': 3, 'trash': 8, 'spam': 7, 'virus': 9}
+            result = {}
+            for box in boxes:
+                try:
+                    folders = self._online(self.adapter.list_folders, mboxa='@' + box['id'])
+                except AppError as error:
+                    if error.code in REAUTH_CODES:
+                        raise
+                    old = self._shared.get(box['id'], {})  # Keep the last known folders for this one.
+                    folders = None
+                entry = {**box, 'folders': sorted((self._folder_dict(f, box['id']) for f in folders),
+                                                  key=lambda f: (order.get(f['role'], 5), f['role'] is None, f['name']))
+                         if folders is not None else old.get('folders', [])}
+                result[box['id']] = entry
+            self._shared = result
+            self._shared_counts()
+            # Mail of a mailbox no longer shared with the user leaves the cache.
+            self.cache.drop_mailboxes(set(result))
+        return list(self._shared.values())
+
+    def _shared_counts(self):
+        for box in self._shared.values():
+            box['unread'] = sum(f['unread'] or 0 for f in box['folders'] if f['role'] not in ('sent', 'trash', 'drafts', 'spam', 'virus'))
+        self.cache.set('shared', list(self._shared.values()))
+
+    def _all_folders(self):
+        return self._folders + [f for b in self._shared.values() for f in b['folders']]
 
     def folders(self, refresh=True):
         if refresh or not self._folders:
@@ -260,8 +329,9 @@ class MailBackend:
 
     def messages(self, folder_id, offset=0, limit=50, unread_only=False):
         folder_id = str(folder_id)
-        summaries = self._online(self.adapter.list_messages, folder_id, offset, limit)
-        rows = [_summary_dict(item) for item in summaries]
+        fid, box = self._locate(folder_id)
+        summaries = self._online(self.adapter.list_messages, fid, offset, limit, **self._box_args(box))
+        rows = [self._qualify(_summary_dict(item), box) for item in summaries]
         self.cache.put_summaries(folder_id, rows, window_complete=(offset == 0))
         total = self.adapter.last_folder_total if self.adapter.last_folder_id == folder_id else None
         if unread_only:
@@ -323,7 +393,8 @@ class MailBackend:
             return self._docs[mid]
         raw = self.cache.get_body(mid)
         if raw is None:
-            raw = self._online(self.adapter.fetch_mime, mid)
+            remote, box = self._locate(mid)
+            raw = self._online(self.adapter.fetch_mime, remote, **self._box_args(box))
             self.cache.put_body(mid, raw)
         document = self._parse(raw, mid)
         if document.encryption_state != 'locked':
@@ -353,9 +424,12 @@ class MailBackend:
                   'flags': summary.get('flags', {}),
                   'scheduled': bool(summary.get('flags', {}).get('scheduleDelivery')), 'scheduleAt': summary.get('scheduleAt'),
                   'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
-                                  for a in document.attachments]}
+                                  for a in document.attachments],
+                  'mailbox': self._box_view(self._locate(mid)[1])}
         if mark_read is None:
             mark_read = self.prefs()['markReadOnOpen']
+        if result['mailbox'] and not result['mailbox']['rw']:
+            mark_read = False  # Read-only access: opening must not change colleagues' state.
         if mark_read and summary and not summary.get('flags', {}).get('read'):
             try:
                 self.set_flags(mid, read=True)
@@ -374,7 +448,8 @@ class MailBackend:
                 break
             try:
                 if self.cache.get_body(mid) is None:
-                    self.cache.put_body(mid, self.adapter.fetch_mime(mid))
+                    remote, box = self._locate(mid)
+                    self.cache.put_body(mid, self.adapter.fetch_mime(remote, **self._box_args(box)))
                     fetched += 1
             except Exception:
                 continue
@@ -453,8 +528,34 @@ class MailBackend:
             raise last
         return [m for m in ids if m in done], failed
 
+    def _apply_in(self, ids, single, many, *args, folder=None):
+        """_apply for ids of one mailbox. Shared mail goes to the server as bare ids with
+        that mailbox's mboxa, and only where the user has write access."""
+        located = [self._locate(m) for m in ids]
+        boxes = {box for _, box in located}
+        if len(boxes) > 1:
+            raise AppError('OPERATION_NOT_ALLOWED')
+        box = boxes.pop()
+        if folder is not None and self._locate(folder)[1] != box:
+            raise AppError('SHARED_MOVE_OUTSIDE')
+        if box is None:
+            return self._apply(ids, single, many, *args)
+        if not self._shared[box].get('rw'):
+            raise AppError('SHARED_READ_ONLY')
+        args = (self._locate(folder)[0],) if folder is not None else args
+        extra = self._box_args(box)
+        done, failed = self._apply([r for r, _ in located], functools.partial(single, **extra),
+                                   many and functools.partial(many, **extra), *args)
+        return [d + '@' + box for d in done], [f + '@' + box for f in failed]
+
+    def _saved_counts(self):
+        if self._folders:
+            self.cache.set('folders', self._folders)
+        if self._shared:
+            self._shared_counts()
+
     def _count(self, fid, delta_unread=0, delta_total=0):
-        folder = next((f for f in self._folders if f['id'] == fid), None)
+        folder = next((f for f in self._all_folders() if f['id'] == fid), None)
         if folder:
             folder['unread'] = max(0, (folder['unread'] or 0) + delta_unread)
             if folder['total'] is not None:
@@ -464,34 +565,38 @@ class MailBackend:
         flags = {k: v for k, v in (('read', read), ('flagged', flagged)) if v is not None}
         ids = [mid] if isinstance(mid, str) else [str(m) for m in mid]
         before = {m: self.cache.summary(m) or {} for m in ids}
-        done, failed = self._apply(ids, self.adapter.set_message_flags, getattr(self.adapter, 'set_flags_many', None), flags)
+        done, failed = self._apply_in(ids, self.adapter.set_message_flags, getattr(self.adapter, 'set_flags_many', None), flags)
         for m in done:
             was = before[m].get('flags', {}).get('read')
             if 'read' in flags and was is not None and bool(was) != read:
                 self._count(before[m].get('fid'), -1 if read else 1)
             self.cache.update(m, flags=flags)
-        if self._folders:
-            self.cache.set('folders', self._folders)
-        return flags if isinstance(mid, str) else {'flags': flags, 'done': done, 'failed': failed, 'folders': self._folders}
+        self._saved_counts()
+        return flags if isinstance(mid, str) else {'flags': flags, 'done': done, 'failed': failed, 'folders': self._folders,
+                                                   'shared': list(self._shared.values())}
 
     def move(self, mid, folder_id):
         folder_id = str(folder_id)
         ids = [mid] if isinstance(mid, str) else [str(m) for m in mid]
         before = {m: self.cache.summary(m) or {} for m in ids}
-        done, failed = self._apply(ids, self.adapter.move_message, getattr(self.adapter, 'move_many', None), folder_id)
+        done, failed = self._apply_in(ids, self.adapter.move_message, getattr(self.adapter, 'move_many', None), folder_id, folder=folder_id)
         for m in done:
             unread = 0 if before[m].get('flags', {}).get('read', True) else 1
             if before[m].get('fid') and before[m]['fid'] != folder_id:
                 self._count(before[m]['fid'], -unread, -1)
                 self._count(folder_id, unread, 1)
             self.cache.update(m, fid=folder_id)
-        if self._folders:
-            self.cache.set('folders', self._folders)
-        return True if isinstance(mid, str) else {'done': done, 'failed': failed, 'folders': self._folders}
+        self._saved_counts()
+        return True if isinstance(mid, str) else {'done': done, 'failed': failed, 'folders': self._folders,
+                                                  'shared': list(self._shared.values())}
 
     def delete(self, mid):
         ids = [mid] if isinstance(mid, str) else [str(m) for m in mid]
-        trash = next((f['id'] for f in self._folders if f['role'] == 'trash'), '4')
+        box = self._locate(ids[0])[1] if ids else None
+        if box:
+            trash = next((f['id'] for f in self._shared[box]['folders'] if f['role'] == 'trash'), '4@' + box)
+        else:
+            trash = next((f['id'] for f in self._folders if f['role'] == 'trash'), '4')
         # Permanent deletion is deliberately not offered: mail already in the
         # trash stays there.
         movable = [m for m in ids if (self.cache.summary(m) or {}).get('fid') != trash]
@@ -503,7 +608,7 @@ class MailBackend:
 
     # Search ----------------------------------------------------------------
     def search_local(self, query):
-        return self.cache.search(query)
+        return self.cache.search(query)  # The user's own mail only: shared rows are skipped.
 
     def search_server(self, query, offset=0):
         result = self._online(self.adapter.search_messages, query, offset, 50)
@@ -554,17 +659,32 @@ class MailBackend:
         signature = self.prefs()['signature']
         return f'<br><br><div class="hy-signature">{signature}</div>' if signature else ''
 
-    def compose(self, mode='new', mid=None):
-        identity = self.identities[0] if self.identities else (self.account or '')
+    def _shared_sender(self, address):
+        """The shared mailbox whose address this is, or None for the user's own."""
+        key = parseaddr(str(address))[1].casefold()
+        return next((b for b in self._shared.values() if b['email'].casefold() == key), None)
+
+    def _from_choices(self):
+        """Addresses the user may send as: their own, plus shared mailboxes with send rights."""
+        own = [i for i in self.identities if not self._shared_sender(i)] or [self.account or '']
+        shared = [b['email'] for b in self._shared.values() if b.get('send')]
+        return own + [a for a in shared if a.casefold() not in {o.casefold() for o in own}]
+
+    def compose(self, mode='new', mid=None, mailbox=None):
+        box = self._locate(mid)[1] if mid else (mailbox if mailbox in self._shared else None)
+        info = self._shared.get(box) if box else None
+        own = self._from_choices()[0]
+        # Mail in a shared mailbox is answered as that mailbox only with send rights.
+        identity = info['email'] if info and info.get('send') else own
         base = {'localId': uuid.uuid4().hex, 'revision': 0, 'mode': mode, 'from': identity,
                 'to': [], 'cc': [], 'bcc': [], 'subject': '', 'html': '<p><br></p>' + self._signature_html(),
                 'replySourceId': None, 'referenceHeaders': {}, 'attachments': [], 'encrypt': None, 'sign': None,
-                'scheduleAt': None, 'receipt': False}
+                'scheduleAt': None, 'receipt': False, 'fromChoices': self._from_choices()}
         if mode == 'new' or not mid:
             return base
         document = self._document(mid)
         if mode in ('reply', 'reply_all'):
-            draft = build_reply(document, set(self.identities), mode == 'reply_all', identity)
+            draft = build_reply(document, set(self.identities) | ({info['email']} if info else set()), mode == 'reply_all', identity)
             return {**base, 'mode': draft.mode, 'to': list(draft.to), 'cc': list(draft.cc), 'subject': draft.subject,
                     'html': '<p><br></p>' + self._signature_html() + _quote_html(document),
                     'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
@@ -585,13 +705,15 @@ class MailBackend:
         validate_attachments(attachments)
         listify = lambda key: tuple(str(v).strip() for v in value.get(key, ()) if str(v).strip())
         mode = value.get('mode', 'new')
+        source, box = self._locate(value['replySourceId']) if mode in ('reply', 'reply_all') and value.get('replySourceId') else (None, None)
         return DraftDocument(str(value['localId']), int(value.get('revision', 0)), mode,
                              str(value.get('from') or self.identities[0]), listify('to'), listify('cc'), listify('bcc'),
                              str(value.get('subject', '')), str(value.get('html', '')),
                              {str(k): str(v) for k, v in dict(value.get('referenceHeaders') or {}).items()},
-                             value.get('encrypt') is True, value.get('replySourceId') if mode in ('reply', 'reply_all') else None,
+                             value.get('encrypt') is True, source,
                              attachments, True, signature_required=value.get('sign') is True,
-                             schedule_at=_schedule_iso(value.get('scheduleAt')), request_receipt=value.get('receipt') is True)
+                             schedule_at=_schedule_iso(value.get('scheduleAt')), request_receipt=value.get('receipt') is True,
+                             reply_mailbox='@' + box if box else '')
 
     def save_draft(self, value):
         draft = self._draft(value)
@@ -607,13 +729,19 @@ class MailBackend:
         body = draft.body if draft.is_html else '<div style="white-space:pre-wrap">' + html.escape(draft.body) + '</div>'
         return {'localId': draft.local_id, 'revision': draft.revision, 'mode': draft.mode, 'from': draft.from_identity,
                 'to': list(draft.to), 'cc': list(draft.cc), 'bcc': list(draft.bcc), 'subject': draft.subject,
-                'html': body, 'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
+                'html': body, 'replySourceId': self._reply_id(draft), 'referenceHeaders': dict(draft.reference_headers),
+                'fromChoices': self._from_choices(),
                 'encrypt': True if draft.encryption_required else None,
                 # Signing follows encryption unless the user chose otherwise.
                 'sign': True if draft.signature_required else False if draft.encryption_required else None,
                 'scheduleAt': _schedule_ms(draft.schedule_at), 'receipt': draft.request_receipt,
                 'attachments': [{'name': a.name, 'type': a.media_type, 'size': len(a.payload),
                                  'data': base64.b64encode(a.payload).decode('ascii')} for a in draft.attachments]}
+
+    def _reply_id(self, draft):
+        """The reply source as the interface knows it: qualified for a shared mailbox."""
+        source, box = draft.reply_source_id, getattr(draft, 'reply_mailbox', '')[1:]
+        return source + '@' + box if source and box else source
 
     def delete_draft(self, local_id):
         self.services['delete_draft'](local_id=local_id)
@@ -624,6 +752,9 @@ class MailBackend:
         draft = replace(draft, revision=draft.revision + 1)
         if not (draft.to or draft.cc or draft.bcc):
             raise AppError('RECIPIENT_REQUIRED')
+        sender = self._shared_sender(draft.from_identity)
+        if sender is not None and not sender.get('send'):
+            raise AppError('SHARED_SEND_DENIED')  # Checked before anything is stored or sent.
         if draft.schedule_at:
             # The server sends it later; a time already past would go out at once.
             at = datetime.strptime(draft.schedule_at, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
@@ -647,7 +778,7 @@ class MailBackend:
         if job.state == 'Accepted':
             self.delete_draft(draft.local_id)
             if draft.mode in ('reply', 'reply_all') and draft.reply_source_id:
-                self.cache.update(draft.reply_source_id, flags={'replied': True})
+                self.cache.update(self._reply_id(draft), flags={'replied': True})
         from coremail_desktop.ui.messages import user_message
         return {'state': job.state, 'failure': job.failure_code, 'localId': draft.local_id, 'revision': draft.revision,
                 'failureMessage': user_message(job.failure_code) if job.failure_code else None,
@@ -704,7 +835,8 @@ class MailBackend:
         if not hasattr(self.adapter, 'delivery_history'):
             raise AppError('OPERATION_NOT_ALLOWED')
         rows = []
-        for entry in self._online(self.adapter.delivery_history, str(mid)):
+        remote, box = self._locate(mid)
+        for entry in self._online(self.adapter.delivery_history, remote, **self._box_args(box)):
             state = delivery_state(entry['result'], entry['recall'])
             rows.append({'email': entry['to'], 'name': entry['name'], 'text': state['text'], 'kind': state['kind'],
                          'time': entry['time'], 'recallable': entry['recallable']})
@@ -717,8 +849,8 @@ class MailBackend:
     def recall(self, mid):
         """Recall a sent message. Every row is the server's own per-recipient answer."""
         from coremail_desktop.compose.tracking import recall_state
-        if not hasattr(self.adapter, 'recall_message'):
-            raise AppError('OPERATION_NOT_ALLOWED')
+        if not hasattr(self.adapter, 'recall_message') or self._locate(mid)[1]:
+            raise AppError('OPERATION_NOT_ALLOWED')  # Shared mailboxes: recall stays in webmail.
         result = self._online(self.adapter.recall_message, str(mid))
         if result['cancelled']:
             return {'cancelled': True, 'rows': [], 'recalled': 0}
@@ -749,4 +881,11 @@ class MailBackend:
         self.cache.set('inboxSynced', True)
         fresh = [] if first_sync else [r for r in page['rows'] if r['id'] not in known and not r['flags'].get('read')]
         folders = self.folders(refresh=True)
-        return {'folders': folders, 'inbox': inbox, 'rows': page['rows'], 'total': page['total'], 'new': fresh}
+        result = {'folders': folders, 'inbox': inbox, 'rows': page['rows'], 'total': page['total'], 'new': fresh}
+        if self._shared:
+            try:
+                result['shared'] = self.shared_mailboxes(refresh=True)  # Counts only; no notifications.
+            except AppError as error:
+                if error.code in REAUTH_CODES:
+                    raise
+        return result

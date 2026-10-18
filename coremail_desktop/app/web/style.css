@@ -119,6 +119,10 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .folder .fname { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .folder .count { font-size: 12px; font-weight: 600; color: var(--accent); }
 .folder.drop { outline: 2px dashed var(--accent); }
+#shared-list { overflow: auto; max-height: 38vh; }
+.folder.box .chev { width: 14px; height: 14px; margin-right: -4px; color: var(--muted); transition: transform .15s; }
+.folder.box.open .chev { transform: rotate(90deg); }
+.folder.sub { padding-left: 34px; }
 .side-section { margin: 14px 10px 4px; font-size: 11.5px; color: var(--muted); font-weight: 600; letter-spacing: .5px; }
 .side-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
 .account-btn { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: transparent; padding: 8px; border-radius: 10px; cursor: pointer; text-align: left; }

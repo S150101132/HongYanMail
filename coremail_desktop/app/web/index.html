@@ -37,6 +37,7 @@
     <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>
     <nav id="folder-list" class="folders" aria-label="文件夹"></nav>
     <nav class="folders"><a id="nav-scheduled" class="folder" data-local="scheduled" title="服务器上等待发出的定时邮件"><i data-icon="clock"></i><span class="fname">定时发送</span><span id="scheduled-count" class="count"></span></a></nav>
+    <div id="shared-section" class="hidden"><div class="side-section">共享邮箱</div><nav id="shared-list" class="folders" aria-label="共享邮箱"></nav></div>
     <div class="side-section">本机</div>
     <nav class="folders">
       <a id="nav-drafts" class="folder" data-local="drafts"><i data-icon="draft"></i><span class="fname">本机草稿</span><span id="draft-count" class="count"></span></a>
@@ -101,11 +102,11 @@
         <button class="tb" data-act="reply" title="回复 (R)"><i data-icon="reply"></i><span>回复</span></button>
         <button class="tb" data-act="reply_all" title="全部回复 (A)"><i data-icon="replyall"></i><span>全部回复</span></button>
         <button class="tb" data-act="forward" title="转发 (F)"><i data-icon="forward"></i><span>转发</span></button>
-        <span class="tb-sep"></span>
-        <button class="tb" data-act="delete" title="删除 (Delete)"><i data-icon="trash"></i></button>
-        <button class="tb" data-act="move" title="移动到…"><i data-icon="folder"></i></button>
-        <button class="tb" data-act="unread" title="标为未读 (U)"><i data-icon="mail"></i></button>
-        <button class="tb" data-act="flag" title="星标 (S)"><i data-icon="star"></i></button>
+        <span class="tb-sep rw-only"></span>
+        <button class="tb rw-only" data-act="delete" title="删除 (Delete)"><i data-icon="trash"></i></button>
+        <button class="tb rw-only" data-act="move" title="移动到…"><i data-icon="folder"></i></button>
+        <button class="tb rw-only" data-act="unread" title="标为未读 (U)"><i data-icon="mail"></i></button>
+        <button class="tb rw-only" data-act="flag" title="星标 (S)"><i data-icon="star"></i></button>
         <span class="tb-sep sent-only hidden"></span>
         <button class="tb sent-only hidden" data-act="recall" title="撤回这封已发送邮件"><i data-icon="undo"></i><span>撤回</span></button>
         <button class="tb sent-only hidden" data-act="status" title="查看每位收件人的投递和阅读状态"><i data-icon="route"></i><span>投递状态</span></button>

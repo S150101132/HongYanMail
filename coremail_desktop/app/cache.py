@@ -112,12 +112,23 @@ class MailCache:
             self._rows.pop(mid, None)
             self._db.execute('DELETE FROM messages WHERE mid=?', (mid,))
 
+    # Shared mailboxes: their rows carry 'mailbox' and ids qualified 'mid@box', so
+    # they are stored apart from the user's own mail and are left out of own-mail
+    # search and recipient suggestions.
+    def drop_mailboxes(self, keep):
+        """Forget rows and bodies of shared mailboxes not in keep (no longer shared)."""
+        with self._lock:
+            gone = [mid for mid, row in self._rows.items() if row.get('mailbox') and row['mailbox'] not in keep]
+            for mid in gone:
+                self.remove(mid)
+                self._db.execute('DELETE FROM bodies WHERE mid=?', (mid,))
+
     def search(self, query, limit=200):
         terms = [t for t in query.casefold().split() if t]
         if not terms:
             return []
         with self._lock:
-            rows = list(self._rows.values())
+            rows = [row for row in self._rows.values() if not row.get('mailbox')]
         hits = []
         for row in rows:
             hay = ' '.join((row['subject'], row['from'], row.get('to', ''), row.get('preview', ''))).casefold()
@@ -129,7 +140,7 @@ class MailCache:
     def addresses(self):
         """Every From/To string seen, for local recipient suggestions."""
         with self._lock:
-            return [(row['from'], row.get('to', ''), row['fid'], row['ts']) for row in self._rows.values()]
+            return [(row['from'], row.get('to', ''), row['fid'], row['ts']) for row in self._rows.values() if not row.get('mailbox')]
 
     # Bodies --------------------------------------------------------------
     def get_body(self, mid):

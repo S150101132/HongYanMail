@@ -57,6 +57,11 @@ STEPS = [
     (900, "recallMessage(S.message); setTimeout(() => $('#prompt-ok').click(), 200)", 'recall-result'),
     (900, "$('#prompt').classList.add('hidden'); $('#nav-scheduled').click()", None),
     (1000, "selectMessage(S.rows[0].id)", 'scheduled'),
+    (900, "selectFolder('1@rd')", None),
+    (1200, "selectMessage(S.rows[0].id)", 'shared'),
+    (800, "startCompose('reply', S.selected)", 'shared-reply'),
+    # Read-only view, drawn client-side only: the demo mailbox itself has full rights.
+    (800, "closeComposer(true); renderMessage({ ...S.message, mailbox: { ...S.message.mailbox, rw: false, send: false } })", 'shared-readonly'),
     (900, "S.message && writeFrame && 0; document.body.offsetWidth", None),
 ]
 

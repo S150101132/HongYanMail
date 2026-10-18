@@ -324,9 +324,10 @@ class CoremailSession:
             raise CoremailError('RPC_REJECTED')
         return result
 
-    def get_message(self, mid: str) -> bytes:
+    def get_message(self, mid: str, mboxa: str = '') -> bytes:
+        # A shared mailbox is named in the query, as webmail's mbox-data URL does.
         raw, unused_url = self._fetch(Request(self._rpc_url(
-            'mbox:getMessageData', mid=mid, mode='text')))
+            'mbox:getMessageData', mid=mid, mode='text', **({'mboxa': mboxa} if mboxa else {}))))
         stripped = raw.lstrip()
         if not stripped or stripped.startswith((b'{', b'[', b'<')):
             raise CoremailError('MESSAGE_UNAVAILABLE')
