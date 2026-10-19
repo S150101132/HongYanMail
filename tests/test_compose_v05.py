@@ -255,7 +255,7 @@ class ServerDraftTest(Base):
         value['subject'] = '季度预算草案 v2'
         res = self.backend.save_draft(value, server=True)
         self.assertTrue(res['serverDraftId'] and res['serverDraftId'] != 'demo-draft0')
-        self.assertNotIn('demo-draft0', self.adapter.rows)
+        self.assertEqual(self.adapter.rows['demo-draft0']['fid'], '4')  # Moved to the trash, not deleted.
         saved = self.adapter.rows[res['serverDraftId']]
         self.assertEqual((saved['fid'], saved['subject'], len(saved['files'])), ('2', '季度预算草案 v2', 1))
         self.assertEqual(self.backend.list_drafts(), [])  # The server copy is the record now.
@@ -275,7 +275,7 @@ class ServerDraftTest(Base):
         value = self.backend.edit_server_draft('demo-draft1')
         res = self.backend.send(value)
         self.assertEqual((res['state'], res['serverDraft']), ('Accepted', True))
-        self.assertNotIn('demo-draft1', self.adapter.rows)
+        self.assertEqual(self.adapter.rows['demo-draft1']['fid'], '4')
         self.assertEqual(self.adapter.sent[0].server_draft_id, 'demo-draft1')
 
     def test_local_restore_keeps_the_link(self):
@@ -293,6 +293,10 @@ class FakeSession:
 
     def call(self, op, params):
         self.calls.append((op, params))
+        if op == 'mbox:getAllFolders':
+            return {'code': 'S_OK', 'var': [{'id': 2, 'name': 'd'}, {'id': 4, 'name': 't', 'flags': {'system': True}}]}
+        if op == 'mbox:updateMessageInfos':
+            return {'code': 'S_OK', 'originalMsgInfos': [{'id': i} for i in params['ids']]}
         if params['action'] == 'continue':
             return {'code': 'S_OK', 'var': 'cnew'}
         if params['action'] == 'save':
@@ -335,13 +339,18 @@ class ProtocolTest(unittest.TestCase):
         self.assertNotIn('data:', attrs['content'])
         self.assertEqual([x.get('inlined', False) for x in attrs['attachments']], [False, True])
 
-    def test_server_draft_reopens_its_session_and_saves_in_place(self):
+    def test_server_draft_is_saved_fresh_and_the_old_one_moves_to_the_trash(self):
         a = self.adapter()
         self.assertEqual(a.save_server_draft(doc(server_draft_id='2:old')), '2:saved')
-        self.assertEqual(self.session.calls[0], ('open_draft', '2:old'))
-        self.assertFalse(any(op == '%mbox/compose' and p['action'] == 'continue' for op, p in self.session.calls[1:]))
-        self.assertEqual(self.session.calls[-1][1]['action'], 'save')
-        self.assertEqual(self.session.calls[-1][1]['id'], 'cdraft')
+        ops = [(op, p.get('action')) for op, p in self.session.calls]
+        self.assertNotIn(('open_draft', None), [(c[0], None) for c in self.session.calls])  # Reopening doubled attachments.
+        self.assertEqual(ops[0], ('%mbox/compose', 'continue'))
+        self.assertLess(ops.index(('%mbox/compose', 'save')), ops.index(('mbox:updateMessageInfos', None)))
+        move = next(p for op, p in self.session.calls if op == 'mbox:updateMessageInfos')
+        self.assertEqual((move['ids'], move['attrs']), (['2:old'], {'fid': 4}))
+        self.session.calls.clear()
+        a.deliver(a.create_compose(doc(server_draft_id='2:new')), doc(server_draft_id='2:new'))
+        self.assertEqual(self.session.calls[-1][1]['ids'], ['2:new'])  # Consumed after the send.
         with self.assertRaises(AppError) as raised:
             a.save_server_draft(doc(server_draft_id='2:old', encryption_required=True))
         self.assertEqual(raised.exception.code, 'DRAFT_ENCRYPTED_LOCAL')

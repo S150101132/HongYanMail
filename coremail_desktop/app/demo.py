@@ -347,15 +347,13 @@ class DemoAdapter:
 
     def create_compose(self, draft):
         self._need()
-        if draft.server_draft_id and draft.server_draft_id not in self.rows:
-            raise AppError('RPC_REJECTED')  # Like compose.jsp ctype=draft for a draft that is gone.
         self._counter += 1
         return f'compose{self._counter}'
 
     def _consume(self, draft):
-        # Delivering a reopened server draft removes it from the drafts folder (verified on the deployment).
-        if draft is not None and draft.server_draft_id:
-            self.rows.pop(draft.server_draft_id, None)
+        # Like CoremailAdapter._retire_draft: the replaced server draft moves to the trash.
+        if draft is not None and draft.server_draft_id in self.rows:
+            self.rows[draft.server_draft_id]['fid'] = '4'
 
     def deliver(self, compose_id, draft):
         self._need()
@@ -371,7 +369,7 @@ class DemoAdapter:
         return {'code': 'S_OK', **({'scheduledSent': {'mid': mid}} if scheduled else {})}
 
     def save_server_draft(self, draft):
-        """Like mbox:compose action save from a reopened draft: one copy, under a new id."""
+        """A fresh compose saved as a draft; the draft it replaces goes to the trash."""
         if draft.encryption_required or draft.signature_required:
             raise AppError('DRAFT_ENCRYPTED_LOCAL')
         self.create_compose(draft)

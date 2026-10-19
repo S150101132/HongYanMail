@@ -18,7 +18,25 @@ to the trash afterwards.
 | Inline image upload | Use `upload:prepare` + `directData` with `inlined`. The body `<img src>` = `s/json?sid=…&func=mbox:getComposeData&composeId=…&attachId=N` (absolute or relative). On deliver, the server rewrites it to `cid:`: the result is multipart/related, the cid resolves, the image is intact with disposition inline, and no sid or `getComposeData` is left in the body. |
 | `message/rfc822` through the normal upload | It arrives as a real `message/rfc822` part, with the inner headers intact. |
 
-Through MailBackend (verify_compose_real): see the "Real check" section below.
+Through MailBackend (verify_compose_real, final run 2026-10-19 09:10). Every check passed:
+
+| Check | Result |
+| --- | --- |
+| Picture + table sent on the normal path | multipart/related; cid resolves; no data: URI left; table with colspan kept; reader shows 0 attachments |
+| Server draft from "another client" (table + 1 attachment) | Loads with 1 attachment and the table |
+| Save back | New id; 1 copy; subject updated; **1** attachment; local copy removed |
+| Send it | Accepted; 0 left in 草稿箱; arrives with **1** attachment |
+| Encrypted send of a server draft (signing off) | Accepted; arrives as application/pkcs7-mime; 0 left in 草稿箱 |
+| Forward as attachment | One message/rfc822 part; inner subject intact |
+
+The first run of the same check found two problems with reopening drafts
+(compose.jsp ctype=draft):
+- the reopened session keeps the draft's attachments, so uploading them again
+  doubled them (1 became 2 after a save, then 4 after sending);
+- the pre-encoded (encrypted) deliver from a reopened session left the draft in
+  草稿箱.
+
+So the client no longer reopens drafts. See the server-draft section below.
 
 ## How each feature works
 
@@ -70,13 +88,14 @@ it is never sent unencrypted.
 in the right-click menu. `edit_server_draft` loads it from the MIME: recipients,
 subject, HTML (cid images become data: URIs), attachments and the receipt request.
 The draft value carries `serverDraftId`.
-- 保存草稿 / Ctrl+S / closing the composer: saves locally, then
-  `save_server_draft` reopens the draft (`open_draft`), uploads the current
-  attachments and pictures into that session, and runs `save`. The server keeps one
-  copy under a new id. Then the local copy is removed: the server copy is the record.
-  Autosave (every 20 s) stays local only.
-- Sending reopens the same session, so the server consumes the draft. This holds on
-  the encrypted pre-encoded path too.
+- 保存草稿 / Ctrl+S / closing the composer: saves locally first. Then
+  `save_server_draft` builds a fresh compose with exactly the current content
+  (attachments and pictures uploaded once) and runs `save`. After the server confirms,
+  the draft it replaces is **moved to 已删除**, which is a move and can be restored.
+  The local copy is then removed: the server copy is the record. Autosave (every 20 s)
+  stays local only.
+- Sending, plain or encrypted, works the same way: the old draft moves to 已删除
+  once the server accepts the mail.
 - Encrypted or signed drafts are **never** written to the server
   (`DRAFT_ENCRYPTED_LOCAL`). They stay in 本机草稿, encrypted at rest.
 - Scheduled drafts: use 取消定时 first (`DRAFT_SCHEDULED`). Shared-mailbox drafts

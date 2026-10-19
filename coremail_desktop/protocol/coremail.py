@@ -440,14 +440,19 @@ class CoremailAdapter:
             content=fill_inline(template,[self._session.compose_data_url(compose_id,item['id']) for item in inline])
             self._compose_attachments[compose_id]=(draft,attachments+inline,content)
         return compose_id
+    def _retire_draft(self,draft,response):
+        """After the edited copy of a server draft was saved or sent, move the draft it
+        replaces to the trash (a move, so it can be restored). A fresh compose is used
+        instead of reopening the draft (compose.jsp ctype=draft): a reopened session
+        keeps the draft's own attachments, so re-uploading doubled them, and the
+        pre-encoded deliver left the reopened draft in place (verified 2026-10-19,
+        analysis/compose-v05-real-verification-2026-10-18.json)."""
+        old=getattr(draft,'server_draft_id','')
+        if old and isinstance(response,dict) and response.get('code')=='S_OK':
+            try: self.move_message(old,self.TRASH_FOLDER_ID)
+            except AppError: pass  # The edited copy is already safe; at worst the old one stays.
+        return response
     def _compose_session(self, draft, encrypted=False):
-        if getattr(draft,'server_draft_id',''):
-            # Editing a server draft: reopen it as webmail does (compose.jsp ctype=draft).
-            # Saving or delivering this session replaces / consumes that draft (verified
-            # 2026-10-18: one copy under a new id after save; none left after deliver).
-            try: value=self._session.open_draft(draft.server_draft_id)
-            except CoremailError as error: raise AppError(error.code) from None
-            return value['id']
         if draft.mode in ('reply','reply_all'):
             # Restoring a draft under another session must not bind its reply to
             # an unrelated remote message. The parent Message-ID is the contract.
@@ -477,7 +482,7 @@ class CoremailAdapter:
         finally: self._compose_attachments.pop(compose_id,None)
         # A scheduled save is confirmed by the stored copy the server reports back.
         if action=='schedule' and not isinstance(response.get('scheduledSent'),dict): raise AppError('INVALID_RESPONSE')
-        return response
+        return self._retire_draft(draft,response)
     def _prepared(self,compose_id,draft):
         """Compose attrs with the uploads create_compose made for this exact draft."""
         from coremail_desktop.compose.inline import has_inline
@@ -497,6 +502,7 @@ class CoremailAdapter:
             response=self._call('%mbox/compose',{'action':'save','id':compose_id,'returnInfo':True,'attrs':attrs})
         finally: self._compose_attachments.pop(compose_id,None)
         if not isinstance(response.get('draftId'),str) or not response['draftId']: raise AppError('DRAFT_SAVE_UNCONFIRMED')
+        self._retire_draft(draft,response)
         return response['draftId']
     def match_contacts(self,keyword,limit=8):
         """Organization directory autocomplete; shape verified read-only 2026-10-17."""
@@ -714,7 +720,7 @@ class CoremailAdapter:
         compose_id=self._compose_session(draft,encrypted=True)
         fields={'returnInfo':'true','account':attrs['account'],'to':','.join(attrs['to']),'cc':','.join(attrs['cc']),'bcc':','.join(attrs['bcc']),
                 'subject':attrs['subject'],'isHtml':'false','saveSentCopy':'true'}
-        return self._session.deliver_preencoded(compose_id,fields,payload.decode('ascii'))
+        return self._retire_draft(draft,self._session.deliver_preencoded(compose_id,fields,payload.decode('ascii')))
     def delivery_history(self,message_id,mboxa=''):
         """Per-recipient delivery records of a sent message.
 
