@@ -197,7 +197,7 @@
   </div>
   <div class="cmp-fields">
     <div class="cmp-row" id="row-from"><label>发件人</label><select id="cmp-from"></select></div>
-    <div class="cmp-row"><label>收件人</label><div class="chips" data-field="to"></div><span class="cmp-toggles"><a data-show="cc">抄送</a><a data-show="bcc">密送</a></span></div>
+    <div class="cmp-row"><label>收件人</label><div class="chips" data-field="to"></div><span class="cmp-toggles"><a data-show="cc">抄送</a><a data-show="bcc">密送</a><a id="cmp-groups" title="一键添加收件人组的成员；也可以把当前收件人存为组">收件人组</a></span></div>
     <div class="cmp-row hidden" id="row-cc"><label>抄送</label><div class="chips" data-field="cc"></div></div>
     <div class="cmp-row hidden" id="row-bcc"><label>密送</label><div class="chips" data-field="bcc"></div></div>
     <div class="cmp-row"><label>主题</label><input id="cmp-subject" type="text" spellcheck="false"></div>
@@ -239,6 +239,8 @@
   <div id="cmp-drop" class="drop-hint hidden">松开以添加附件</div>
 </div>
 <div id="suggest" class="suggest hidden" role="listbox"></div>
+<div id="img-tools" class="img-tools hidden"><span class="muted small">宽度</span><input type="range" min="16" max="800"><span class="w small"></span>
+  <button data-w="120">小</button><button data-w="240">中</button><button data-w="480">大</button><button data-w="orig">原始大小</button><button data-w="del" class="danger">删除</button></div>
 
 <!-- Settings -->
 <div id="settings" class="modal hidden" role="dialog" aria-label="设置">
@@ -272,16 +274,21 @@
       </section>
       <section>
         <h3>邮件签名</h3>
-        <p class="muted small">自动添加到新邮件、回复和转发中。</p>
+        <p class="muted small">自动添加到新邮件、回复和转发中。可以放图片（如公司 LOGO），点击图片调整大小；图片随邮件内嵌发出，收件人不必联网加载，加密和签名邮件中同样有效。</p>
         <div class="cmp-toolbar mini" id="sig-toolbar">
           <button data-cmd="bold"><b>B</b></button><button data-cmd="italic"><i>I</i></button>
           <label class="color-btn" title="文字颜色">A<input type="color" id="sig-color" value="#1d4ed8"></label>
+          <button id="sig-image" title="插入图片（如公司 LOGO；也可以直接粘贴或拖入）。点击图片可调整大小"><i data-icon="image"></i></button>
         </div>
         <div id="pref-signature" class="sig-editor" contenteditable="true"></div>
         <div class="row-end"><button class="btn primary" id="btn-save-settings">保存设置</button></div>
         <h3 id="tpl-section">邮件模板</h3>
         <p class="muted small">在写信窗口点「模板」可把当前邮件存为模板；点「写邮件」旁的箭头从模板新建。模板只保存在这台电脑，已加密。以下修改立即生效。</p>
         <div id="tpl-list" class="tpl-list"></div>
+        <h3 id="grp-section">收件人组</h3>
+        <p class="muted small">把常一起写信的人存为一个组，每人可设为主送或抄送；写信时点收件人旁的「收件人组」一键添加，重复的人自动去掉。组只保存在这台电脑，已加密。</p>
+        <div id="grp-list" class="tpl-list"></div>
+        <div class="row-gap"><button class="btn ghost sm" id="grp-new">新建收件人组…</button></div>
       </section>
     </div>
   </div>
@@ -307,5 +314,8 @@
 <script src="contacts.js"></script>
 <script src="rules.js"></script>
 <script src="manage.js"></script>
+<script src="signature.js"></script>
+<script src="groups.js"></script>
+<script src="mention.js"></script>
 </body>
 </html>

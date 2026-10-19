@@ -34,6 +34,12 @@ MAX_EML_BYTES = 40 * 1024 * 1024
 # Column widths the page may store (px); the page enforces the same bounds while dragging.
 WIDTH_LIMITS = {'sidebarWidth': (180, 400), 'listWidth': (280, 900)}
 TEMPLATE_LIMIT = 100
+# 邮件签名: pictures (a company logo) live in the HTML as data: URIs and go out as
+# inline cid: parts like any body image (compose/inline.py).
+SIGNATURE_IMAGES, SIGNATURE_IMAGE_BYTES, SIGNATURE_TEXT = 5, 1024 * 1024, 20000
+# 收件人组: local only (encrypted cache kv), never on the server.
+GROUP_LIMIT, GROUP_MEMBERS, GROUP_FIELDS = 100, 200, ('to', 'cc')
+ADDRESS_RE = re.compile(r'^[^\s<>@,;"]+@[^\s<>@,;"]+\.[^\s<>@,;"]+$')
 # Coremail system folder ids. Used only for icons and ordering; the name shown is
 # always the server's own folder name.
 SYSTEM_ROLES = {'1': 'inbox', '2': 'drafts', '3': 'sent', '4': 'trash', '5': 'spam', '6': 'virus'}
@@ -95,6 +101,17 @@ def _image_uri(raw, limit=256 * 1024):
         return ''
     kind = 'png' if raw.startswith(b'\x89PNG\r\n') else 'jpeg' if raw.startswith(b'\xff\xd8\xff') else 'gif' if raw.startswith((b'GIF87a', b'GIF89a')) else ''
     return f'data:image/{kind};base64,' + base64.b64encode(bytes(raw)).decode('ascii') if kind else ''
+
+
+def _check_signature(signature):
+    """The signature's pictures and text within SIGNATURE_* (the text counted without them)."""
+    try:
+        template, images = extract_inline(signature)
+    except AppError:
+        raise AppError('INVALID_SIGNATURE') from None
+    if (len(images) > SIGNATURE_IMAGES or sum(len(i.payload) for i in images) > SIGNATURE_IMAGE_BYTES
+            or len(template) > SIGNATURE_TEXT):
+        raise AppError('SIGNATURE_TOO_LARGE')
 
 
 def _people(value):
@@ -369,7 +386,7 @@ class MailBackend:
             if key in DEFAULT_PREFS and type(value) is type(DEFAULT_PREFS[key]):
                 prefs[key] = value
         prefs['pollSeconds'] = max(30, min(int(prefs['pollSeconds']), 3600))
-        prefs['signature'] = prefs['signature'][:20000]
+        _check_signature(prefs['signature'])
         if prefs['undoSeconds'] not in UNDO_CHOICES:
             prefs['undoSeconds'] = DEFAULT_PREFS['undoSeconds']
         for key, (low, high) in WIDTH_LIMITS.items():
@@ -1496,6 +1513,90 @@ class MailBackend:
     def delete_template(self, template_id):
         self.cache.set('templates', [t for t in self.cache.get('templates', []) if t['id'] != template_id])
         return self.templates()
+
+    # Recipient groups (收件人组): named lists of people, each as 主送 or 抄送 -------
+    # Local only, in the encrypted cache kv. Applying one only fills the composer;
+    # encryption is still decided from the resulting recipients.
+    def recipient_groups(self):
+        return sorted(self.cache.get('recipient_groups', []), key=lambda g: g['name'].casefold())
+
+    @staticmethod
+    def _group_members(members):
+        """[{name, email, field}] checked and de-duplicated; one address appears once,
+        主送 winning over 抄送."""
+        result, index = [], {}
+        for member in list(members or ())[:GROUP_MEMBERS + 1]:
+            member = dict(member or {}) if isinstance(member, dict) else {'email': member}
+            name, email = parseaddr(str(member.get('email') or ''))
+            name = str(member.get('name') or name or '').replace('"', '').replace('<', '').replace('>', '').strip()[:80]
+            field = member.get('field', 'to')
+            if not ADDRESS_RE.match(email) or len(email) > 254 or field not in GROUP_FIELDS:
+                raise AppError('INVALID_GROUP')
+            key = email.casefold()
+            if key in index:
+                kept = result[index[key]]
+                kept.update(field='to' if 'to' in (kept['field'], field) else 'cc', name=kept['name'] or name)
+                continue
+            index[key] = len(result)
+            result.append({'name': name, 'email': email, 'field': field})
+        if not result or len(result) > GROUP_MEMBERS:
+            raise AppError('INVALID_GROUP')
+        return result
+
+    def save_recipient_group(self, value):
+        """Create (no id) or replace a group. Names are unique, ignoring case."""
+        value = dict(value or {})
+        name = str(value.get('name') or '').strip()
+        if not name or len(name) > 40 or '\n' in name:
+            raise AppError('INVALID_GROUP')
+        members = self._group_members(value.get('members'))
+        stored = self.cache.get('recipient_groups', [])
+        group_id = value.get('id')
+        same = next((g for g in stored if g['id'] == group_id), None) if group_id else None
+        if group_id and same is None:
+            raise AppError('GROUP_NOT_FOUND')
+        if any(g['name'].casefold() == name.casefold() and g is not same for g in stored):
+            raise AppError('GROUP_EXISTS')
+        if same is None and len(stored) >= GROUP_LIMIT:
+            raise AppError('GROUP_LIMIT')
+        group = {'id': same['id'] if same else uuid.uuid4().hex, 'name': name, 'members': members,
+                 'modified': datetime.now().strftime('%Y-%m-%d %H:%M')}
+        self.cache.set('recipient_groups', [group if g is same else g for g in stored] + ([] if same else [group]))
+        return group
+
+    def delete_recipient_group(self, group_id):
+        self.cache.set('recipient_groups', [g for g in self.cache.get('recipient_groups', []) if g['id'] != group_id])
+        return self.recipient_groups()
+
+    def apply_recipient_groups(self, group_ids, to=(), cc=(), bcc=()):
+        """The composer's recipients with the groups' members appended: 主送 members to
+        主送, 抄送 to 抄送. An address already anywhere in the message (or added by an
+        earlier group) is not added again. Returns the lists and how many were added."""
+        groups = {g['id']: g for g in self.cache.get('recipient_groups', [])}
+        if not group_ids or any(i not in groups for i in group_ids):
+            raise AppError('GROUP_NOT_FOUND')
+        lists = {'to': [str(a) for a in to or ()], 'cc': [str(a) for a in cc or ()]}
+        seen = {parseaddr(a)[1].casefold() for a in [*lists['to'], *lists['cc'], *map(str, bcc or ())]}
+        added = 0
+        for group_id in group_ids:
+            for member in groups[group_id]['members']:
+                key = member['email'].casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                lists[member['field']].append(f'"{member["name"]}" <{member["email"]}>' if member['name'] else member['email'])
+                added += 1
+        return {**lists, 'added': added}
+
+    def message_recipients(self, mid):
+        """A message's 主送 and 抄送 people (without the user's own addresses), for
+        saving them as a group."""
+        document = self._document(mid)
+        own = {i.casefold() for i in self.identities}
+        members = [{'name': p['name'], 'email': p['email'], 'field': field}
+                   for field in GROUP_FIELDS for p in _people([str(v) for v in document.headers.get(field, ())])
+                   if ADDRESS_RE.match(p['email']) and p['email'].casefold() not in own]
+        return self._group_members(members[:GROUP_MEMBERS]) if members else []
 
     # Print and export --------------------------------------------------------
     def file_stem(self, mid):

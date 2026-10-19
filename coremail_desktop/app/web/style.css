@@ -309,7 +309,7 @@ body.resizing iframe { pointer-events: none; }
 .cmp-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
 .cmp-foot .btn.primary { min-width: 96px; }
 .drop-hint { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(37,99,235,.08); border: 2px dashed var(--accent); border-radius: 12px; color: var(--accent); font-weight: 600; font-size: 16px; pointer-events: none; }
-.suggest { position: fixed; z-index: 40; min-width: 320px; max-width: 460px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; max-height: 320px; overflow: auto; }
+.suggest { position: fixed; z-index: 55; min-width: 320px; max-width: 460px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; max-height: 320px; overflow: auto; }
 .sug { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
 .sug.on, .sug:hover { background: var(--hover); }
 .sug .t { min-width: 0; flex: 1; }
@@ -660,3 +660,29 @@ i.flip { transform: rotate(180deg); }
   #folder-list .folder { padding: 0; }
   .pv-head .btn span { display: none; }
 }
+
+/* v0.7 signature pictures, recipient groups, @mentions */
+.sig-editor img, .cmp-editor img { max-width: 100%; cursor: pointer; }
+img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
+.img-tools { position: fixed; z-index: 58; display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.img-tools input[type=range] { width: 140px; }
+.img-tools .w { min-width: 46px; color: var(--text-2); }
+.img-tools button { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 12.5px; cursor: pointer; }
+.img-tools button:hover { background: var(--hover); }
+.img-tools button.danger { color: var(--danger, #d92d20); }
+.grp-add { display: flex; gap: 8px; margin-top: 10px; }
+.grp-add input { flex: 1; }
+.modal .grp-add select { width: 80px; flex: none; }
+.grp-head { display: flex; align-items: center; gap: 12px; margin: 10px 0 4px; min-height: 18px; }
+.grp-head a { cursor: pointer; color: var(--text-2); }
+.grp-head a:hover { color: var(--accent); }
+.grp-members { display: grid; gap: 2px; max-height: 300px; overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; padding: 4px; min-height: 60px; }
+.grp-row { display: flex; align-items: center; gap: 10px; padding: 4px 6px; border-radius: 7px; }
+.grp-row:hover { background: var(--hover); }
+.grp-row .t { flex: 1; min-width: 0; }
+.grp-row .t div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grp-row .icon-btn { width: 26px; height: 26px; font-size: 16px; }
+.grp-empty { padding: 12px; text-align: center; }
+.seg.sm button { padding: 2px 8px; font-size: 12px; }
+.modal-card:has(.grp-members) { width: 560px; }
+.cmp-editor .hy-mention { white-space: nowrap; }

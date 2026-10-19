@@ -960,6 +960,7 @@ function moreMenu(button, m) {
   const r = button.getBoundingClientRect();
   showMenu(r.left, r.bottom + 4, [
     { label: '作为附件转发', icon: 'clip', run: () => startCompose('forward_attach', m.id) },
+    ...(m.imported ? [] : [{ label: '将收件人存为收件人组…', icon: 'contacts', run: () => groupFromMessage(m) }]),
     '-',
     { label: '打印…', icon: 'print', run: () => printMessage(m) },
     { label: '导出为 PDF…', icon: 'file', run: () => exportPdf(m) },
@@ -1269,6 +1270,7 @@ function openComposer(draft) {
   $('#cmp-receipt').checked = !!draft.receipt;
   renderSchedule();
   composerOpened(draft);
+  mentionsReset();
   setTimeout(() => {
     if (!(draft.to || []).length) $('.chips[data-field="to"] input').focus();
     else { const ed = $('#cmp-editor'); ed.focus(); const r = document.createRange(); r.setStart(ed, 0); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
@@ -1370,10 +1372,11 @@ function wireChipInput(box, input) {
     if (/[,;\n]/.test(text)) { e.preventDefault(); for (const p of parseAddressList(text)) addChip(box, input, p); }
   });
 }
-function showSuggest(box, input, items) {
-  sug.items = items; sug.index = 0; sug.box = box; sug.input = input;
+// opts.pick replaces adding a chip (group editor, @mention); opts.rect places the list.
+function showSuggest(box, input, items, opts = {}) {
+  sug.items = items; sug.index = 0; sug.box = box; sug.input = input; sug.pick = opts.pick || null;
   if (!items.length) { hideSuggest(); return; }
-  const r = input.getBoundingClientRect();
+  const r = opts.rect || input.getBoundingClientRect();
   const el = $('#suggest');
   el.style.left = r.left + 'px'; el.style.top = r.bottom + 4 + 'px';
   el.classList.remove('hidden');
@@ -1383,10 +1386,14 @@ function drawSuggest() {
   const el = $('#suggest');
   el.innerHTML = sug.items.map((p, i) => `<div class="sug${i === sug.index ? ' on' : ''}" data-i="${i}">${avatarHtml(p.name, p.email, 'sm')}
     <div class="t"><div>${esc(p.name || p.email)}</div><div class="muted small">${esc(p.email)}</div></div>
-    <span class="src">${p.source === 'directory' ? '通讯录' : '最近联系'}</span></div>`).join('');
-  $$('.sug', el).forEach((d) => (d.onmousedown = (e) => { e.preventDefault(); addChip(sug.box, sug.input, sug.items[+d.dataset.i]); sug.input.focus(); }));
+    <span class="src">${{ directory: '通讯录', recipient: '收件人' }[p.source] || '最近联系'}</span></div>`).join('');
+  $$('.sug', el).forEach((d) => (d.onmousedown = (e) => { e.preventDefault(); pickSuggest(+d.dataset.i); }));
 }
-function hideSuggest() { $('#suggest').classList.add('hidden'); sug.input = null; }
+function pickSuggest(i) {
+  const item = sug.items[i], input = sug.input;
+  if (sug.pick) { const pick = sug.pick; hideSuggest(); pick(item); } else { addChip(sug.box, input, item); input.focus(); }
+}
+function hideSuggest() { $('#suggest').classList.add('hidden'); sug.input = null; sug.pick = null; }
 
 function renderAtts() {
   const atts = C.draft.attachments || [];
@@ -1468,9 +1475,11 @@ $('#fmt-color').oninput = (e) => execIn($('#cmp-editor'), 'foreColor', e.target.
 $('#fmt-hilite').oninput = (e) => execIn($('#cmp-editor'), 'hiliteColor', e.target.value);
 $('#sig-color').oninput = (e) => execIn($('#pref-signature'), 'foreColor', e.target.value);
 
-function collectDraft() {
+// send: the copy that leaves (mentions lose their editing-only attributes).
+function collectDraft(send = false) {
+  const html = cleanPicked($('#cmp-editor').innerHTML);
   const value = { ...C.draft, from: $('#cmp-from').value || C.draft.from, to: chipsValue('to'), cc: chipsValue('cc'), bcc: chipsValue('bcc'),
-    subject: $('#cmp-subject').value, html: $('#cmp-editor').innerHTML };
+    subject: $('#cmp-subject').value, html: send ? outgoingHtml(html) : html };
   value.encrypt = encryptOn();
   value.sign = signOn();
   value.receipt = $('#cmp-receipt').checked;
@@ -1536,7 +1545,7 @@ async function saveDraft(quiet, server = !!(C.draft && C.draft.serverDraftId)) {
   } catch (err) { $('#cmp-status').textContent = '草稿保存失败'; if (!quiet) fail(err); return null; }
 }
 async function sendMail() {
-  const value = collectDraft();
+  const value = collectDraft(true);
   if (!value.to.length && !value.cc.length && !value.bcc.length) { toast('请至少填写一个收件人', { error: true }); $('.chips[data-field="to"] input').focus(); return; }
   const bad = [...value.to, ...value.cc, ...value.bcc].map((a) => parseAddressList(a)[0]).filter((p) => !EMAIL_RE.test(p.email));
   if (bad.length) { toast(`收件人地址无效：${bad[0].email}`, { error: true }); return; }
@@ -1718,6 +1727,7 @@ function openSettings() {
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
   renderCertStatus();
   renderTemplates(); loadTemplates().then(renderTemplates);
+  renderGroups(); loadGroups().then(renderGroups);
   api('runtimeStatus').then((r) => { $('#runtime-note').classList.toggle('hidden', r.sandboxed); $('#data-dir').textContent = '本机数据（已加密）：' + r.dataDir; }).catch(() => {});
   api('certificateStatus').then((c) => { S.profile.certificate = c; renderCertStatus(); }).catch(() => {});
 }
@@ -1733,7 +1743,7 @@ $('#btn-account').onclick = openSettings;
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, pollSeconds: +$('#pref-poll').value,
-    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, signature: $('#pref-signature').innerHTML.replace(/^(<br>)+$/, '') };
+    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, signature: signatureHtml() };
   try {
     S.prefs = await api('setPrefs', { values });
     applyTheme(S.prefs.theme, S.prefs.density);

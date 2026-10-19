@@ -218,6 +218,8 @@ class DemoAdapter:
         message = EmailMessage()
         message['From'], message['To'], message['Subject'] = r['from'], r['to'], r['subject']
         message['Date'] = r['date']
+        if r.get('cc'):
+            message['Cc'] = r['cc']
         message['Message-ID'] = f'<{message_id}{mboxa.replace("@", ".")}@example.invalid>'
         if message_id == OUTLOOK_DEMO_ID and not mboxa:
             return _outlook_style(message)
@@ -424,7 +426,7 @@ class DemoAdapter:
         mid = f'demo-new{self._counter}'
         scheduled = bool(getattr(draft, 'schedule_at', None))
         self.rows[mid] = {'id': mid, 'fid': '2' if scheduled else '3', 'subject': draft.subject, 'from': '"演示用户" <demo@example.invalid>',
-                          'to': ', '.join(draft.to), 'date': datetime(2026, 10, 17, 10, 31).strftime('%Y-%m-%d %H:%M:%S'),
+                          'to': ', '.join(draft.to), 'cc': ', '.join(draft.cc), 'date': datetime(2026, 10, 17, 10, 31).strftime('%Y-%m-%d %H:%M:%S'),
                           'flags': {'read': True, 'scheduleDelivery': True} if scheduled else {'read': True, 'rcptQueued': True},
                           'scheduleAt': draft.schedule_at, 'html': draft.body if draft.is_html else None, 'files': draft.attachments}
         return {'code': 'S_OK', **({'scheduledSent': {'mid': mid}} if scheduled else {})}
@@ -439,7 +441,7 @@ class DemoAdapter:
         self._counter += 1
         mid = f'demo-draft-s{self._counter}'
         self.rows[mid] = {'id': mid, 'fid': '2', 'subject': draft.subject, 'from': '"演示用户" <demo@example.invalid>',
-                          'to': ', '.join(draft.to), 'date': datetime(2026, 10, 17, 10, 32).strftime('%Y-%m-%d %H:%M:%S'),
+                          'to': ', '.join(draft.to), 'cc': ', '.join(draft.cc), 'date': datetime(2026, 10, 17, 10, 32).strftime('%Y-%m-%d %H:%M:%S'),
                           'flags': {'read': True, 'draft': True, 'attached': bool(draft.attachments)},
                           'html': draft.body, 'files': draft.attachments}
         return mid
