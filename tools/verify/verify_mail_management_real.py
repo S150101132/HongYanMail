@@ -26,6 +26,7 @@ from coremail_desktop.errors import AppError  # noqa: E402
 from tools.probes.probe_smime_send2 import ACCOUNT, ask  # noqa: E402
 
 REPORT = {'date': time.strftime('%Y-%m-%d %H:%M')}
+MARK = '鸿雁 邮件管理验证 HYM-'  # Every test mail's subject starts with this; cleanup removes all of them.
 
 
 def code_of(fn, *args, **kw):
@@ -93,7 +94,7 @@ def main():
         # 3. Mail sent to the account itself.
         def send(tag):
             value = backend.compose('new')
-            value.update({'to': [ACCOUNT], 'subject': f'鸿雁 邮件管理验证 {run}-{tag}', 'encrypt': False, 'html': '<p>测试邮件，验证后自动彻底删除。</p>'})
+            value.update({'to': [ACCOUNT], 'subject': f'{MARK}{run[4:]}-{tag}', 'encrypt': False, 'html': '<p>测试邮件，验证后自动彻底删除。</p>'})
             return backend.send(value)['state']
         REPORT['sent'] = [send(t) for t in ('A', 'B', 'C')]
         arrived = {t: find(backend, '1', f'{run}-{t}', 12) for t in ('A', 'B', 'C')}
@@ -136,21 +137,27 @@ def main():
     except AppError as error:
         REPORT['error'] = error.code
     finally:
-        try:  # Leave nothing behind: test folders, the test address, and every test copy.
+        try:  # Leave nothing behind: test folders, test addresses and every test copy -- also of an earlier, interrupted run.
             for fid in reversed(created):
                 REPORT.setdefault('cleanup_folders', []).append(code_of(backend.delete_folder, fid, mail='trash'))
+            leftovers = [f for f in backend.folders(refresh=True) if f['name'].startswith('HY测试') and not f['system']]
+            for f in sorted(leftovers, key=lambda f: -f['depth']):  # Children first; their mail goes to the trash, never deleted with them.
+                for child in [c for c in backend.folders(refresh=True) if c['parent'] == f['id']]:
+                    REPORT.setdefault('cleanup_old_folders', []).append(code_of(backend.delete_folder, child['id'], mail='trash'))
+                REPORT.setdefault('cleanup_old_folders', []).append(code_of(backend.delete_folder, f['id'], mail='trash'))
             lists = backend.sender_lists()
             for kind in ('safelist', 'refuselist'):
-                if test_address in lists[kind]:
-                    backend.remove_sender(kind, test_address)
-                    REPORT['cleanup_address'] = True
-            stray = [r['id'] for fid in ('1', '2', '3', '5') for r in backend.messages(fid, 0, 60)['rows'] if run in r['subject']]
+                for entry in [e for e in lists[kind] if e.startswith('hongyan-test-') and e.endswith('@example.invalid')]:
+                    backend.remove_sender(kind, entry)
+                    REPORT['cleanup_address'] = REPORT.get('cleanup_address', 0) + 1
+            stray = [r['id'] for fid in ('1', '2', '3', '5') for r in backend.messages(fid, 0, 60)['rows'] if MARK in r['subject']]
             if stray:
                 backend.move(stray, '4')
-            trash = [r['id'] for r in backend.messages('4', 0, 100)['rows'] if run in r['subject']]
+            trash = [r['id'] for r in backend.messages('4', 0, 100)['rows'] if MARK in r['subject']]
             if trash:
                 REPORT['cleanup_purged'] = len(backend.purge(trash)['done'])
-            REPORT['cleanup_left'] = sum(1 for fid in ('1', '2', '3', '4', '5') for r in backend.messages(fid, 0, 60)['rows'] if run in r['subject'])
+            REPORT['cleanup_left'] = sum(1 for fid in ('1', '2', '3', '4', '5') for r in backend.messages(fid, 0, 60)['rows'] if MARK in r['subject'])
+            REPORT['cleanup_left_folders'] = sum(f['name'].startswith('HY测试') for f in backend.folders(refresh=True))
         except AppError as error:
             REPORT['cleanup_error'] = error.code
         backend.logout()
