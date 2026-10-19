@@ -24,7 +24,7 @@ EXCLUDED_MODULES = [
     'PySide6.QtUiTools', 'PySide6.QtTest', 'PySide6.QtSql', 'PySide6.QtBluetooth',
     'PySide6.QtNfc', 'PySide6.QtSerialPort', 'PySide6.QtSerialBus', 'PySide6.QtRemoteObjects',
     'PySide6.QtScxml', 'PySide6.QtSensors', 'PySide6.QtSpatialAudio', 'PySide6.QtTextToSpeech',
-    'PySide6.QtWebSockets', 'PySide6.QtOpenGLWidgets', 'PySide6.QtPdf',
+    'PySide6.QtWebSockets', 'PySide6.QtOpenGLWidgets',
     'PySide6.QtPdfWidgets', 'PySide6.QtNetworkAuth', 'PySide6.QtHelp', 'PySide6.QtLocation',
     'tkinter', 'unittest', 'pydoc', 'doctest', 'test',
 ]
@@ -45,7 +45,7 @@ PROVEN_REMOVABLE = [
     'Qt6LabsQmlModels.dll', 'Qt6LabsSettings.dll', 'Qt6LabsSharedImage.dll', 'Qt6LabsStyleKit.dll',
     'Qt6LabsStyleKitImpl.dll', 'Qt6LabsSynchronizer.dll', 'Qt6LabsWavefrontMesh.dll',
     'Qt6Location.dll', 'Qt6Multimedia.dll', 'Qt6MultimediaQuick.dll',
-    'Qt6OpenGLWidgets.dll', 'Qt6Pdf.dll', 'Qt6PdfQuick.dll', 'Qt6RemoteObjects.dll',
+    'Qt6OpenGLWidgets.dll', 'Qt6PdfQuick.dll', 'Qt6RemoteObjects.dll',
     'Qt6RemoteObjectsQml.dll', 'Qt6Scxml.dll', 'Qt6ScxmlQml.dll', 'Qt6Sensors.dll',
     'Qt6SensorsQuick.dll', 'Qt6SerialPort.dll', 'Qt6ShaderTools.dll', 'Qt6SpatialAudio.dll',
     'Qt6Sql.dll', 'Qt6Test.dll', 'Qt6TextToSpeech.dll', 'Qt6VirtualKeyboard.dll',
@@ -58,7 +58,8 @@ a = Analysis(
     binaries=[],
     # The daily-use interface is HTML/CSS/JS served from the private hongyan:// scheme.
     datas=[(str(root / 'coremail_desktop' / 'app' / 'web'), 'coremail_desktop/app/web')],
-    hiddenimports=['PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore', 'PySide6.QtWebChannel'],
+    # QtPdf renders PDF attachment pages to images for the in-app preview (app/shell.py).
+    hiddenimports=['PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore', 'PySide6.QtWebChannel', 'PySide6.QtPdf'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

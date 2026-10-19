@@ -136,6 +136,9 @@ class DemoAdapter:
                           ('demo9', ['16']), (INVITE_ID, ['x19a1f0c0002'])):
             self.rows[mid]['tag'] = tags
         self.responses = []
+        self.parents = {}  # Sub-folder id -> parent id.
+        self.lists = {'safelist': ['partner@external.example'], 'refuselist': ['*@spam.example', 'ads@promo.example']}
+        self.reports = []
         self.last_folder_total = None
         self.last_folder_id = None
         self.signed_in = False
@@ -178,7 +181,8 @@ class DemoAdapter:
         for fid, name in folders.items():
             rows = [r for r in store.values() if r['fid'] == fid]
             result.append(Folder(fid, name, None, {'messageCount': len(rows),
-                                                   'unreadMessageCount': sum(not r['flags']['read'] for r in rows)}))
+                                                   'unreadMessageCount': sum(not r['flags']['read'] for r in rows)},
+                                 None if mboxa else self.parents.get(fid), int(fid) <= 6))
         return result
 
     def _summary(self, r):
@@ -212,6 +216,9 @@ class DemoAdapter:
         message.add_alternative(BODY, subtype='html')
         if r['flags'].get('attached'):
             message.add_attachment('演示附件内容\n'.encode('utf-8'), maintype='text', subtype='plain', filename='会议纪要.txt')
+        if message_id == PREVIEW_DEMO_ID and not mboxa:  # Previewable kinds: an image and a two-page PDF.
+            message.add_attachment(_demo_chart(), maintype='image', subtype='png', filename='进度图表.png')
+            message.add_attachment(_demo_pdf(), maintype='application', subtype='pdf', filename='评审报告.pdf')
         return bytes(message)
 
     # Mirrors the deployment: every advanced-search filter is applied by the server.
@@ -313,6 +320,54 @@ class DemoAdapter:
         for mid in message_ids:
             self._store(mboxa)[1][mid]['fid'] = folder_id
         return list(message_ids)
+
+    # Folder management, permanent deletion, spam reports and sender lists.
+    def create_folder(self, name, parent=None, mboxa=''):
+        self._need()
+        self._counter += 1
+        fid = str(200 + self._counter)
+        self.folders[fid] = name
+        if parent:
+            self.parents[fid] = str(parent)
+        return fid
+
+    def rename_folder(self, folder_id, name, mboxa=''):
+        self.folders[str(folder_id)] = name
+        return True
+
+    def delete_folder(self, folder_id, mboxa=''):
+        if any(r['fid'] == str(folder_id) for r in self.rows.values()):
+            raise AppError('FOLDER_NOT_EMPTY')
+        self.folders.pop(str(folder_id))
+        self.parents.pop(str(folder_id), None)
+        return True
+
+    def delete_messages(self, message_ids, mboxa=''):
+        for mid in message_ids:
+            self._store(mboxa)[1].pop(mid, None)
+        return list(message_ids)
+
+    def empty_folder(self, folder_id, mboxa=''):
+        store = self._store(mboxa)[1]
+        for mid in [m for m, r in store.items() if r['fid'] == str(folder_id)]:
+            del store[mid]
+        return True
+
+    def report_spam(self, message_ids, spam=True):
+        self.reports.append(('spam' if spam else 'notspam', list(message_ids)))
+        return self.move_many(message_ids, '5' if spam else '1')
+
+    def unread_ids(self, folder_id, mboxa='', limit=5000):
+        rows = self._store(mboxa)[1].values()
+        return [r['id'] for r in sorted(rows, key=lambda r: r['date'], reverse=True) if r['fid'] == str(folder_id) and not r['flags']['read']][:limit]
+
+    def sender_lists(self):
+        self._need()
+        return {k: list(v) for k, v in self.lists.items()}
+
+    def set_sender_lists(self, lists):
+        self.lists.update({k: list(v) for k, v in lists.items()})
+        return True
 
     def match_contacts(self, keyword, limit=8):
         people = dict.fromkeys(PEOPLE + [(n, a) for staff in self.STAFF.values() for n, a, _ in staff])
@@ -460,6 +515,55 @@ class DemoAdapter:
             raise AppError('INVITE_UNAVAILABLE')
         self.responses.append((message_id, answer))
         return {'answer': answer, 'type': {'tentative': 2, 'accept': 3, 'decline': 4}[answer]}
+
+
+PREVIEW_DEMO_ID = 'demo1'
+
+
+def _demo_chart(width=480, height=300):
+    """A synthetic bar chart PNG (no text) for the attachment preview."""
+    import struct
+    import zlib
+    bars = [(60, 120, (37, 99, 235)), (150, 200, (124, 58, 237)), (240, 90, (5, 150, 105)), (330, 170, (234, 88, 12))]
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            color = (255, 255, 255) if (x + y) % 2 or y % 40 else (226, 232, 240)
+            for left, h, c in bars:
+                if left <= x < left + 60 and height - 30 - h <= y < height - 30:
+                    color = c
+            if y == height - 30 or x == 30:
+                color = (100, 116, 139)
+            rows += bytes(color)
+    chunk = lambda tag, data: struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(bytes(rows))) + chunk(b'IEND', b''))
+
+
+def _demo_pdf():
+    """A small two-page PDF (Helvetica text and boxes only) for the attachment preview."""
+    pages = []
+    for n, lines in enumerate((['Design Review Report (demo)', 'Hongyan mail client - synthetic data', '1. Sidebar layout', '2. Folder management',
+                                '3. Spam handling', '4. Attachment preview'], ['Page 2', 'Action items', '- Verify on the real server', '- Package and test'])):
+        text = ''.join(f'BT /F1 {22 if i == 0 else 13} Tf 72 {760 - i * 34} Td ({s}) Tj ET\n' for i, s in enumerate(lines))
+        boxes = '0.15 0.39 0.92 rg 72 300 120 160 re f 0.49 0.23 0.93 rg 212 300 120 220 re f 0.02 0.59 0.41 rg 352 300 120 100 re f\n' if n == 0 else ''
+        pages.append(text + boxes)
+    count = len(pages)
+    objects = ['<< /Type /Catalog /Pages 2 0 R >>',
+               '<< /Type /Pages /Kids [' + ' '.join(f'{4 + 2 * i} 0 R' for i in range(count)) + f'] /Count {count} >>',
+               '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>']
+    for i, content in enumerate(pages):
+        objects.append(f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents {5 + 2 * i} 0 R >>')
+        objects.append(f'<< /Length {len(content.encode())} >>\nstream\n{content}endstream')
+    out, offsets = bytearray(b'%PDF-1.4\n'), []
+    for i, body in enumerate(objects):
+        offsets.append(len(out))
+        out += f'{i + 1} 0 obj\n{body}\nendobj\n'.encode()
+    xref = len(out)
+    out += f'xref\n0 {len(objects) + 1}\n0000000000 65535 f \n'.encode() + b''.join(f'{o:010d} 00000 n \n'.encode() for o in offsets)
+    out += f'trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+    return bytes(out)
 
 
 def _demo_ics(cancel):

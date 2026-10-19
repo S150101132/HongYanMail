@@ -107,6 +107,19 @@ MESSAGES = {
     'TAG_UNCONFIRMED': '服务器没有确认标签的修改，请刷新后核对。',
     'INVITE_UNAVAILABLE': '服务器上找不到这封邀请对应的日程，无法在这里答复，请在网页版日历中处理。',
     'SHARED_UNAVAILABLE': '无法打开这个共享邮箱，可能已不再与你共享。',
+    'INVALID_FOLDER': '找不到这个文件夹，请刷新后重试。',
+    'INVALID_FOLDER_NAME': '文件夹名称不能为空，最长 12 个汉字或 24 个字母，且不能包含 % \' " \\ / : * ? < > | = , ^ 等字符。',
+    'FOLDER_EXISTS': '同一位置已有同名文件夹，请换一个名称。',
+    'FOLDER_DEPTH_LIMIT': '文件夹最多只能嵌套 5 层。',
+    'FOLDER_HAS_CHILDREN': '这个文件夹下还有子文件夹，请先删除或移走子文件夹。',
+    'FOLDER_NOT_EMPTY': '文件夹里还有邮件，未删除。请刷新后重试。',
+    'SYSTEM_FOLDER': '系统文件夹不能重命名或删除。',
+    'PURGE_NOT_ALLOWED': '只有「已删除」和「垃圾邮件」里的邮件可以彻底删除。',
+    'SPAM_NOT_ALLOWED': '这里的邮件不能举报为垃圾邮件。',
+    'INVALID_SENDER': '请输入有效的邮箱地址，或 *@域名 表示整个域名。',
+    'SENDER_IS_SELF': '不能把自己的邮箱地址或本单位域名加入黑名单。',
+    'SENDER_LIST_LIMIT': '名单最多 500 项，请先删除不用的条目。',
+    'PREVIEW_UNAVAILABLE': '这个附件不能在鸿雁里预览，请保存后用其他程序打开。',
 }
 
 GENERIC = '操作未完成。请检查连接或稍后重试，本应用不会自动重发邮件。'

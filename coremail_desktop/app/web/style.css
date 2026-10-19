@@ -588,3 +588,52 @@ img.avatar.photo { object-fit: cover; background: var(--line); }
 .pp-note { margin: 10px 0; }
 .pp-actions { display: flex; gap: 8px; margin-top: 4px; }
 .pp-actions .btn i { width: 15px; height: 15px; }
+
+/* v0.5 mail management (manage.js): folder tree, list header, spam, permanent deletion, sender lists, preview */
+#folder-list .folder { padding-left: calc(10px + var(--depth, 0) * 16px); }
+.folder.add-folder { color: var(--muted); }
+.folder.add-folder:hover { color: var(--accent); }
+.mg-hint { margin: 8px 0 0; }
+.mg-choice { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-top: 8px; cursor: pointer; }
+.mg-choice span { display: grid; gap: 2px; }
+.mg-choice input { margin-top: 3px; }
+.mg-check { display: flex; gap: 8px; align-items: center; }
+.icon-btn.danger:hover, .tb.danger:hover { color: var(--danger); }
+#prompt-ok.danger-solid { background: var(--danger); border-color: var(--danger); }
+.sl-sec { margin-bottom: 18px; }
+.sl-sec h3 { margin: 0 0 2px; font-size: 14.5px; display: flex; gap: 8px; align-items: baseline; }
+.sl-sec > p { margin: 0 0 8px; }
+.sl-add { display: flex; gap: 8px; margin-bottom: 8px; }
+.sl-add input { flex: 1; min-width: 0; }
+.sl-list { display: grid; gap: 2px; max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+.sl-row { display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px 8px; border-radius: 6px; }
+.sl-row:hover { background: var(--hover); }
+.sl-row span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sl-row .icon-btn { width: 26px; height: 26px; }
+.sl-empty { margin: 6px 8px; }
+.att .name.pv-link { cursor: pointer; }
+.att .name.pv-link:hover { color: var(--accent); text-decoration: underline; }
+.preview { z-index: 45; }
+.pv-card { width: min(1180px, calc(100vw - 40px)); height: calc(100vh - 40px); background: var(--panel); border-radius: 14px; box-shadow: var(--shadow); border: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
+.pv-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.pv-head b { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-head .ext { width: 24px; height: 24px; border-radius: 5px; display: grid; place-items: center; font-size: 8px; font-weight: 700; color: #fff; flex: none; }
+.pv-head .muted, .pv-head .btn, .pv-group { flex: none; }
+.pv-head .btn { height: 32px; padding: 0 10px; }
+.pv-head .btn i { width: 15px; height: 15px; }
+.pv-group { display: inline-flex; align-items: center; gap: 2px; padding: 0 4px; border-right: 1px solid var(--line); margin-right: 2px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.pv-group .icon-btn { font-size: 18px; }
+.pv-group .icon-btn:disabled { opacity: .35; cursor: default; }
+.pv-pct { min-width: 52px; height: 30px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; color: var(--text-2); }
+.pv-pct:hover { background: var(--hover); }
+i.flip { transform: rotate(180deg); }
+.pv-body { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; background: var(--bg); display: flex; padding: 24px; outline: none; }
+.pv-body > * { margin: auto; flex: none; }
+.pv-img, .pv-pdf { display: block; box-shadow: 0 2px 12px rgba(0, 0, 0, .18); background: #fff; }
+.pv-img { background: repeating-conic-gradient(#e8e8e8 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+.pv-text { margin: 0; align-self: stretch; flex: 1; white-space: pre-wrap; word-break: break-word; font: 13px/1.6 Consolas, "Cascadia Mono", "Microsoft YaHei UI", monospace; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; user-select: text; }
+.pv-msg { text-align: center; display: grid; gap: 12px; justify-items: center; }
+@media (max-width: 1180px) {
+  #folder-list .folder { padding: 0; }
+  .pv-head .btn span { display: none; }
+}
