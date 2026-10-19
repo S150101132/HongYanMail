@@ -335,6 +335,17 @@ body.resizing iframe { pointer-events: none; }
 .toast { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #1f2937; color: #f9fafb; border-radius: 10px; box-shadow: var(--shadow); font-size: 13.5px; max-width: 560px; animation: rise .18s ease-out; }
 .toast.err { background: #b42318; }
 .toast button { border: 0; background: transparent; color: #93c5fd; cursor: pointer; font-weight: 600; }
+.toast.hold { background: #111827; min-width: 320px; justify-content: space-between; }
+.toast.hold button { background: #2563eb; color: #fff; border-radius: 6px; padding: 4px 12px; }
+.toast.hold .hold-text { font-variant-numeric: tabular-nums; }
+/* Composer tables: a faint guide even when the table has no border; never sent. */
+.cmp-editor table td, .cmp-editor table th { outline: 1px dotted rgba(127, 127, 127, .35); outline-offset: -1px; }
+.cmp-editor img { max-width: 100%; }
+.tbl-picker { position: fixed; z-index: 65; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 8px; }
+.tbl-grid { display: grid; grid-template-columns: repeat(10, 20px); gap: 3px; }
+.tbl-grid span { width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+.tbl-grid span.on { background: var(--accent-soft); border-color: var(--accent); }
+.tbl-size { margin-top: 6px; text-align: center; }
 @keyframes rise { from { transform: translateY(8px); opacity: 0; } }
 .find-bar { position: fixed; top: 60px; right: 24px; z-index: 30; display: flex; gap: 4px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
 .find-bar input { height: 30px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; background: var(--panel); outline: none; width: 220px; }

@@ -9,6 +9,8 @@ import hashlib
 import html
 import json
 import re
+import threading
+import time
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -17,6 +19,7 @@ from pathlib import Path
 
 from coremail_desktop.app.cache import MailCache, date_ts
 from coremail_desktop.compose.attachments import validate_attachments
+from coremail_desktop.compose.inline import extract_inline
 from coremail_desktop.compose.service import build_reply
 from coremail_desktop.errors import AppError
 from coremail_desktop.models import AccountConfig, DraftAttachment, DraftDocument
@@ -24,7 +27,10 @@ from coremail_desktop.mime.parser import parse_mime
 
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
                  'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'threads': False,
-                 'autostart': False, 'sidebarWidth': 232, 'listWidth': 400}
+                 'autostart': False, 'sidebarWidth': 232, 'listWidth': 400, 'undoSeconds': 10}
+UNDO_CHOICES = (0, 5, 10, 20, 30)  # 撤销发送 delay in seconds; 0 sends at once.
+NETWORK_CODES = ('NETWORK_ERROR', 'TLS_ERROR')
+MAX_EML_BYTES = 40 * 1024 * 1024
 # Column widths the page may store (px); the page enforces the same bounds while dragging.
 WIDTH_LIMITS = {'sidebarWidth': (180, 400), 'listWidth': (280, 900)}
 TEMPLATE_LIMIT = 100
@@ -131,12 +137,23 @@ def filter_match(filters, query=''):
     return match
 
 
+def _cid_to_data(document, body_html):
+    """cid: images the message carries, as data: URIs (reader, quotes, draft editing)."""
+    def cid(match):
+        found = document.cid_resources.get(match.group(2))
+        if not found:
+            return match.group(0)
+        return f'src={match.group(1)}data:{found[0]};base64,{base64.b64encode(found[1]).decode("ascii")}{match.group(1)}'
+    return re.sub(r'src=(["\'])cid:([^"\']+)\1', cid, body_html)
+
+
 def _quote_html(document):
     header = lambda key: ', '.join(document.headers.get(key, ()))
     rows = ''.join(f'<div><b>{label}：</b>{html.escape(header(key))}</div>'
                    for label, key in (('发件人', 'from'), ('发送时间', 'date'), ('收件人', 'to'), ('抄送', 'cc'), ('主题', 'subject'))
                    if header(key))
-    original = document.html or '<div style="white-space:pre-wrap">' + html.escape(document.text) + '</div>'
+    # Pictures in the original stay in the quote; sending carries them as inline parts.
+    original = (_cid_to_data(document, document.html) if document.html else None) or '<div style="white-space:pre-wrap">' + html.escape(document.text) + '</div>'
     return ('<br><div class="hy-quote" style="border-top:1px solid #d0d5dd;padding-top:8px;margin-top:12px;color:#475467">'
             '<div style="font-size:12px;margin-bottom:8px">------------------ 原始邮件 ------------------' + rows + '</div>'
             '<blockquote style="margin:0 0 0 4px;padding-left:12px;border-left:3px solid #d0d5dd">' + original + '</blockquote></div>')
@@ -170,6 +187,12 @@ class MailBackend:
         self._signer_directory = {}  # (sender, signer fingerprint) -> matches the company directory
         self._rules = {}  # Rule id -> the rule as the server last listed it.
         self.autostart = None  # Set by the app (not in demo mode): reads and writes the Windows Run key.
+        # 撤销发送: drafts waiting out their undo delay, local id -> {revision, subject, until}.
+        # Memory only on purpose: if the app ends during the delay nothing is sent and
+        # the draft stays in 本机草稿 (abandon_held records which ones).
+        self._held = {}
+        self._held_lock = threading.Lock()
+        self._imported = {}  # 'eml:<digest>' -> raw bytes of .eml files opened read-only.
 
     # Accounts --------------------------------------------------------------
     def _accounts_path(self):
@@ -226,6 +249,7 @@ class MailBackend:
             saved = self.saved_login()
             self._save_login(saved['server'], saved['username'], '', False)
         if self.cache:
+            self.abandon_held()
             self.cache.close()
         self.cache = self.account = None
         self._shared = {}
@@ -297,6 +321,8 @@ class MailBackend:
                 prefs[key] = value
         prefs['pollSeconds'] = max(30, min(int(prefs['pollSeconds']), 3600))
         prefs['signature'] = prefs['signature'][:20000]
+        if prefs['undoSeconds'] not in UNDO_CHOICES:
+            prefs['undoSeconds'] = DEFAULT_PREFS['undoSeconds']
         for key, (low, high) in WIDTH_LIMITS.items():
             prefs[key] = max(low, min(int(prefs[key]), high))
         if self.autostart is not None and type(values.get('autostart')) is bool:
@@ -459,6 +485,8 @@ class MailBackend:
 
     def _raw(self, mid):
         """The message exactly as the server stores it (still encrypted if it was)."""
+        if mid in self._imported:
+            return self._imported[mid]
         raw = self.cache.get_body(mid)
         if raw is None:
             remote, box = self._locate(mid)
@@ -480,13 +508,7 @@ class MailBackend:
         body_html = document.html
         remote = False
         if body_html:
-            def cid(match):
-                key = match.group(2)
-                found = document.cid_resources.get(key)
-                if not found:
-                    return match.group(0)
-                return f'src={match.group(1)}data:{found[0]};base64,{base64.b64encode(found[1]).decode("ascii")}{match.group(1)}'
-            body_html = re.sub(r'src=(["\'])cid:([^"\']+)\1', cid, body_html)
+            body_html = _cid_to_data(document, body_html)
             remote = bool(re.search(r'<img[^>]+src=["\']https?://', body_html, re.I))
         summary = self.cache.summary(mid) or {}
         result = {'id': mid, 'fid': summary.get('fid'), 'subject': header('subject') or summary.get('subject', ''),
@@ -499,6 +521,10 @@ class MailBackend:
                   'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
                                   for a in document.attachments],
                   'mailbox': self._box_view(self._locate(mid)[1]), 'tags': list(summary.get('tags') or [])}
+        if mid in self._imported:
+            result['imported'] = True  # A local .eml file: read-only, not on the server.
+        elif self._is_server_draft(summary):
+            result['serverDraft'] = True
         invitation = self._invitation(mid, document)
         if invitation:
             result['invitation'] = {**invitation, 'answer': (self.cache.get('inviteAnswers') or {}).get(mid),
@@ -865,10 +891,24 @@ class MailBackend:
         if mode in ('reply', 'reply_all'):
             draft = build_reply(document, set(self.identities) | ({info['email']} if info else set()), mode == 'reply_all', identity)
             named = self._named_addresses(document)
-            return {**base, 'mode': draft.mode, 'to': named(draft.to), 'cc': named(draft.cc), 'subject': draft.subject,
-                    'html': '<p><br></p>' + self._signature_html() + _quote_html(document),
-                    'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
-                    'encrypt': True if document.encryption_state != 'none' else None}
+            value = {**base, 'mode': draft.mode, 'to': named(draft.to), 'cc': named(draft.cc), 'subject': draft.subject,
+                     'html': '<p><br></p>' + self._signature_html() + _quote_html(document),
+                     'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
+                     'encrypt': True if document.encryption_state != 'none' else None}
+            if mid in self._imported:
+                # An imported .eml is not on the server, so the reply cannot be threaded
+                # to it there: it goes out as a new message with the quote.
+                value.update(mode='new', replySourceId=None, referenceHeaders={}, title=value['mode'])
+            return value
+        if mode == 'forward_attach':
+            # 作为附件转发: the original exactly as stored (an encrypted one stays encrypted).
+            subject = next(iter(document.headers.get('subject', ())), '')
+            raw = self._raw(mid)
+            return {**base, 'mode': 'forward', 'title': 'forward_attach',
+                    'subject': ('' if subject.lower().startswith('fwd:') else 'Fwd: ') + subject,
+                    'attachments': [{'name': self.file_stem(mid) + '.eml', 'type': 'message/rfc822', 'size': len(raw),
+                                     'data': base64.b64encode(raw).decode('ascii')}],
+                    'encryptedOriginal': document.encryption_state != 'none'}
         if mode == 'forward':
             subject = next(iter(document.headers.get('subject', ())), '')
             attachments = [{'name': a.name, 'type': a.media_type, 'size': len(document.attachment_payloads[a.part_id]),
@@ -905,7 +945,11 @@ class MailBackend:
     def _draft(self, value):
         attachments = tuple(DraftAttachment(str(a['name']), str(a.get('type') or 'application/octet-stream'),
                                             base64.b64decode(a['data'], validate=True)) for a in value.get('attachments', ()))
-        validate_attachments(attachments)
+        # Body images count toward the same size limits as attachments.
+        validate_attachments(attachments + tuple(extract_inline(str(value.get('html', '')))[1]))
+        server_draft = value.get('serverDraftId')
+        if server_draft is not None and (not isinstance(server_draft, str) or len(server_draft) > 300):
+            raise AppError('DRAFT_UNAVAILABLE')
         listify = lambda key: tuple(str(v).strip() for v in value.get(key, ()) if str(v).strip())
         mode = value.get('mode', 'new')
         source, box = self._locate(value['replySourceId']) if mode in ('reply', 'reply_all') and value.get('replySourceId') else (None, None)
@@ -916,13 +960,63 @@ class MailBackend:
                              value.get('encrypt') is True, source,
                              attachments, True, signature_required=value.get('sign') is True,
                              schedule_at=_schedule_iso(value.get('scheduleAt')), request_receipt=value.get('receipt') is True,
-                             reply_mailbox='@' + box if box else '')
+                             reply_mailbox='@' + box if box else '', server_draft_id=server_draft or '')
 
-    def save_draft(self, value):
+    def save_draft(self, value, server=False):
+        """Save locally (encrypted). server=True, for a draft opened from the server's
+        草稿箱, also writes it back there; once the server confirms, the server copy is
+        the record and the local copy is removed (it returns with the next autosave)."""
         draft = self._draft(value)
         draft = replace(draft, revision=draft.revision + 1)
         self.services['save_draft'](draft=draft)
-        return {'localId': draft.local_id, 'revision': draft.revision}
+        saved = {'localId': draft.local_id, 'revision': draft.revision}
+        if not server or not draft.server_draft_id:
+            return saved
+        # The local copy is saved either way; a server failure is reported, not raised,
+        # so the composer keeps the revision it now has.
+        from coremail_desktop.ui.messages import user_message
+        try:
+            if draft.encryption_required or draft.signature_required:
+                raise AppError('DRAFT_ENCRYPTED_LOCAL')  # Never written to the server in plaintext.
+            new_id = self._online(self.adapter.save_server_draft, draft)
+        except AppError as error:
+            if error.code in REAUTH_CODES:
+                raise
+            return {**saved, 'serverErrorCode': error.code, 'serverError': user_message(error.code)}
+        self.delete_draft(draft.local_id)
+        return {**saved, 'serverDraftId': new_id, 'local': False}
+
+    # Server drafts (服务器草稿箱) -------------------------------------------------
+    # Drafts saved by webmail, the official client or a phone live in the server's
+    # drafts folder. Editing one makes a local working copy linked to it
+    # (serverDraftId); 保存草稿 writes it back, sending consumes it. 本机草稿 stays
+    # local-only: new mail and encrypted drafts never go to the server by themselves.
+    def _is_server_draft(self, summary):
+        fid = summary.get('fid')
+        role = next((f['role'] for f in self._folders if f['id'] == fid), SYSTEM_ROLES.get(str(fid)))
+        return role == 'drafts' and not summary.get('flags', {}).get('scheduleDelivery')
+
+    def edit_server_draft(self, mid):
+        if not isinstance(mid, str) or self._locate(mid)[1] or mid in self._imported:
+            raise AppError('DRAFT_UNAVAILABLE')  # Shared mailboxes keep their drafts in webmail.
+        summary = self.cache.summary(mid) or {}
+        if summary.get('flags', {}).get('scheduleDelivery'):
+            raise AppError('DRAFT_SCHEDULED')
+        if not self._is_server_draft(summary) or not hasattr(self.adapter, 'save_server_draft'):
+            raise AppError('DRAFT_UNAVAILABLE')
+        document = self._document(mid)
+        if document.encryption_state == 'locked':
+            raise AppError('CERT_LOCKED')
+        header = lambda key: [v for v in document.headers.get(key, ()) if v]
+        addresses = lambda key: [f'"{n}" <{a}>' if n else a for n, a in getaddresses(header(key)) if a]
+        body = _cid_to_data(document, document.html) if document.html else \
+            '<div style="white-space:pre-wrap">' + html.escape(document.text) + '</div>'
+        attachments = [{'name': a.name, 'type': a.media_type, 'size': len(document.attachment_payloads[a.part_id]),
+                        'data': base64.b64encode(document.attachment_payloads[a.part_id]).decode('ascii')}
+                       for a in document.attachments if a.part_id in document.attachment_payloads]
+        return {**self.compose('new'), 'to': addresses('to'), 'cc': addresses('cc'), 'bcc': addresses('bcc'),
+                'subject': ', '.join(header('subject')), 'html': body, 'attachments': attachments,
+                'serverDraftId': mid, 'receipt': bool(header('disposition-notification-to'))}
 
     def list_drafts(self):
         return self.services['list_drafts']()
@@ -938,6 +1032,7 @@ class MailBackend:
                 # Signing follows encryption unless the user chose otherwise.
                 'sign': True if draft.signature_required else False if draft.encryption_required else None,
                 'scheduleAt': _schedule_ms(draft.schedule_at), 'receipt': draft.request_receipt,
+                'serverDraftId': draft.server_draft_id or None,
                 'attachments': [{'name': a.name, 'type': a.media_type, 'size': len(a.payload),
                                  'data': base64.b64encode(a.payload).decode('ascii')} for a in draft.attachments]}
 
@@ -1025,6 +1120,27 @@ class MailBackend:
             keep.append(b'MIME-Version: 1.0')
         return name, b'\r\n'.join(keep) + b'\r\n' + inner
 
+    def import_eml(self, raw):
+        """Open a local .eml file read-only: it is kept in memory under an 'eml:' id the
+        reader can show (reply and forward work; nothing is stored or uploaded)."""
+        from email import policy
+        from email.parser import BytesHeaderParser
+        if not isinstance(raw, (bytes, bytearray)) or not raw:
+            raise AppError('EML_INVALID')
+        if len(raw) > MAX_EML_BYTES:
+            raise AppError('EML_TOO_LARGE')
+        raw = bytes(raw)
+        try:
+            head = BytesHeaderParser(policy=policy.default).parsebytes(raw)
+            valid = bool(head.get('From') or head.get('Subject')) and any(head.get(k) for k in ('From', 'To', 'Subject', 'Date', 'Message-ID'))
+        except Exception:
+            valid = False
+        if not valid:
+            raise AppError('EML_INVALID')
+        mid = 'eml:' + hashlib.sha256(raw).hexdigest()[:24]
+        self._imported = {mid: raw, **dict(list(self._imported.items())[:15])}
+        return mid
+
     def print_html(self, mid, remote_images=False):
         """A standalone document for printing or PDF export: header, attachment names
         and the sanitized body. Its policy refuses scripts; remote images load only
@@ -1053,7 +1169,10 @@ class MailBackend:
                 + ''.join(f'<tr><td>{label}</td><td>{esc(value)}</td></tr>' for label, value in rows)
                 + f'</table><hr><div class="hy-body">{body}</div></body></html>')
 
-    def send(self, value):
+    def send(self, value, hold=False):
+        """Check, store and send a draft. hold=True (the composer's 发送) with 撤销发送 on
+        and no schedule: the draft is only held here for the delay and comes back as
+        state 'Held'; the app calls release_send when the delay is over, cancel_send undoes it."""
         draft = self._draft(value)
         draft = replace(draft, revision=draft.revision + 1)
         if not (draft.to or draft.cc or draft.bcc):
@@ -1076,19 +1195,139 @@ class MailBackend:
             # Never send unsigned when a signature was asked for: unlock, or turn signing off.
             return {'state': 'NeedsSigningKey', 'localId': draft.local_id, 'revision': draft.revision}
         if draft.encryption_required:
-            missing = self.encryption_check(list(draft.to + draft.cc + draft.bcc))['missing']
+            try:
+                missing = self.encryption_check(list(draft.to + draft.cc + draft.bcc))['missing']
+            except AppError as error:
+                if error.code not in NETWORK_CODES:
+                    raise
+                # Offline: the certificates are looked up again when the message is built,
+                # and a missing one fails it there. It is never sent unencrypted.
+                missing = []
             if missing:
                 # The user decides: remove them, or send this one unencrypted.
                 return {'state': 'NeedsCertificates', 'missing': missing, 'localId': draft.local_id, 'revision': draft.revision}
-        job = self._online(self.services['request_send'], draft=draft)
-        if job.state == 'Accepted':
+        delay = self.prefs()['undoSeconds'] if hold and not draft.schedule_at else 0
+        if delay:
+            with self._held_lock:
+                self._held[draft.local_id] = {'revision': draft.revision, 'subject': draft.subject, 'until': time.time() + delay}
+            return {'state': 'Held', 'localId': draft.local_id, 'revision': draft.revision, 'delayMs': delay * 1000}
+        return self._dispatch(draft)
+
+    def _dispatch(self, draft):
+        """Hand a stored draft to the durable outbox. A network failure before anything
+        was submitted puts it in the offline outbox (离线发件箱); an uncertain outcome
+        (Unknown) is never retried by itself."""
+        from coremail_desktop.ui.messages import user_message
+        try:
+            job = self._online(self.services['request_send'], draft=draft)
+            state, failure = job.state, job.failure_code
+        except AppError as error:
+            if error.code not in NETWORK_CODES:
+                raise
+            state, failure = 'Failed', error.code  # Signing in failed: nothing reached the server.
+        if state == 'Failed' and failure in NETWORK_CODES:
+            self._queue(draft)
+            state = 'Queued'
+        else:
+            self._unqueue(draft.local_id)
+        if state == 'Accepted':
             self.delete_draft(draft.local_id)
             if draft.mode in ('reply', 'reply_all') and draft.reply_source_id:
                 self.cache.update(self._reply_id(draft), flags={'replied': True})
-        from coremail_desktop.ui.messages import user_message
-        return {'state': job.state, 'failure': job.failure_code, 'localId': draft.local_id, 'revision': draft.revision,
-                'failureMessage': user_message(job.failure_code) if job.failure_code else None,
-                'scheduledAt': _schedule_ms(draft.schedule_at) if job.state == 'Accepted' else None}
+        return {'state': state, 'failure': failure, 'localId': draft.local_id, 'revision': draft.revision,
+                'subject': draft.subject, 'serverDraft': bool(draft.server_draft_id),
+                'failureMessage': user_message(failure) if failure and state != 'Queued' else None,
+                'scheduledAt': _schedule_ms(draft.schedule_at) if state == 'Accepted' else None}
+
+    # 撤销发送 --------------------------------------------------------------------
+    def release_send(self, local_id, revision):
+        """The undo delay is over: send it, unless it was undone in the meantime."""
+        with self._held_lock:
+            held = self._held.get(local_id)
+            if not held or held['revision'] != revision:
+                return {'state': 'Cancelled', 'localId': local_id}
+            del self._held[local_id]
+        draft = self.services['restore_draft'](local_id=local_id)
+        if draft.revision != revision:
+            return {'state': 'Cancelled', 'localId': local_id}
+        return self._dispatch(draft)
+
+    def cancel_send(self, local_id):
+        """Undo: nothing was sent; the draft comes back for the composer, intact."""
+        with self._held_lock:
+            if self._held.pop(local_id, None) is None:
+                raise AppError('SEND_NOT_HELD')
+        return self.restore_draft(local_id)
+
+    def held_sends(self):
+        with self._held_lock:
+            return [{'localId': k, 'subject': v['subject'], 'until': v['until']} for k, v in self._held.items()]
+
+    def abandon_held(self):
+        """The app is ending during an undo delay: those drafts are not sent. They stay in
+        本机草稿 and the next start says so."""
+        with self._held_lock:
+            held, self._held = self._held, {}
+        if held and self.cache is not None:
+            stored = self.cache.get('unsentHeld') or []
+            self.cache.set('unsentHeld', stored + [{'localId': k, 'subject': v['subject']} for k, v in held.items()])
+        return len(held)
+
+    # 离线发件箱 -------------------------------------------------------------------
+    # Drafts whose send failed for lack of network before anything was submitted. The
+    # list (ids and subjects) is in the encrypted cache; the drafts in 本机草稿.
+    def _queue(self, draft):
+        queue = [e for e in self.cache.get('outbox') or [] if e['localId'] != draft.local_id]
+        self.cache.set('outbox', queue + [{'localId': draft.local_id, 'subject': draft.subject,
+                                           'queuedAt': datetime.now().strftime('%Y-%m-%d %H:%M')}])
+
+    def _unqueue(self, local_id):
+        queue = self.cache.get('outbox') or []
+        if any(e['localId'] == local_id for e in queue):
+            self.cache.set('outbox', [e for e in queue if e['localId'] != local_id])
+
+    def outbox(self):
+        """发件箱: queued drafts, sends whose outcome is unknown (check 已发送 before
+        sending again), and drafts left unsent because the app ended during an undo delay."""
+        review = []
+        if 'review_jobs' in self.services:
+            review = [{'id': job.local_id, 'localId': job.draft.local_id, 'subject': job.draft.subject,
+                       'at': (job.submitted_at or '')[:16].replace('T', ' '), 'state': job.state}
+                      for job in self.services['review_jobs']()]
+        abandoned = self.cache.get('unsentHeld') or []
+        if abandoned:
+            self.cache.set('unsentHeld', [])
+        return {'queued': list(self.cache.get('outbox') or []), 'review': review, 'abandoned': abandoned,
+                'held': self.held_sends()}
+
+    def outbox_remove(self, local_id):
+        """Take a draft out of the queue (to edit it, or keep it as a draft only)."""
+        self._unqueue(local_id)
+        return self.outbox()
+
+    def dismiss_review(self, job_id):
+        """The user checked 已发送: the uncertain send leaves the list. Nothing is resent."""
+        self.services['dismiss_job'](local_id=job_id)
+        return self.outbox()
+
+    def flush_outbox(self):
+        """Connection is back: send the queued drafts, oldest first, stopping at the
+        first one that is still offline."""
+        results = []
+        for entry in list(self.cache.get('outbox') or []):
+            with self._held_lock:
+                if entry['localId'] in self._held:
+                    continue
+            try:
+                draft = self.services['restore_draft'](local_id=entry['localId'])
+            except Exception:
+                self._unqueue(entry['localId'])  # The draft was deleted meanwhile.
+                continue
+            result = self._dispatch(draft)
+            results.append(result)
+            if result['state'] == 'Queued':
+                break
+        return {'results': results, 'queued': len(self.cache.get('outbox') or [])}
 
     def encryption_check(self, recipients):
         """Which recipients have a company certificate. Bare addresses only."""

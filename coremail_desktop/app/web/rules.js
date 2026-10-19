@@ -59,7 +59,7 @@ const TG = window.TG = {
   renderReader(m) {
     let box = $('#r-tags');
     if (!box) { box = document.createElement('div'); box.id = 'r-tags'; box.className = 'r-tags'; $('#r-subject').after(box); }
-    const own = !m.mailbox;
+    const own = !m.mailbox && !m.imported;  // A local .eml file has no server tags.
     $$('[data-tg="pick"]').forEach((b) => b.classList.toggle('hidden', !own || !this.list.length));
     box.innerHTML = (m.tags || []).map((id) => this.byId(id)).filter(Boolean).map((t) =>
       `<span class="tg-chip big" style="--tg:${esc(t.color)}">${esc(t.name)}${own ? `<button data-untag="${esc(t.id)}" title="去掉这个标签">×</button>` : ''}</span>`).join('') +

@@ -64,6 +64,21 @@ class OutboxService:
             except Exception:
                 raise AppError('SEND_OUTCOME_UNKNOWN', category='unknown') from None
             return job.local_id
+    def review_jobs(self):
+        """Sends whose outcome is unknown, for the user to check in 已发送. Read-only:
+        unlike recover(), it never rewrites a job another thread may be submitting."""
+        jobs = []
+        for local_id in self.journal.list_ids():
+            try: job = self.journal.load(local_id)
+            except Exception: continue
+            if job.state in ('Unknown','Reconciling'): jobs.append(job)
+        return sorted(jobs,key=lambda job: job.submitted_at or '')
+    def dismiss(self,local_id):
+        """The user has checked: the job becomes Reviewed and stays non-replayable."""
+        with self._lock:
+            job = self.journal.load(local_id)
+            if job.state not in ('Unknown','Reconciling'): raise AppError('INVALID_MAIL_ACTION')
+            self.journal.persist(replace(job,state='Reviewed'))
     def recover_pending(self):
         return [job for job in self.journal.recover() if job.state in ('Unknown','Preparing','Submitting','Reconciling')]
     def reconcile(self,local_id):

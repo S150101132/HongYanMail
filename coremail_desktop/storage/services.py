@@ -49,4 +49,6 @@ def local_services(adapter, directory, prepare_encrypted=None):
         'recover_pending':lambda:sending().recover_pending(),
         'pending_for_review':lambda:sending().recover_pending(),
         'reconcile':lambda local_id:sending().reconcile(local_id),
+        'review_jobs':lambda:sending().review_jobs(),
+        'dismiss_job':lambda local_id:sending().dismiss(local_id),
     }.items()}
