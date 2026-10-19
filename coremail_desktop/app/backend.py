@@ -38,6 +38,34 @@ TEMPLATE_LIMIT = 100
 # always the server's own folder name.
 SYSTEM_ROLES = {'1': 'inbox', '2': 'drafts', '3': 'sent', '4': 'trash', '5': 'spam', '6': 'virus'}
 REAUTH_CODES = ('SESSION_EXPIRED', 'NOT_AUTHENTICATED')
+FOLDER_ORDER = {'inbox': 0, 'drafts': 2, 'sent': 3, 'trash': 8, 'spam': 7, 'virus': 9}
+MAX_FOLDER_DEPTH = 5  # Nesting levels the server allows (index.jsp maxFolderNestLevel).
+SENDER_LIST_LIMIT = 500
+# Attachment preview: only these, recognised by their bytes, never by name alone.
+# SVG and HTML are not images here (they can carry script); Office files open externally.
+PREVIEW_IMAGE_LIMIT = 20 * 1024 * 1024
+PREVIEW_PDF_LIMIT = 50 * 1024 * 1024
+PREVIEW_TEXT_LIMIT = 2 * 1024 * 1024
+PREVIEW_TEXT = ('.txt', '.log', '.csv', '.tsv', '.md', '.json', '.xml', '.ini', '.cfg', '.conf', '.yaml', '.yml', '.eml')
+
+
+def preview_kind(name, data):
+    """'image/png' ... for a raster image, 'pdf', 'text' or None, from the content."""
+    head = bytes(data[:16])
+    if head.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if head.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg'
+    if head.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif'
+    if head[:4] == b'RIFF' and head[8:12] == b'WEBP':
+        return 'image/webp'
+    if head.startswith(b'%PDF-'):
+        return 'pdf'
+    if str(name or '').lower().endswith(PREVIEW_TEXT) and b'\x00' not in bytes(data[:8192]):
+        return 'text'
+    return None
+SENDER_RE = re.compile(r'(?:[^\s<>@,;*]+|\*)@[^\s<>@,;*]+\.[^\s<>@,;*]+')
 
 
 def _schedule_iso(value):
@@ -334,11 +362,33 @@ class MailBackend:
     def _folder_dict(self, folder, box=None):
         counts = dict(folder.counts)
         role = folder.role or SYSTEM_ROLES.get(folder.remote_id)
-        result = {'id': folder.remote_id, 'name': folder.name, 'role': role,
+        parent = getattr(folder, 'parent', None)
+        result = {'id': folder.remote_id, 'name': folder.name, 'role': role, 'parent': parent,
+                  'system': bool(getattr(folder, 'system', False) or role), 'depth': 0,
                   'total': counts.get('messageCount'), 'unread': counts.get('unreadMessageCount', 0)}
         if box:
-            result.update(id=folder.remote_id + '@' + box, mailbox=box)
+            result.update(id=folder.remote_id + '@' + box, mailbox=box, parent=parent and parent + '@' + box)
         return result
+
+    @staticmethod
+    def _ordered(folders):
+        """Server folders in their usual order, user folders as a tree: each sub-folder
+        right after its parent, with its depth."""
+        key = lambda f: (FOLDER_ORDER.get(f['role'], 5), f['role'] is None, f['name'])
+        ids = {f['id'] for f in folders}
+        children = {}
+        for f in folders:
+            children.setdefault(f['parent'] if f['parent'] in ids and f['parent'] != f['id'] else None, []).append(f)
+        result, seen = [], set()
+
+        def walk(parent, depth):
+            for f in sorted(children.get(parent, []), key=key):
+                if f['id'] not in seen:
+                    seen.add(f['id'])
+                    result.append({**f, 'depth': depth})
+                    walk(f['id'], depth + 1)
+        walk(None, 0)
+        return result + [{**f, 'depth': 0} for f in folders if f['id'] not in seen]  # A parent loop never hides a folder.
 
     # Shared mailboxes --------------------------------------------------------
     # A shared mailbox's folders and messages carry ids qualified as 'fid@box' and
@@ -374,7 +424,6 @@ class MailBackend:
                 if self._shared and error.code in ('NETWORK_ERROR', 'TLS_ERROR'):
                     return list(self._shared.values())
                 raise
-            order = {'inbox': 0, 'drafts': 2, 'sent': 3, 'trash': 8, 'spam': 7, 'virus': 9}
             result = {}
             for box in boxes:
                 try:
@@ -384,8 +433,7 @@ class MailBackend:
                         raise
                     old = self._shared.get(box['id'], {})  # Keep the last known folders for this one.
                     folders = None
-                entry = {**box, 'folders': sorted((self._folder_dict(f, box['id']) for f in folders),
-                                                  key=lambda f: (order.get(f['role'], 5), f['role'] is None, f['name']))
+                entry = {**box, 'folders': self._ordered([self._folder_dict(f, box['id']) for f in folders])
                          if folders is not None else old.get('folders', [])}
                 result[box['id']] = entry
             self._shared = result
@@ -411,9 +459,7 @@ class MailBackend:
                 if cached and error.code in ('NETWORK_ERROR', 'TLS_ERROR'):
                     return cached
                 raise
-            order = {'inbox': 0, 'drafts': 2, 'sent': 3, 'trash': 8, 'spam': 7, 'virus': 9}
-            self._folders = sorted((self._folder_dict(f) for f in folders),
-                                   key=lambda f: (order.get(f['role'], 5), f['role'] is None, f['name']))
+            self._folders = self._ordered([self._folder_dict(f) for f in folders])
             self.cache.set('folders', self._folders)
         return self._folders
 
@@ -572,6 +618,29 @@ class MailBackend:
             raise AppError('MESSAGE_UNAVAILABLE')
         return info.name, info.media_type, data
 
+    def attachment_preview(self, mid, part):
+        """An attachment for the in-app viewer: a raster image as a data: URI, plain
+        text, or for a PDF only its name (the shell renders its pages to images)."""
+        name, _kind, data = self.attachment(mid, part)
+        kind = preview_kind(name, data)
+        result = {'name': name, 'size': len(data)}
+        if kind == 'pdf' and len(data) <= PREVIEW_PDF_LIMIT:
+            return {**result, 'kind': 'pdf'}
+        if kind and kind.startswith('image/') and len(data) <= PREVIEW_IMAGE_LIMIT:
+            return {**result, 'kind': 'image', 'data': f'data:{kind};base64,' + base64.b64encode(data).decode('ascii')}
+        if kind == 'text':
+            raw = bytes(data[:PREVIEW_TEXT_LIMIT])
+            for encoding in ('utf-8-sig', 'gb18030'):
+                try:
+                    text = raw.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                text = raw.decode('utf-8', errors='replace')
+            return {**result, 'kind': 'text', 'text': text, 'truncated': len(data) > PREVIEW_TEXT_LIMIT}
+        raise AppError('PREVIEW_UNAVAILABLE')
+
     def _certificate_path(self):
         return self.data_dir / 'certificate.bin'
 
@@ -706,14 +775,220 @@ class MailBackend:
             trash = next((f['id'] for f in self._shared[box]['folders'] if f['role'] == 'trash'), '4@' + box)
         else:
             trash = next((f['id'] for f in self._folders if f['role'] == 'trash'), '4')
-        # Permanent deletion is deliberately not offered: mail already in the
-        # trash stays there.
+        # Delete moves to the trash; mail already there stays (彻底删除 is purge()).
         movable = [m for m in ids if (self.cache.summary(m) or {}).get('fid') != trash]
         if not movable:
             raise AppError('OPERATION_NOT_ALLOWED')
         if isinstance(mid, str):
             return self.move(mid, trash)
         return {**self.move(movable, trash), 'skipped': [m for m in ids if m not in movable]}
+
+    # Folder management -------------------------------------------------------
+    # Only the user's own folders: a shared mailbox's folders belong to its owner.
+    def _own_folder(self, folder_id, refresh=False):
+        folder_id = str(folder_id)
+        if self._locate(folder_id)[1]:
+            raise AppError('OPERATION_NOT_ALLOWED')
+        folder = next((f for f in self.folders(refresh=refresh) if f['id'] == folder_id), None)
+        if folder is None:
+            raise AppError('INVALID_FOLDER')
+        return folder
+
+    def _user_folder(self, folder_id, refresh=False):
+        folder = self._own_folder(folder_id, refresh)
+        if folder['system'] or folder['role']:
+            raise AppError('SYSTEM_FOLDER')
+        return folder
+
+    def _folder_name(self, name, parent, skip=None):
+        from coremail_desktop.protocol.coremail import CoremailAdapter
+        name = CoremailAdapter.folder_name(name)
+        if any(f['name'].casefold() == name.casefold() and f['parent'] == parent and f['id'] != skip for f in self._folders):
+            raise AppError('FOLDER_EXISTS')
+        return name
+
+    def _folders_result(self, **extra):
+        return {**extra, 'folders': self.folders(refresh=True), 'shared': list(self._shared.values())}
+
+    def create_folder(self, name, parent=None):
+        """A new folder at the top level, or a sub-folder of one of the user's folders."""
+        parent = str(parent) if parent not in (None, '') else None
+        self.folders(refresh=True)
+        if parent is not None:
+            # depth counts from 0, so the new folder sits at nesting level depth + 2.
+            if self._user_folder(parent)['depth'] + 2 > MAX_FOLDER_DEPTH:
+                raise AppError('FOLDER_DEPTH_LIMIT')
+        name = self._folder_name(name, parent)
+        folder_id = self._online(self.adapter.create_folder, name, parent)
+        return self._folders_result(id=folder_id)
+
+    def rename_folder(self, folder_id, name):
+        folder = self._user_folder(folder_id, refresh=True)
+        name = self._folder_name(name, folder['parent'], skip=folder['id'])
+        if name != folder['name']:
+            self._online(self.adapter.rename_folder, folder['id'], name)
+        return self._folders_result()
+
+    def _folder_ids(self, folder_id, total):
+        ids, offset = [], 0
+        while offset < total + 100:
+            page = self._online(self.adapter.list_messages, folder_id, offset, 100)
+            ids += [s.remote_id for s in page if s.remote_id not in ids]
+            if len(page) < 100:
+                break
+            offset += 100
+        return ids
+
+    def delete_folder(self, folder_id, mail='trash'):
+        """Delete one of the user's folders. Mail still in it is first moved to 已删除
+        (mail='trash'), or the folder is kept (mail='keep'); it is never deleted with
+        the folder. Sub-folders have to go first."""
+        folder = self._user_folder(folder_id, refresh=True)
+        if any(f['parent'] == folder['id'] for f in self._folders):
+            raise AppError('FOLDER_HAS_CHILDREN')
+        moved = 0
+        if folder['total']:
+            if mail != 'trash':
+                raise AppError('FOLDER_NOT_EMPTY')
+            trash = next((f['id'] for f in self._folders if f['role'] == 'trash'), '4')
+            ids = self._folder_ids(folder['id'], folder['total'])
+            for start in range(0, len(ids), 100):
+                result = self.move(ids[start:start + 100], trash)
+                moved += len(result['done'])
+            folder = self._user_folder(folder['id'], refresh=True)
+            if folder['total']:
+                raise AppError('FOLDER_NOT_EMPTY')  # Something stayed behind: keep the folder.
+        self._online(self.adapter.delete_folder, folder['id'])
+        for mid in self.cache.known_ids(folder['id']):
+            self.cache.remove(mid)
+        return self._folders_result(moved=moved)
+
+    def mark_all_read(self, folder_id):
+        """Every unread message of a folder marked read: the server lists the unread ids
+        (mbox:listMessages filter), then multi-id updates of up to 100."""
+        folder_id = str(folder_id)
+        fid, box = self._locate(folder_id)
+        if box and not self._shared[box].get('rw'):
+            raise AppError('SHARED_READ_ONLY')
+        if not any(f['id'] == folder_id for f in self._all_folders()):
+            raise AppError('INVALID_FOLDER')
+        ids = [m + '@' + box if box else m for m in self._online(self.adapter.unread_ids, fid, **self._box_args(box))]
+        done, failed = [], []
+        for start in range(0, len(ids), 100):
+            result = self.set_flags(ids[start:start + 100], read=True)
+            done += result['done']
+            failed += result['failed']
+        if box:
+            self.shared_mailboxes(refresh=True)
+        return self._folders_result(done=len(done), failed=len(failed))
+
+    # Spam --------------------------------------------------------------------
+    def _role_id(self, role, default):
+        return next((f['id'] for f in self._folders if f['role'] == role), default)
+
+    def report_spam(self, ids, spam=True, block=False):
+        """举报垃圾邮件 (to 垃圾邮件) or 这不是垃圾邮件 (back to the inbox); the server
+        learns from the report. block / allow also puts the senders on the blocklist
+        (spam) or the allowlist (not spam)."""
+        ids = [ids] if isinstance(ids, str) else [str(m) for m in ids]
+        if not ids or any(self._locate(m)[1] for m in ids):
+            raise AppError('SPAM_NOT_ALLOWED')  # Webmail offers it only in the user's own mailbox.
+        target = self._role_id('spam' if spam else 'inbox', '5' if spam else '1')
+        before = {m: self.cache.summary(m) or {} for m in ids}
+        done = []
+        for start in range(0, len(ids), 100):
+            done += self._online(self.adapter.report_spam, ids[start:start + 100], bool(spam))
+        for m in done:
+            unread = 0 if before[m].get('flags', {}).get('read', True) else 1
+            if before[m].get('fid') and before[m]['fid'] != target:
+                self._count(before[m]['fid'], -unread, -1)
+                self._count(target, unread, 1)
+            self.cache.update(m, fid=target)
+        self._saved_counts()
+        result = {'done': done, 'failed': [m for m in ids if m not in done], 'folders': self._folders,
+                  'shared': list(self._shared.values())}
+        senders = sorted({(before[m].get('fromEmail') or '').casefold() for m in done} - {''})
+        if block and senders:
+            try:
+                result['lists'] = self.add_senders('refuselist' if spam else 'safelist', senders)
+            except AppError as error:  # The mail has moved either way; only the list step failed.
+                if error.code in REAUTH_CODES:
+                    raise
+                result['listError'] = error.code
+        return result
+
+    # Permanent deletion ------------------------------------------------------
+    # Offered only in 已删除 and 垃圾邮件, each time behind the page's double
+    # confirmation. Mail anywhere else has to go to the trash first.
+    def _purgeable(self):
+        return {f['id'] for f in self._folders if f['role'] in ('trash', 'spam')}
+
+    def purge(self, ids):
+        ids = [ids] if isinstance(ids, str) else [str(m) for m in ids]
+        before = {m: self.cache.summary(m) or {} for m in ids}
+        if not ids or any(self._locate(m)[1] or before[m].get('fid') not in self._purgeable() for m in ids):
+            raise AppError('PURGE_NOT_ALLOWED')
+        done = []
+        for start in range(0, len(ids), 100):
+            done += self._online(self.adapter.delete_messages, ids[start:start + 100])
+        for m in done:
+            self._count(before[m]['fid'], 0 if before[m].get('flags', {}).get('read', True) else -1, -1)
+            self.cache.remove(m)
+            self._docs.pop(m, None)
+        self._saved_counts()
+        return {'done': done, 'failed': [m for m in ids if m not in done], 'folders': self._folders,
+                'shared': list(self._shared.values())}
+
+    def empty_folder(self, folder_id):
+        """清空 已删除 or 垃圾邮件: everything in it is deleted for good."""
+        folder = self._own_folder(folder_id, refresh=True)
+        if folder['id'] not in self._purgeable():
+            raise AppError('PURGE_NOT_ALLOWED')
+        self._online(self.adapter.empty_folder, folder['id'])
+        for mid in self.cache.known_ids(folder['id']):
+            self.cache.remove(mid)
+            self._docs.pop(mid, None)
+        return self._folders_result(removed=folder['total'] or 0)
+
+    # Sender blocklist / allowlist ----------------------------------------------
+    def sender_lists(self):
+        return self._online(self.adapter.sender_lists)
+
+    def _sender(self, kind, value):
+        value = str(value or '').strip().casefold()
+        if value.startswith('@'):
+            value = '*' + value
+        if kind not in ('safelist', 'refuselist') or len(value) > 254 or not SENDER_RE.fullmatch(value):
+            raise AppError('INVALID_SENDER')
+        own = {i.casefold() for i in [self.account or '', *self.identities]}
+        if kind == 'refuselist' and (value in own or value.startswith('*@') and value[2:] in self.internal_domains()):
+            raise AppError('SENDER_IS_SELF')
+        return value
+
+    def add_senders(self, kind, values):
+        """Put addresses (or *@domain) on one list; an entry on the other list moves over."""
+        values = [values] if isinstance(values, str) else list(values)
+        entries = list(dict.fromkeys(self._sender(kind, v) for v in values))
+        lists = self.sender_lists()
+        other = 'refuselist' if kind == 'safelist' else 'safelist'
+        changed = {kind: lists[kind] + [e for e in entries if e not in lists[kind]]}
+        if any(e in lists[other] for e in entries):
+            changed[other] = [e for e in lists[other] if e not in entries]
+        if len(changed[kind]) > SENDER_LIST_LIMIT:
+            raise AppError('SENDER_LIST_LIMIT')
+        if changed[kind] != lists[kind] or other in changed:
+            self._online(self.adapter.set_sender_lists, changed)
+        return {**lists, **changed}
+
+    def remove_sender(self, kind, value):
+        if kind not in ('safelist', 'refuselist'):
+            raise AppError('INVALID_SENDER')
+        lists = self.sender_lists()
+        value = str(value or '').strip().casefold()
+        kept = [e for e in lists[kind] if e.casefold() != value]
+        if len(kept) != len(lists[kind]):
+            self._online(self.adapter.set_sender_lists, {kind: kept})
+        return {**lists, kind: kept}
 
     # Search ----------------------------------------------------------------
     def search_local(self, query, filters=None):

@@ -24,6 +24,8 @@ class Folder(_ImmutableMappings):
     name: str
     role: str | None
     counts: dict = field(default_factory=dict)
+    parent: str | None = None  # Parent folder id of a sub-folder; None at the top level.
+    system: bool = False  # Server folder (inbox, drafts, sent, trash, spam, virus): no rename or delete.
 
 @dataclass(frozen=True)
 class MessageSummary(_ImmutableMappings):

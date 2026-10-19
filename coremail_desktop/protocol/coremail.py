@@ -20,7 +20,8 @@ class DesktopSession(CoremailSession):
                                        'user:listDeliveryHistory','mbox:recallMessage2','mbox:cancelDeliver','mbox:getMessageInfos','mbox:listSharedAccessMbox',
                                        'oab:getDirectories','oab:listEx','oab:get','oab:getHeadImageData',
                                        'user:getMailRules','user:addMailRules','user:updateMailRules','user:removeMailRules','user:adjustMailRuleOrder',
-                                       'user:setAttrs','mbox:listTags','mbox:manageTags','mbox:updateMessageTags','cal:respond'}
+                                       'user:setAttrs','mbox:listTags','mbox:manageTags','mbox:updateMessageTags','cal:respond',
+                                       'mbox:createUserFolders','mbox:updateFolders','mbox:deleteFolders','mbox:emptyFolder','mbox:deleteMessages'}
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -275,15 +276,23 @@ class CoremailAdapter:
         value = self._call('mbox:getAllFolders', {'stats':True,**_box(mboxa)}, True).get('var')
         if not isinstance(value, list): raise AppError('INVALID_RESPONSE')
         result = []
-        for item in value:
-            if not isinstance(item,dict) or 'id' not in item: raise AppError('INVALID_RESPONSE')
+        # A sub-folder is listed inside its parent's 'children' (verified 2026-10-19 with a
+        # self-made test folder); there is no parent id field on the folder itself.
+        stack = [(item, None, 0) for item in reversed(value)]
+        while stack:
+            item, parent, depth = stack.pop()
+            if not isinstance(item,dict) or 'id' not in item or depth > 10: raise AppError('INVALID_RESPONSE')
             role = item.get('role') or item.get('type')
             if role not in ('inbox','sent','drafts','trash','spam'):
                 # The server does not expose a role; only the inbox id is verified,
                 # so everything else stays unclassified rather than guessed.
                 role = 'inbox' if str(item['id']) == self.INBOX_FOLDER_ID else ('trash' if str(item['id']) == self.TRASH_FOLDER_ID and item.get('flags',{}).get('system') is True else None)
             counts = item.get('stats') if isinstance(item.get('stats'), dict) else {}
-            result.append(Folder(str(item['id']),str(item.get('name','')),role, counts))
+            system = isinstance(item.get('flags'),dict) and item['flags'].get('system') is True
+            result.append(Folder(str(item['id']),str(item.get('name','')),role, counts, parent, system))
+            children = item.get('children')
+            if isinstance(children,list):
+                stack.extend((child, str(item['id']), depth + 1) for child in reversed(children))
         return result
     def list_messages(self, folder_id, offset, limit=50, mboxa=''):
         if offset < 0 or limit < 1 or limit > 100: raise AppError('INVALID_PAGE')
@@ -391,6 +400,99 @@ class CoremailAdapter:
     def move_many(self,message_ids,folder_id,mboxa=''):
         if not isinstance(folder_id,str) or folder_id not in {folder.remote_id for folder in self.list_folders(mboxa)}: raise AppError('INVALID_MAIL_ACTION')
         return self._update_many(message_ids,{'fid':int(folder_id) if folder_id.isdigit() else folder_id},mboxa)
+    # Folder management, as webmail does it (X.03931.js module 88812, S.03931.js
+    # folder settings): mbox:createUserFolders {items:[{name, parent}]},
+    # mbox:updateFolders {items:[{id, name}]}, mbox:deleteFolders {ids}. Names follow
+    # webmail's trimName: at most 24 width units (CJK counts 2), none of FOLDER_FORBIDDEN.
+    FOLDER_FORBIDDEN=frozenset('%\'"\\/:*?<>|=,^')
+    MAX_FOLDER_DEPTH=5  # index.jsp maxFolderNestLevel, read 2026-10-19.
+    @classmethod
+    def folder_name(cls,name):
+        name=name.strip() if isinstance(name,str) else ''
+        if not name or sum(1 if ord(c)<128 else 2 for c in name)>24 or set(name)&cls.FOLDER_FORBIDDEN or any(ord(c)<32 for c in name):
+            raise AppError('INVALID_FOLDER_NAME')
+        return name
+    @staticmethod
+    def _fid(value):
+        value=str(value)
+        if not re.fullmatch(r'\d{1,12}',value): raise AppError('INVALID_FOLDER')
+        return int(value)
+    def _user_folder(self,folder_id,mboxa=''):
+        folder=next((f for f in self.list_folders(mboxa) if f.remote_id==str(folder_id)),None)
+        if folder is None: raise AppError('INVALID_FOLDER')
+        if folder.system or folder.role: raise AppError('SYSTEM_FOLDER')
+        return folder
+    def create_folder(self,name,parent=None,mboxa=''):
+        """A new folder (under parent, a folder id, or at the top); returns its id."""
+        name=self.folder_name(name)
+        parent_id=self._fid(parent) if parent is not None else 0
+        before={f.remote_id for f in self.list_folders(mboxa)}
+        response=self._call('mbox:createUserFolders',{'items':[{'name':name,'parent':parent_id}],**_box(mboxa)})
+        made=[f for f in self.list_folders(mboxa) if f.remote_id not in before and f.name==name]
+        value=response.get('var')
+        ids=[str(v) for v in (value if isinstance(value,list) else [value]) if type(v) in (int,str)]
+        found=next((f.remote_id for f in made if f.remote_id in ids),None) or (made[0].remote_id if len(made)==1 else None)
+        if found is None: raise AppError('MAIL_UPDATE_UNCONFIRMED')
+        return found
+    def rename_folder(self,folder_id,name,mboxa=''):
+        folder=self._user_folder(folder_id,mboxa)
+        self._call('mbox:updateFolders',{'items':[{'id':self._fid(folder.remote_id),'name':self.folder_name(name)}],**_box(mboxa)})
+        return True
+    def delete_folder(self,folder_id,mboxa=''):
+        """Deletes an empty user folder. The backend moves its mail out first, so the
+        server never takes mail with it (webmail empties a folder before deleting it)."""
+        folder=self._user_folder(folder_id,mboxa)
+        if dict(folder.counts).get('messageCount'): raise AppError('FOLDER_NOT_EMPTY')
+        self._call('mbox:deleteFolders',{'ids':[self._fid(folder.remote_id)],**_box(mboxa)})
+        return True
+    # Permanent deletion (webmail "彻底删除" realDeleteMails, offered when X.M.enableRealDelete,
+    # which index.jsp sets on this deployment): mbox:deleteMessages {ids} and
+    # mbox:emptyFolder {id, permanently:true}. The backend allows them only in trash and spam.
+    def delete_messages(self,message_ids,mboxa=''):
+        ids=list(dict.fromkeys(message_ids))
+        if not ids or len(ids)>100 or any(not isinstance(i,str) or not i for i in ids): raise AppError('INVALID_MAIL_ACTION')
+        self._call('mbox:deleteMessages',{'ids':ids,**_box(mboxa)})
+        return ids
+    def empty_folder(self,folder_id,mboxa=''):
+        self._call('mbox:emptyFolder',{'id':self._fid(folder_id),'permanently':True,**_box(mboxa)})
+        return True
+    # Spam (webmail 173.03931.js Ze.report / Ze.notJunk, offered when X.S.enableReportSpam):
+    # the move itself carries reportType, so the server learns from it.
+    SPAM_FOLDER_ID='5'
+    def report_spam(self,message_ids,spam=True):
+        ids=list(dict.fromkeys(message_ids))
+        if not ids or len(ids)>100 or any(not isinstance(i,str) or not i for i in ids): raise AppError('INVALID_MAIL_ACTION')
+        target=self.SPAM_FOLDER_ID if spam else self.INBOX_FOLDER_ID
+        response=self._call('mbox:updateMessageInfos',{'ids':ids,'attrs':{'fid':int(target)},'reportType':'spam' if spam else 'notspam','returnOriginalMsgInfos':True})
+        affected=response.get('originalMsgInfos')
+        if not isinstance(affected,list): raise AppError('MAIL_UPDATE_UNCONFIRMED')
+        return [i for i in ids if any(isinstance(item,dict) and item.get('id')==i for item in affected)]
+    def unread_ids(self,folder_id,mboxa='',limit=5000):
+        """Ids of the unread mail in a folder: mbox:listMessages filter {flags:{read:false}}
+        (verified 2026-10-19: its total equals the folder's unreadMessageCount)."""
+        ids=[]
+        while len(ids)<limit:
+            response=self._call('mbox:listMessages',{'fid':self._fid(folder_id),'start':len(ids),'limit':100,'mode':'count','order':'date','desc':True,
+                                                     'returnTotal':True,'summaryWindowSize':0,'filter':{'flags':{'read':False}},**_box(mboxa)},True)
+            rows=response.get('var')
+            if isinstance(rows,dict): rows=rows.get('messages')
+            if not isinstance(rows,list): raise AppError('INVALID_RESPONSE')
+            page=[r['id'] for r in rows if isinstance(r,dict) and isinstance(r.get('id'),str)]
+            ids+=[i for i in page if i not in ids]
+            if len(rows)<100: break
+        return ids[:limit]
+    # Sender lists: the user attributes safelist (白名单) and refuselist (黑名单), comma
+    # separated, read with user:getAttrs and written with user:setAttrs like webmail's
+    # updateUser (verified read 2026-10-19). '*@domain' entries cover a whole domain.
+    SENDER_LISTS=('safelist','refuselist')
+    def sender_lists(self):
+        value=self._call('user:getAttrs',{'optionalAttrIds':list(self.SENDER_LISTS)},True).get('var')
+        if not isinstance(value,dict): raise AppError('INVALID_RESPONSE')
+        return {k:[x for x in re.split(r',\s*',value.get(k) or '') if x] if isinstance(value.get(k) or '',str) else [] for k in self.SENDER_LISTS}
+    def set_sender_lists(self,lists):
+        if not isinstance(lists,dict) or not lists or set(lists)-set(self.SENDER_LISTS): raise AppError('INVALID_SENDER')
+        self._call('user:setAttrs',{'attrs':{k:','.join(v) for k,v in lists.items()}})
+        return True
     def list_shared_mailboxes(self):
         """Shared / department mailboxes this account may open, with the account's rights.
 

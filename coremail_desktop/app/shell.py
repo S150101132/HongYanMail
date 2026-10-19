@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
-from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QMarginsF, QObject, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QMarginsF, QObject, QSize, QTimer, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QPageLayout, QPageSize, QShortcut
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWebChannel import QWebChannel
@@ -58,6 +58,10 @@ BACKEND_METHODS = {
     'templates': 'templates', 'saveTemplate': 'save_template', 'renameTemplate': 'rename_template', 'deleteTemplate': 'delete_template',
     'cancelSend': 'cancel_send', 'heldSends': 'held_sends', 'outbox': 'outbox', 'outboxRemove': 'outbox_remove',
     'dismissReview': 'dismiss_review', 'flushOutbox': 'flush_outbox', 'editServerDraft': 'edit_server_draft',
+    'createFolder': 'create_folder', 'renameFolder': 'rename_folder', 'deleteFolder': 'delete_folder', 'markAllRead': 'mark_all_read',
+    'reportSpam': 'report_spam', 'purge': 'purge', 'emptyFolder': 'empty_folder',
+    'senderLists': 'sender_lists', 'addSenders': 'add_senders', 'removeSender': 'remove_sender',
+    'previewAttachment': 'attachment_preview',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
@@ -739,6 +743,57 @@ class AppShell(_PrintHost, QMainWindow):
         target = folder / name
         target.write_bytes(data)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+        return True
+
+    # PDF preview. The Chromium PDF viewer stays off (PdfViewerEnabled False): it would
+    # run as a page of its own next to the bridge. Instead QtPdf (PDFium, built without
+    # PDF JavaScript or XFA forms) renders one page at a time into a bitmap, and the page
+    # only ever receives PNG data: URIs -- no PDF content, links or scripts reach it.
+    _pdf = None  # (mid, part, buffer, document) of the attachment being previewed.
+
+    def _pdf_document(self, mid, part):
+        if self._pdf and self._pdf[:2] == (mid, part):
+            return self._pdf[3]
+        from PySide6.QtPdf import QPdfDocument
+        from coremail_desktop.app.backend import PREVIEW_PDF_LIMIT, preview_kind
+        name, _kind, data = self.backend.attachment(mid, part)
+        if preview_kind(name, data) != 'pdf' or len(data) > PREVIEW_PDF_LIMIT:
+            raise AppError('PREVIEW_UNAVAILABLE')
+        self.native_closePreview()
+        buffer = QBuffer()
+        buffer.setData(QByteArray(data))
+        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        document = QPdfDocument(None)
+        document.load(buffer)  # Synchronous for an in-memory device.
+        if document.status() != QPdfDocument.Status.Ready or document.pageCount() < 1:
+            raise AppError('PREVIEW_UNAVAILABLE')  # Damaged or password-protected.
+        self._pdf = (mid, part, buffer, document)
+        return document
+
+    def native_previewPdfPage(self, mid='', part='', page=0, width=900):
+        from PySide6.QtGui import QImage, QPainter
+        document = self._pdf_document(mid, part)
+        page = max(0, min(int(page), document.pageCount() - 1))
+        points = document.pagePointSize(page)
+        if points.width() <= 0 or points.height() <= 0:
+            raise AppError('PREVIEW_UNAVAILABLE')
+        width = max(200, min(int(width), 3000))
+        height = max(1, min(int(width * points.height() / points.width()), 6000))
+        image = QImage(width, height, QImage.Format.Format_RGB32)
+        image.fill(Qt.GlobalColor.white)  # Pages without a background are drawn on paper white.
+        painter = QPainter(image)
+        painter.drawImage(0, 0, document.render(page, QSize(width, height)))
+        painter.end()
+        out = QBuffer()
+        out.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(out, 'PNG')
+        return {'page': page, 'pages': document.pageCount(), 'width': width, 'height': height,
+                'ratio': points.height() / points.width(), 'data': 'data:image/png;base64,' + base64.b64encode(bytes(out.data())).decode('ascii')}
+
+    def native_closePreview(self):
+        if self._pdf:
+            self._pdf[3].close()
+            self._pdf = None
         return True
 
     def native_unlockCertificate(self, password='', remember=False):
