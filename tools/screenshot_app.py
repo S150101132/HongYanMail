@@ -44,9 +44,9 @@ STEPS = [
     (600, "$('#settings').classList.add('hidden'); runSearch('预算')", 'search'),
     (600, "closeComposer(true); clearSearch(); S.prefs.threads = true; renderThreadToggle()", None),
     (900, "renderList(); selectMessage(S.items[0].id)", 'threads'),
-    (700, "openConversation(S.items.find((it) => it.ids.length > 2))", 'thread-open'),
-    (700, "$$('#mail-list .row')[1].click()", 'thread-message'),
-    (700, "closeConversation(); S.prefs.threads = false; renderThreadToggle(); renderList(); selectMessage(S.rows[1].id); "
+    (900, "toggleThread(S.items.find((it) => it.ids.length > 2).id, true)", 'thread-open'),
+    (700, "$$('#mail-list .row.child.mine')[0].click()", 'thread-message'),
+    (700, "S.open.clear(); S.prefs.threads = false; renderThreadToggle(); renderList(); selectMessage(S.rows[1].id); "
           "toggleItem(S.rows[2].id); toggleItem(S.rows[4].id); toggleItem(S.rows[5].id)", 'batch'),
     (700, "batchMove(null, { delete: true })", 'batch-undo'),
     # Undo it, so later steps (tags, invitations) still find this mail outside the trash.

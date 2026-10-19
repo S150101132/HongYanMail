@@ -26,7 +26,7 @@ const S = {
   rows: [], total: null, more: false, loading: false, listToken: 0,
   selected: null, message: null, filter: 'all', search: null,
   allowRemote: new Set(), drafts: [], items: [], multi: new Set(), anchor: null,
-  shared: [], openBoxes: new Set(), convo: null, convoScroll: 0, templates: [],
+  shared: [], openBoxes: new Set(), open: new Set(), thread: new Map(), threadLoading: new Set(), counts: new Map(), sentSync: 0, templates: [],
 };
 // A pop-out reader window loads this page as index.html#reader=<mid>.
 const READER_MID = (/^#reader=(.+)$/.exec(location.hash) || [])[1] ? decodeURIComponent(location.hash.slice(8)) : null;
@@ -259,7 +259,7 @@ async function readerAct(act, m) {
   return false;
 }
 on('mailChanged', (v) => {
-  const r = S.rows.find((x) => x.id === v.id);
+  const r = rowOf(v.id);
   if (v.kind === 'flags') {
     if (r) {
       const was = r.flags.read;
@@ -377,7 +377,7 @@ function applyFolders(res) { if (res.shared) S.shared = res.shared; if (res.fold
 
 function selectFolder(id) {
   S.folderId = String(id); S.local = null; S.search = null; $('#search').value = ''; SF.reset();
-  S.rows = []; S.total = null; S.more = false; S.multi.clear(); S.convo = null; renderSelection();
+  S.rows = []; S.total = null; S.more = false; S.multi.clear(); S.open.clear(); renderSelection();
   const box = boxOf(id); if (box) S.openBoxes.add(box.id);
   renderFolders();
   const f = folderById(id);
@@ -400,6 +400,7 @@ async function loadList(reset) {
     const page = await api('messages', { folder_id: fid, offset, limit: 50 });
     if (token !== S.listToken) return;
     S.rows = reset ? page.rows : dedupe(S.rows.concat(page.rows));
+    if (reset) S.counts.clear();  // Conversation sizes are re-read with the fresh page.
     S.total = page.total; S.more = page.more;
     $('#sync-bar').classList.add('hidden');
     renderList();
@@ -418,15 +419,16 @@ function visibleRows() {
   return S.rows;
 }
 
-// ---------------------------------------------------------------- conversations (client-side, loaded rows only)
+// ---------------------------------------------------------------- conversations (Outlook-style, expanded in place)
+// In conversation mode the list shows one row per conversation of the loaded rows (newest
+// first). Its triangle expands the whole conversation right under it: received and sent
+// mail from every folder (backend 'thread': the cache plus a subject search on the server).
 const SUBJECT_PREFIX = /^\s*(?:re|fwd?|fw|回复|转发|答复)\s*(?:\[\d+\])?\s*[:：]\s*/i;
 function threadKey(subject) {
   let s = String(subject || '').trim();
   for (let prev = null; prev !== s;) { prev = s; s = s.replace(SUBJECT_PREFIX, '').trim(); }
   return s.replace(/\s+/g, ' ').toLowerCase();
 }
-// The list shows items: one per message, or in conversation mode one per conversation
-// (newest first). An opened conversation (S.convo) lists its own messages instead.
 function conversations(rows) {
   const byKey = new Map(); const items = [];
   for (const r of rows) {
@@ -443,34 +445,55 @@ function conversations(rows) {
 function listItems() {
   const rows = visibleRows();
   const single = (r) => ({ id: r.id, ids: [r.id], rows: [r] });
-  if (!S.prefs.threads || S.local) { S.convo = null; return rows.map(single); }
-  const items = conversations(rows);
-  if (S.convo) {
-    const open = items.find((it) => it.key === S.convo);
-    if (open) return open.rows.map(single);
-    S.convo = null;  // Its last message was moved or deleted.
+  if (!S.prefs.threads || S.local) return rows.map(single);
+  return conversations(rows);
+}
+// The whole conversation once fetched (newest first), else the loaded rows of it.
+function threadRows(item) { return (item.key && S.thread.get(item.key)) || item.rows; }
+function threadSize(item) { return item.key ? Math.max(item.ids.length, S.counts.get(item.id) || 0, threadRows(item).length) : item.ids.length; }
+function threadOf(id) { return S.items.find((it) => it.key && S.open.has(it.key) && threadRows(it).some((r) => r.id === id)); }
+// A message's summary: loaded in the list, or shown in an expanded conversation (other folders).
+function rowOf(id) { return S.rows.find((r) => r.id === id) || [...S.thread.values()].flat().find((r) => r.id === id); }
+async function toggleThread(id, open) {
+  const item = S.items.find((it) => it.id === id && it.key); if (!item) return;
+  if (open === undefined) open = !S.open.has(item.key);
+  if (!open) { S.open.delete(item.key); renderList(); return; }
+  S.open.add(item.key); S.threadLoading.add(item.key); renderList();
+  try {
+    const res = await api('thread', { mid: item.id });
+    // Rows already in the list stay the same objects, so flags change in one place.
+    S.thread.set(item.key, res.rows.map((r) => S.rows.find((x) => x.id === r.id) || r));
+  } catch (err) { fail(err); }
+  S.threadLoading.delete(item.key);
+  if (S.open.has(item.key)) renderList();
+}
+async function loadThreadCounts() {
+  if (!S.prefs.threads || S.local) return;
+  const ids = S.items.map((it) => it.id).filter((id) => !S.counts.has(id));
+  if (!ids.length) return;
+  ids.forEach((id) => S.counts.set(id, 0));
+  // Sent mail joins conversations from the cache, so its newest page is kept fresh.
+  const sent = S.folders.find((f) => f.role === 'sent');
+  if (sent && Date.now() - S.sentSync > 600000) {
+    S.sentSync = Date.now();
+    await api('messages', { folder_id: sent.id, offset: 0, limit: 100 }).catch(() => {});
+    S.items.forEach((it) => S.counts.set(it.id, 0));
   }
-  return items;
-}
-function openConversation(item) {
-  S.convo = item.key; S.convoScroll = $('#mail-list').scrollTop;
-  renderList(); $('#mail-list').scrollTop = 0;
-  selectMessage(item.ids[0]);
-}
-function closeConversation() {
-  if (!S.convo) return false;
-  S.convo = null; renderList(); $('#mail-list').scrollTop = S.convoScroll;
-  return true;
+  try {
+    const counts = await api('threadCounts', { ids: S.items.map((it) => it.id) });
+    Object.entries(counts).forEach(([id, n]) => S.counts.set(id, n));
+    renderList();
+  } catch { /* The triangle then shows only for conversations of the loaded rows. */ }
 }
 function itemOf(id) { return S.items.find((it) => it.ids.includes(id)) || { id, ids: [id], rows: S.rows.filter((r) => r.id === id) }; }
 function participants(item) {
-  const names = [...new Map(item.rows.map((r) => [r.fromEmail || r.fromName, r.fromName || r.fromEmail])).values()].filter(Boolean);
+  const names = [...new Map(threadRows(item).map((r) => [r.fromEmail || r.fromName, r.fromName || r.fromEmail])).values()].filter(Boolean);
   return names.slice(0, 3).join('、') + (names.length > 3 ? ` 等 ${names.length} 人` : '');
 }
 
 function rowHtml(r, item = { ids: [r.id], rows: [r] }) {
   const d = parseTs(r);
-  const thread = item.ids.length > 1;
+  const size = threadSize(item), thread = size > 1, open = thread && S.open.has(item.key);
   const sentLike = ['sent', 'drafts'].includes((folderById(r.fid) || {}).role);
   const who = thread ? participants(item) : sentLike ? '致 ' + (parseAddressList(r.to).map((p) => p.name || p.email).join('、') || '（无收件人）') : (r.fromName || r.fromEmail || '（未知发件人）');
   const folderTag = S.search && folderById(r.fid) && r.fid !== S.folderId ? `<span class="tag">${esc(folderById(r.fid).name)}</span>` : '';
@@ -482,13 +505,27 @@ function rowHtml(r, item = { ids: [r.id], rows: [r] }) {
     : role === 'sent' && r.flags.rcptRead ? '<span class="row-badge" title="收件人已阅读（服务器投递记录）">已读</span>' : '';
   const unread = item.rows.some((x) => !x.flags.read);
   const msel = S.multi.size && item.ids.every((id) => S.multi.has(id));
-  return `<div class="row${unread ? ' unread' : ''}${item.ids.includes(S.selected) ? ' sel' : ''}${msel ? ' msel' : ''}" data-id="${esc(r.id)}" draggable="true" role="option">
-    ${avatarHtml(r.fromName, sentLike ? r.to : r.fromEmail)}
+  const twisty = item.key ? `<button class="twisty${open ? ' open' : ''}${thread ? '' : ' none'}" data-twisty="${esc(item.id)}" tabindex="-1"
+    title="${open ? '收起会话 (←)' : '展开会话：收到和发出的往来邮件 (→)'}"><i data-icon="chevron"></i></button>` : '';
+  return `<div class="row${item.key ? ' conv' : ''}${open ? ' open' : ''}${unread ? ' unread' : ''}${!open && item.ids.includes(S.selected) ? ' sel' : ''}${msel ? ' msel' : ''}" data-id="${esc(r.id)}" draggable="true" role="option">
+    ${twisty}${avatarHtml(r.fromName, sentLike ? r.to : r.fromEmail)}
     <div class="main">
-      <div class="line1"><span class="who">${esc(who)}</span>${thread ? `<span class="tcount" title="${item.ids.length} 封邮件">${item.ids.length}</span>` : ''}${folderTag}<span class="marks">${marks}</span><span class="when">${esc(shortDate(d))}</span></div>
+      <div class="line1"><span class="who">${esc(who)}</span>${thread ? `<span class="tcount" title="${size} 封邮件">${size}</span>` : ''}${folderTag}<span class="marks">${marks}</span><span class="when">${esc(shortDate(d))}</span></div>
       <div class="subj">${badge}${esc(r.subject || '（无主题）')}${window.TG ? TG.chips(r.tags) : ''}</div>
       ${r.preview ? `<div class="prev">${esc(r.preview)}</div>` : ''}
     </div></div>`;
+}
+
+// One message of an expanded conversation; mail from another folder (已发送…) says where it is.
+function childHtml(r) {
+  const role = (folderById(r.fid) || {}).role;
+  const who = role === 'sent' ? '我 → ' + (parseAddressList(r.to).map((p) => p.name || p.email).join('、') || '（无收件人）') : (r.fromName || r.fromEmail || '（未知发件人）');
+  const where = r.fid !== S.folderId && folderById(r.fid) ? `<span class="tag">${esc(folderById(r.fid).name)}</span>` : '';
+  const marks = (r.flags.attached ? '<i data-icon="clip"></i>' : '') + (r.flags.flagged ? '<i class="star" data-icon="star"></i>' : '') +
+    (r.flags.encrypted ? '<i data-icon="lock"></i>' : '');
+  return `<div class="row child${role === 'sent' ? ' mine' : ''}${r.flags.read ? '' : ' unread'}${S.selected === r.id ? ' sel' : ''}${S.multi.has(r.id) ? ' msel' : ''}" data-id="${esc(r.id)}" data-child="1" draggable="true" role="option">
+    <div class="main"><div class="line1"><span class="who">${esc(who)}</span>${where}<span class="marks">${marks}</span><span class="when">${esc(shortDate(parseTs(r)))}</span></div>
+      ${r.preview ? `<div class="prev">${esc(r.preview)}</div>` : ''}</div></div>`;
 }
 
 function renderList() {
@@ -497,15 +534,15 @@ function renderList() {
   S.items = listItems();
   let html = '';
   let group = null;
-  if (S.convo && S.items.length) {
-    html += `<div class="convo-head"><button class="convo-back" id="convo-back" title="返回会话列表 (Backspace)">← 返回会话列表</button>
-      <span class="convo-title" title="${esc(S.items[0].rows[0].subject || '')}">${esc(S.items[0].rows[0].subject || '（无主题）')}</span><span class="tcount">${S.items.length}</span></div>`;
-  }
   for (const it of S.items) {
     const r = it.rows[0];
-    const g = S.search || S.convo ? null : groupOf(parseTs(r));
+    const g = S.search ? null : groupOf(parseTs(r));
     if (g && g !== group) { group = g; html += `<div class="group-head">${g}</div>`; }
     html += rowHtml(r, it);
+    if (it.key && S.open.has(it.key) && threadSize(it) > 1) {
+      html += '<div class="thread-kids" role="group">' + threadRows(it).map(childHtml).join('') +
+        (S.threadLoading.has(it.key) ? '<div class="kids-note">正在查找往来邮件…</div>' : '') + '</div>';
+    }
   }
   if (!rows.length) {
     html = `<div class="list-foot">${S.local === 'scheduled' ? '没有等待发出的定时邮件' : S.search ? '没有找到匹配的邮件' : S.filter === 'unread' ? '没有未读邮件 🎉' : S.filter === 'flagged' ? '没有星标邮件' : '这个文件夹是空的'}</div>`;
@@ -521,6 +558,7 @@ function renderList() {
   const unread = S.rows.filter((r) => !r.flags.read).length;
   $('#list-sub').textContent = S.search ? '' : (S.total != null ? `${S.total} 封` : '') ;
   if (S.filter !== 'all' && S.more && rows.length < 15 && !S.loading && !S.search) loadList(false);
+  loadThreadCounts();
   void unread;
 }
 
@@ -530,25 +568,27 @@ $('#mail-list').addEventListener('scroll', () => {
 });
 $('#mail-list').addEventListener('click', (e) => {
   if (e.target.closest('#search-more')) { moreSearch(); return; }
-  if (e.target.closest('#convo-back')) { closeConversation(); return; }
+  const twisty = e.target.closest('[data-twisty]');
+  if (twisty) { toggleThread(twisty.dataset.twisty); return; }
   const row = e.target.closest('.row'); if (!row) return;
   if (S.local === 'drafts') { openLocalDraft(row.dataset.id); return; }
   if (S.local === 'outbox') { outboxOpen(row.dataset.id); return; }
   if (e.detail > 1) return;  // The second click of a double-click pops the message out instead.
-  if (e.ctrlKey || e.metaKey) { toggleItem(row.dataset.id); return; }
-  if (e.shiftKey) { selectRange(row.dataset.id); return; }
+  const child = !!row.dataset.child;
+  if (e.ctrlKey || e.metaKey) { toggleItem(row.dataset.id, child); return; }
+  if (e.shiftKey && !child) { selectRange(row.dataset.id); return; }
   clearSelection(false);
   S.anchor = row.dataset.id;
-  const item = S.items.find((it) => it.ids.includes(row.dataset.id));
-  if (!S.convo && item && item.ids.length > 1) { openConversation(item); return; }
-  selectMessage(row.dataset.id);
+  selectMessage(row.dataset.id, { child });
 });
 $('#mail-list').addEventListener('dblclick', (e) => {
+  if (e.target.closest('[data-twisty]')) return;
   if (e.target.closest('.row') && !S.local) (inDraftsFolder() ? editServerDraft(S.selected) : popOut(S.selected));
 });
 $('#mail-list').addEventListener('dragstart', (e) => {
   const row = e.target.closest('.row'); if (!row || S.local) return;
-  const ids = S.multi.size > 1 && itemOf(row.dataset.id).ids.every((id) => S.multi.has(id)) ? [...S.multi] : itemOf(row.dataset.id).ids;
+  const own = row.dataset.child ? [row.dataset.id] : itemOf(row.dataset.id).ids;
+  const ids = S.multi.size > 1 && own.every((id) => S.multi.has(id)) ? [...S.multi] : own;
   e.dataTransfer.setData('text/x-hongyan-mid', row.dataset.id); e.dataTransfer.effectAllowed = 'move';
   if (ids.length > 1) e.dataTransfer.setData('text/x-hongyan-mids', JSON.stringify(ids));
 });
@@ -561,8 +601,8 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
       { label: '删除草稿', icon: 'trash', run: () => deleteLocalDraft(row.dataset.id) }]);
     return;
   }
-  const r = S.rows.find((x) => x.id === row.dataset.id); if (!r) return;
-  if (S.multi.size > 1 && itemOf(r.id).ids.every((id) => S.multi.has(id))) {
+  const r = rowOf(row.dataset.id); if (!r) return;
+  if (S.multi.size > 1 && (row.dataset.child ? [r.id] : itemOf(r.id).ids).every((id) => S.multi.has(id))) {
     const items = writable([
       { label: `标为已读（${S.multi.size} 封）`, icon: 'check', run: () => batchFlags({ read: true }), write: true },
       { label: '标为未读', icon: 'mail', run: () => batchFlags({ read: false }), write: true },
@@ -603,7 +643,7 @@ async function runSearch(q) {
   const filters = SF.active();  // Advanced-search conditions (contacts.js); a search may have only these.
   if (!q && !Object.keys(filters).length) { clearSearch(); return; }
   const token = ++searchToken;
-  S.search = q || ' '; S.local = null; S.filter = 'all'; S.multi.clear(); S.searchMore = null; S.convo = null; renderSelection(); renderFolders();
+  S.search = q || ' '; S.local = null; S.filter = 'all'; S.multi.clear(); S.searchMore = null; S.open.clear(); renderSelection(); renderFolders();
   $$('#filter-seg button').forEach((x) => x.classList.toggle('on', x.dataset.filter === 'all'));
   $('#list-title').textContent = '搜索结果';
   SF.renderChips();
@@ -658,12 +698,15 @@ let openToken = 0;
 async function selectMessage(id, opts = {}) {
   S.selected = id;
   const item = itemOf(id);
-  $$('#mail-list .row').forEach((r) => r.classList.toggle('sel', item.ids.includes(r.dataset.id)));
-  const row = $(`#mail-list .row[data-id="${CSS.escape(item.id)}"]`);
+  // In an expanded conversation the message's own line is selected; otherwise the list row.
+  const inThread = opts.child || !!threadOf(id);
+  $$('#mail-list .row').forEach((r) => r.classList.toggle('sel', r.dataset.child ? r.dataset.id === id
+    : !inThread && !r.classList.contains('open') && item.ids.includes(r.dataset.id)));
+  const row = inThread ? $(`#mail-list .row.child[data-id="${CSS.escape(id)}"]`) : $(`#mail-list .row[data-id="${CSS.escape(item.id)}"]`);
   if (row && !opts.noScroll) row.scrollIntoView({ block: 'nearest' });
   if (S.multi.size >= 2) return;  // The selection toolbar stays; J/K only move the cursor.
   const token = ++openToken;
-  const summary = S.rows.find((r) => r.id === id);
+  const summary = rowOf(id);
   $('#reader-empty').classList.add('hidden'); $('#reader-body').classList.remove('hidden');
   if (summary) {
     $('#r-subject').textContent = summary.subject || '（无主题）';
@@ -682,7 +725,8 @@ async function selectMessage(id, opts = {}) {
     if (READER_MID) { document.title = (m.subject || '（无主题）') + ' · 鸿雁'; if (m.markedRead) notifyMain({ kind: 'flags', id, flags: { read: true } }); }
     if (m.markedRead && summary) {
       summary.flags.read = true;
-      row && row.classList.toggle('unread', itemOf(id).rows.some((r) => !r.flags.read));
+      row && row.classList.toggle('unread', row.dataset.child ? false : itemOf(id).rows.some((r) => !r.flags.read));
+      if (row && row.dataset.child) renderList();  // The conversation's own row may now be read too.
       const f = folderById(summary.fid); if (f && f.unread > 0) { f.unread--; renderFolders(); }
     }
   } catch (err) {
@@ -929,7 +973,7 @@ on('printed', (v) => {
 });
 
 async function setFlags(id, flags) {
-  const r = S.rows.find((x) => x.id === id);
+  const r = rowOf(id);
   const before = r ? { ...r.flags } : null;
   if (r) { Object.assign(r.flags, flags); renderList(); }
   if (S.message && S.message.id === id) { Object.assign(S.message.flags, flags); renderFlagButton(); }
@@ -952,13 +996,14 @@ function neighbour(id) {
 function removeRow(id) {
   const next = S.selected === id ? neighbour(id) : null;
   S.rows = S.rows.filter((r) => r.id !== id);
+  for (const [key, rows] of S.thread) S.thread.set(key, rows.filter((r) => r.id !== id));
   renderList();
   if (S.selected === id) {
     if (next) selectMessage(next.id); else { S.selected = null; S.message = null; $('#reader-body').classList.add('hidden'); $('#reader-empty').classList.remove('hidden'); }
   }
 }
 async function deleteMessage(id) {
-  const r = S.rows.find((x) => x.id === id);
+  const r = rowOf(id);
   const trash = foldersFor(r ? r.fid : S.folderId).find((f) => f.role === 'trash');
   if (r && trash && r.fid === trash.id) { toast('邮件已在已删除文件夹中。为避免误删，本应用不提供彻底删除。'); return; }
   removeRow(id);
@@ -968,7 +1013,7 @@ async function deleteMessage(id) {
   } catch (err) { fail(err); loadList(true); }
 }
 async function moveMessage(id, folderId, undo) {
-  const r = S.rows.find((x) => x.id === id);
+  const r = rowOf(id);
   if (r && r.fid === String(folderId)) return;
   if (r && !S.search) removeRow(id);
   try {
@@ -980,7 +1025,7 @@ async function moveMessage(id, folderId, undo) {
   } catch (err) { fail(err); loadList(true); }
 }
 async function pickFolder(id) {
-  const r = S.rows.find((x) => x.id === id) || {};
+  const r = rowOf(id) || {};
   await promptDialog({ title: '移动到文件夹',
     body: '<div class="pick-list">' + foldersFor(r.fid || S.folderId).filter((f) => f.id !== r.fid && f.role !== 'virus').map((f) =>
       `<button data-fid="${esc(f.id)}"><i data-icon="${ROLE_ICON[f.role] || 'folder'}"></i>${esc(f.name)}</button>`).join('') + '</div>',
@@ -988,9 +1033,9 @@ async function pickFolder(id) {
 }
 
 // ---------------------------------------------------------------- multi-select and batch actions
-function toggleItem(id) {
-  if (!S.multi.size && S.selected && S.selected !== id) itemOf(S.selected).ids.forEach((m) => S.multi.add(m));
-  const ids = itemOf(id).ids;
+function toggleItem(id, single = false) {
+  if (!S.multi.size && S.selected && S.selected !== id) (threadOf(S.selected) ? [S.selected] : itemOf(S.selected).ids).forEach((m) => S.multi.add(m));
+  const ids = single ? [id] : itemOf(id).ids;
   const on = ids.every((m) => S.multi.has(m));
   ids.forEach((m) => (on ? S.multi.delete(m) : S.multi.add(m)));
   S.anchor = id; renderSelection();
@@ -1011,9 +1056,9 @@ function clearSelection(reopen = true) {
   if (reopen && many && S.selected && (!S.message || S.message.id !== S.selected)) selectMessage(S.selected, { noScroll: true });
   return true;
 }
-function selectedRows() { return S.rows.filter((r) => S.multi.has(r.id)); }
+function selectedRows() { return [...S.multi].map(rowOf).filter(Boolean); }
 function renderSelection() {
-  $$('#mail-list .row').forEach((el) => el.classList.toggle('msel', S.multi.size > 0 && itemOf(el.dataset.id).ids.every((m) => S.multi.has(m))));
+  $$('#mail-list .row').forEach((el) => el.classList.toggle('msel', S.multi.size > 0 && (el.dataset.child ? [el.dataset.id] : itemOf(el.dataset.id).ids).every((m) => S.multi.has(m))));
   const n = S.multi.size, many = n >= 2;
   $('#reader-multi').classList.toggle('hidden', !many);
   $('#reader-body').classList.toggle('hidden', many || !S.selected);
@@ -1101,10 +1146,10 @@ async function pickBatchFolder() {
 function renderThreadToggle() {
   const b = $('#btn-threads');
   b.classList.toggle('on', !!S.prefs.threads);
-  b.title = S.prefs.threads ? '会话视图：已开启（点击会话查看其中的邮件）' : '会话视图：已关闭';
+  b.title = S.prefs.threads ? '会话视图：已开启（点击邮件左侧的三角，在原位展开收到和发出的往来邮件）' : '会话视图：已关闭';
 }
 $('#btn-threads').onclick = async () => {
-  S.prefs.threads = !S.prefs.threads; S.convo = null;
+  S.prefs.threads = !S.prefs.threads; S.open.clear();
   renderThreadToggle(); renderList(); renderSelection();
   if (S.selected) selectMessage(S.selected, { noScroll: true });
   try { S.prefs = await api('setPrefs', { values: { threads: S.prefs.threads } }); } catch (err) { fail(err); }
@@ -1714,7 +1759,7 @@ function handleKey(e) {
   }
   if (READER_MID) { readerKey(e); return; }
   if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); if (S.message && S.multi.size < 2 && !$('#reader-body').classList.contains('hidden')) printMessage(S.message); return; }
-  if (e.key === 'Escape') { const menu = !$('#menu').classList.contains('hidden'); hideMenu(); closeFind(); if (!isTyping(t) && !clearSelection() && !menu) closeConversation(); }
+  if (e.key === 'Escape') { const menu = !$('#menu').classList.contains('hidden'); hideMenu(); closeFind(); if (!isTyping(t)) clearSelection(); void menu; }
   if (e.ctrlKey && (e.key === 'a' || e.key === 'A') && !isTyping(t) && t.ownerDocument === document && !(t.closest && t.closest('.reader-scroll, #composer'))
       && !$('#app').classList.contains('hidden') && !S.local) { e.preventDefault(); selectAll(); return; }
   if (e.ctrlKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); startCompose('new'); return; }
@@ -1722,15 +1767,20 @@ function handleKey(e) {
   if ((e.ctrlKey && (e.key === 'f' || e.key === 'F')) || (e.key === '/' && !isTyping(t))) { e.preventDefault(); $('#search').focus(); $('#search').select(); return; }
   if (isTyping(t) || e.ctrlKey || e.altKey || $('#app').classList.contains('hidden')) return;
   const m = S.message;
-  const items = S.items;
-  const i = items.findIndex((it) => it.ids.includes(S.selected));
+  // J/K walk the lines as shown: list rows, and the messages of expanded conversations.
+  const lines = $$('#mail-list .row').filter((el) => !el.classList.contains('open'));
+  let i = lines.findIndex((el) => el.dataset.id === S.selected);
+  if (i < 0) i = lines.findIndex((el) => !el.dataset.child && itemOf(S.selected).ids.includes(el.dataset.id));
+  const go = (el) => el && selectMessage(el.dataset.id, { child: !!el.dataset.child });
   const k = e.key;
   const many = S.multi.size >= 2;
-  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); const n = items[Math.min(items.length - 1, i + 1)]; if (n) selectMessage(n.id); }
-  else if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); const n = items[Math.max(0, i - 1)]; if (n) selectMessage(n.id); }
+  const conv = S.items.find((it) => it.key && it.ids.includes(S.selected));
+  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); go(lines[Math.min(lines.length - 1, i + 1)]); }
+  else if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); go(lines[Math.max(0, i - 1)]); }
+  else if (k === 'ArrowRight' && conv && !threadOf(S.selected) && threadSize(conv) > 1) { e.preventDefault(); toggleThread(conv.id, true); }
+  else if (k === 'ArrowLeft' && threadOf(S.selected)) { e.preventDefault(); const it = threadOf(S.selected); toggleThread(it.id, false); selectMessage(it.id); }
   else if (k === 'c') startCompose('new');
-  else if (k === 'Enter' && i >= 0 && !many && (t === document.body || t.closest('#mail-list'))) { e.preventDefault(); if (!S.convo && items[i].ids.length > 1) openConversation(items[i]); else popOut(S.selected); }
-  else if (k === 'Backspace' && S.convo) { e.preventDefault(); closeConversation(); }
+  else if (k === 'Enter' && i >= 0 && !many && (t === document.body || t.closest('#mail-list'))) { e.preventDefault(); popOut(S.selected); }
   else if (k === 'x') { if (S.selected && !S.local) toggleItem(S.selected); }
   else if (many && (k === 'Delete' || k === '#')) batchMove(null, { delete: true });
   else if (many && k === 'u') batchFlags({ read: false });

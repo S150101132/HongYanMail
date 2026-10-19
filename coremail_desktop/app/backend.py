@@ -114,6 +114,23 @@ def _summary_dict(item):
             'scheduleAt': _schedule_ms(getattr(item, 'schedule_at', None)), 'tags': list(getattr(item, 'tags', ()) or ())}
 
 
+# Conversations: messages whose subjects match once reply/forward prefixes are gone.
+# The page groups its list with the same rule (threadKey in app.js).
+SUBJECT_PREFIX = re.compile(r'^\s*(?:re|fwd?|fw|回复|转发|答复)\s*(?:\[\d+\])?\s*[:：]\s*', re.I)
+THREAD_SKIP = ('trash', 'spam', 'virus', 'drafts')  # Folders a conversation does not reach into.
+
+
+def thread_subject(subject):
+    text, prev = str(subject or '').strip(), None
+    while prev != text:
+        prev, text = text, SUBJECT_PREFIX.sub('', text).strip()
+    return text
+
+
+def thread_key(subject):
+    return ' '.join(thread_subject(subject).split()).lower()
+
+
 SEARCH_TEXT = ('from', 'to', 'with')  # Address substrings; 'with' is either side (往来邮件).
 SEARCH_FLAGS = ('attachment', 'unread', 'flagged')
 
@@ -1027,6 +1044,55 @@ class MailBackend:
             rows = [r for r in rows if filter_match(local, query)(r)]
         return {'rows': rows, 'total': result['total'], 'server': sorted(remote), 'local': sorted(local),
                 'more': offset + len(result['messages']) < result['total']}
+
+    # Conversations (Outlook-style: expanded in place under the list row) -------------
+    def _thread_rows(self, mid):
+        """(key, mailbox, rows) of the conversation mid belongs to, from the cache:
+        received and sent mail alike, never trash, spam or drafts."""
+        row = self.cache.summary(mid)
+        if row is None:
+            return '', None, []
+        key, box = thread_key(row.get('subject')), row.get('mailbox')
+        if not key:
+            return '', box, [row]
+        skip = {f['id'] for f in self._all_folders() if f.get('role') in THREAD_SKIP}
+        return key, box, self.cache.matching(lambda r: r.get('mailbox') == box and str(r.get('fid')) not in skip
+                                             and thread_key(r.get('subject')) == key)
+
+    def thread_counts(self, ids):
+        """How many cached messages each listed message's conversation holds (instant)."""
+        skip = {f['id'] for f in self._all_folders() if f.get('role') in THREAD_SKIP}
+        counts = {}
+        for r in self.cache.matching(lambda r: str(r.get('fid')) not in skip):
+            key = (r.get('mailbox'), thread_key(r.get('subject')))
+            counts[key] = counts.get(key, 0) + 1
+        result = {}
+        for mid in list(ids or [])[:500]:
+            row = isinstance(mid, str) and self.cache.summary(mid)
+            if row:
+                key = thread_key(row.get('subject'))
+                result[mid] = counts.get((row.get('mailbox'), key), 1) if key else 1
+        return result
+
+    def thread(self, mid):
+        """Every message of the conversation, newest first. The cache answers first;
+        a subject search on the server adds mail not yet cached (sent mail in a folder
+        never opened). Offline the cached part is returned."""
+        key, box, rows = self._thread_rows(mid)
+        if key and box is None and hasattr(self.adapter, 'search_messages'):
+            subject = thread_subject((self.cache.summary(mid) or {}).get('subject'))
+            try:
+                found = self._online(self.adapter.search_messages, subject[:200], 0, 100, filters={'scope': 'subject'})
+                fresh = [_summary_dict(item) for item in found['messages']]
+                fresh = [r for r in fresh if thread_key(r['subject']) == key and not self.cache.summary(r['id'])]
+                for fid in {str(r['fid']) for r in fresh}:
+                    self.cache.put_summaries(fid, [r for r in fresh if str(r['fid']) == fid])
+                if fresh:
+                    rows = self._thread_rows(mid)[2]
+            except AppError:
+                pass  # Offline or refused: the cached part of the conversation still shows.
+        rows.sort(key=lambda r: r.get('ts') or 0, reverse=True)
+        return {'key': key, 'rows': rows}
 
     def search_capabilities(self):
         return {'server': sorted(getattr(self.adapter, 'SEARCH_FILTERS', frozenset()))}

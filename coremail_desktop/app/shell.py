@@ -62,12 +62,13 @@ BACKEND_METHODS = {
     'reportSpam': 'report_spam', 'purge': 'purge', 'emptyFolder': 'empty_folder',
     'senderLists': 'sender_lists', 'addSenders': 'add_senders', 'removeSender': 'remove_sender',
     'previewAttachment': 'attachment_preview',
+    'threadCounts': 'thread_counts', 'thread': 'thread',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
                 'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
-                'cancelSend', 'heldSends'}
+                'cancelSend', 'heldSends', 'threadCounts'}
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}
 # Events a pop-out reader may pass on to the main window.

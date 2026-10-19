@@ -139,6 +139,10 @@ class MailCache:
         hits.sort(key=lambda r: r['ts'], reverse=True)
         return hits[:limit]
 
+    def matching(self, predicate):
+        with self._lock:
+            return [row for row in self._rows.values() if predicate(row)]
+
     def addresses(self):
         """Every From/To string seen, for local recipient suggestions."""
         with self._lock:

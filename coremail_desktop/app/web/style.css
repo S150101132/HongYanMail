@@ -178,11 +178,22 @@ body.resizing iframe { pointer-events: none; }
 .row .marks .star { color: var(--star); }
 .row .star svg { fill: currentColor; }
 .row .tag { font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); flex: 0 1 auto; max-width: 40%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.convo-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--panel-2); border-bottom: 1px solid var(--line); min-width: 0; }
-.convo-back { flex: none; border: 0; background: transparent; color: var(--accent); cursor: pointer; font-weight: 600; padding: 4px 6px; margin-left: -6px; border-radius: 6px; white-space: nowrap; }
-.convo-back:hover { background: var(--accent-soft); }
-.convo-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--text-2); }
-.convo-head .tcount { font-size: 11px; font-weight: 600; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--line); color: var(--text-2); text-align: center; flex: none; }
+/* Conversations expanded in place (Outlook-style): a triangle on the row, its messages below. */
+.row.conv { grid-template-columns: 16px 34px 1fr; gap: 8px; padding-left: 10px; }
+.twisty { width: 16px; height: 22px; margin-top: 6px; padding: 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; border-radius: 4px; }
+.twisty:hover { color: var(--accent); background: var(--accent-soft); }
+.twisty i { width: 14px; height: 14px; transition: transform .12s; }
+.twisty.open i { transform: rotate(90deg); }
+.twisty.none { visibility: hidden; }
+.row.conv.unread::before { left: 3px; }
+.row.open { border-bottom-color: transparent; }
+.thread-kids { border-bottom: 1px solid var(--line-2); background: var(--panel-2); }
+.row.child { grid-template-columns: 1fr; padding: 6px 14px 6px 62px; border-bottom: 0; font-size: 13px; }
+.row.child::after { content: ""; position: absolute; left: 44px; top: 0; bottom: 0; border-left: 2px solid var(--line); }
+.row.child.unread::before { left: 52px; }
+.row.child.mine .who { color: var(--muted); }
+.row.child .prev { font-size: 12px; }
+.kids-note { padding: 6px 14px 8px 62px; color: var(--muted); font-size: 12px; }
 :root[data-density="compact"] .row .prev, :root[data-density="compact"] .row .avatar { display: none; }
 :root[data-density="compact"] .row { grid-template-columns: 1fr; padding-left: 18px; }
 .row.msel { background: var(--accent-soft); border-left-color: var(--accent); }
