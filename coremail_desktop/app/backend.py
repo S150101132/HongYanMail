@@ -348,6 +348,8 @@ class MailBackend:
         self._held = {}
         self._held_lock = threading.Lock()
         self._imported = {}  # 'eml:<digest>' -> raw bytes of .eml files opened read-only.
+        self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
+        self._ai_lock = threading.Lock()
 
     # Accounts --------------------------------------------------------------
     def _accounts_path(self):
@@ -2249,6 +2251,107 @@ class MailBackend:
         answers = self.cache.get('inviteAnswers') or {}
         answers[mid] = answer
         self.cache.set('inviteAnswers', dict(list(answers.items())[-500:]))
+        return result
+
+    # AI 助手 ---------------------------------------------------------------------
+    # Settings live in their own DPAPI file beside account.bin; the key never goes back
+    # to the page. Called on the bridge's AI thread, so mail is read only from the cache.
+    def _ai_path(self):
+        return self.data_dir / 'ai.bin'
+
+    def _ai_record(self):
+        try:
+            value = json.loads(self.protector.unprotect(self._ai_path().read_bytes()).decode('utf-8'))
+        except Exception:
+            value = {}
+        return value if isinstance(value, dict) else {}
+
+    def _save_ai(self, record):
+        self._ai_path().write_bytes(self.protector.protect(json.dumps(record).encode('utf-8')))
+
+    def ai_settings(self):
+        from coremail_desktop.ai.client import DEFAULT_BASE_URL, DEFAULT_MODEL
+        record = self._ai_record()
+        usage = record.get('usage') or {}
+        if usage.get('month') != datetime.now().strftime('%Y-%m'):
+            usage = {}
+        return {'baseUrl': record.get('baseUrl') or DEFAULT_BASE_URL, 'model': record.get('model') or DEFAULT_MODEL,
+                'hasKey': bool(record.get('key')), 'ready': bool(record.get('key')) or self.ai_client is not None,
+                'demo': self.ai_client is not None, 'usage': {'tokens': usage.get('tokens', 0), 'calls': usage.get('calls', 0)}}
+
+    def set_ai_settings(self, base_url=None, model=None, key=None, clear_key=False):
+        from coremail_desktop.ai.client import check_base_url, check_key, check_model
+        with self._ai_lock:
+            record = self._ai_record()
+            if base_url is not None:
+                record['baseUrl'] = check_base_url(base_url)
+            if model is not None:
+                record['model'] = check_model(model)
+            if clear_key:
+                record['key'] = ''
+            elif key:
+                record['key'] = check_key(key)
+            self._save_ai(record)
+        return self.ai_settings()
+
+    def _ai(self):
+        from coremail_desktop.ai.client import DEFAULT_BASE_URL, DEFAULT_MODEL, ChatClient
+        if self.ai_client is not None:
+            return self.ai_client
+        record = self._ai_record()
+        if not record.get('key'):
+            raise AppError('AI_NOT_CONFIGURED')
+        return ChatClient(record.get('baseUrl') or DEFAULT_BASE_URL, record.get('model') or DEFAULT_MODEL, record['key'])
+
+    def _ai_call(self, messages, **kwargs):
+        """One chat call, counted per month (tokens and calls only, never content)."""
+        client, tokens = self._ai(), 0
+        try:
+            content, tokens = client.chat(messages, **kwargs)
+            return content, tokens
+        finally:
+            with self._ai_lock:
+                record = self._ai_record()
+                month = datetime.now().strftime('%Y-%m')
+                usage = record.get('usage') if (record.get('usage') or {}).get('month') == month else {'month': month}
+                usage.update(tokens=usage.get('tokens', 0) + tokens, calls=usage.get('calls', 0) + 1)
+                record['usage'] = usage
+                try:
+                    self._save_ai(record)
+                except OSError:
+                    pass  # A blocked data folder must not hide the result.
+
+    def ai_test(self):
+        self._ai_call([{'role': 'user', 'content': '只回复一个字：好'}], max_tokens=5)
+        return self.ai_settings()
+
+    def summarize(self, mid, allow_encrypted=False, refresh=False):
+        """「总结这封」. Decrypted mail goes to the AI service only when the user agreed
+        for this message (allow_encrypted), and its summary is never kept."""
+        from coremail_desktop.ai.summary import SUMMARY_TOKENS, build_messages, parse_summary
+        mid = str(mid)
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        client = self._ai()  # Not configured: say so before touching the mail.
+        model = getattr(client, 'model', '')
+        if mid not in self._imported and mid not in self._docs and self.cache.get_body(mid) is None:
+            raise AppError('AI_MAIL_UNAVAILABLE')  # Opening the mail downloads it; this thread never does.
+        document = self._document(mid)
+        if document.encryption_state == 'locked':
+            raise AppError('CERT_LOCKED')
+        encrypted = document.encryption_state == 'decrypted'
+        if encrypted and not allow_encrypted:
+            raise AppError('AI_ENCRYPTED_CONFIRM')
+        saved = self.cache.get('aiSummaries') or {}
+        if not encrypted and not refresh and mid in saved:
+            return {**saved[mid], 'cached': True}
+        summary = self.cache.summary(mid) or {}
+        content, _ = self._ai_call(build_messages(document, summary.get('date') or ''), max_tokens=SUMMARY_TOKENS, json_mode=True)
+        result = {**parse_summary(content), 'model': model, 'at': datetime.now().strftime('%Y-%m-%d %H:%M'), 'encrypted': encrypted}
+        if not encrypted:
+            saved.pop(mid, None)
+            saved[mid] = result
+            self.cache.set('aiSummaries', dict(list(saved.items())[-300:]))
         return result
 
     # Background sync -------------------------------------------------------

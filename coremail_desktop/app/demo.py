@@ -592,6 +592,26 @@ class DemoAdapter:
 PREVIEW_DEMO_ID = 'demo1'
 
 
+class DemoAiClient:
+    """Stand-in for the AI service in demo mode: a fixed-shape summary built from the
+    prompt itself, no network."""
+    model = '演示'
+
+    def chat(self, messages, max_tokens=800, json_mode=False):
+        import json
+        import re
+        import time
+        time.sleep(0.6)  # Long enough to see the progress state.
+        text = messages[-1]['content']
+        subject = (re.search(r'主题：(.*)', text) or [None, ''])[1].strip() or '（无主题）'
+        body = text.partition('正文：\n')[2].rsplit('\n', 1)[0]
+        lines = [l.strip() for l in body.splitlines() if len(l.strip()) > 6][:3]
+        value = {'conclusion': f'这是一封关于「{subject}」的演示邮件（演示模式：摘要由本机生成，没有联网）。',
+                 'points': [l[:60] for l in lines] or ['邮件正文很短。'],
+                 'actions': ['按邮件要求回复发件人。'] if re.search(r'请|麻烦|务必|回复', body) else []}
+        return json.dumps(value, ensure_ascii=False), 0
+
+
 def _demo_chart(width=480, height=300):
     """A synthetic bar chart PNG (no text) for the attachment preview."""
     import struct

@@ -67,13 +67,16 @@ BACKEND_METHODS = {
     'senderLists': 'sender_lists', 'addSenders': 'add_senders', 'removeSender': 'remove_sender',
     'previewAttachment': 'attachment_preview', 'openAttachment': 'open_attachment',
     'threadCounts': 'thread_counts', 'thread': 'thread',
+    'aiSettings': 'ai_settings', 'setAiSettings': 'set_ai_settings', 'aiTest': 'ai_test', 'summarize': 'summarize',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
                 'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
-                'recipientGroups',
+                'recipientGroups', 'aiSettings',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment'}
+# AI calls take up to a minute: their own thread, so mail work never waits behind them.
+AI_METHODS = {'summarize', 'aiTest'}
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}
 # Events a pop-out reader may pass on to the main window.
@@ -231,8 +234,9 @@ class Bridge(QObject):
             self._serial = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-mail')
             self._fast = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-fast')
             self._background = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-prefetch')
+            self._ai = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-ai')
         else:
-            self._serial, self._fast, self._background = share._serial, share._fast, share._background
+            self._serial, self._fast, self._background, self._ai = share._serial, share._fast, share._background, share._ai
         self._done.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
 
     def emit_event(self, name, value=None):
@@ -262,7 +266,8 @@ class Bridge(QObject):
                 if code in ('SESSION_EXPIRED', 'NOT_AUTHENTICATED') and name not in ('login', 'autoLogin'):
                     self.emit_event('authRequired')
                 self._done.emit(request_id, False, json.dumps({'code': code, 'message': text}, ensure_ascii=False))
-        pool = self._background if name in BACKGROUND_METHODS else self._fast if name in FAST_METHODS else self._serial
+        pool = (self._background if name in BACKGROUND_METHODS else self._fast if name in FAST_METHODS
+                else self._ai if name in AI_METHODS else self._serial)
         try:
             pool.submit(work)
         except RuntimeError:
@@ -299,6 +304,7 @@ class Bridge(QObject):
         self._serial.shutdown(wait=False, cancel_futures=True)
         self._fast.shutdown(wait=False, cancel_futures=True)
         self._background.shutdown(wait=False, cancel_futures=True)
+        self._ai.shutdown(wait=False, cancel_futures=True)
 
 
 class _PrintHost:

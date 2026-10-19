@@ -694,3 +694,22 @@ img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 .seg.sm button { padding: 2px 8px; font-size: 12px; }
 .modal-card:has(.grp-members) { width: 560px; }
 .cmp-editor .hy-mention { white-space: nowrap; }
+
+/* AI 助手: 「总结这封」 panel and settings */
+.settings-grid .pref-row input { width: 260px; flex: none; }
+.ai-panel { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13.5px; }
+.ai-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 12px; background: var(--accent-soft); }
+.ai-head i { width: 15px; height: 15px; color: var(--accent); }
+.ai-head .btn { height: 26px; padding: 0 9px; font-size: 12px; }
+.ai-head .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ai-body { padding: 10px 14px 12px; line-height: 1.65; }
+.ai-body h4 { margin: 10px 0 2px; font-size: 12.5px; color: var(--text-2); }
+.ai-body ul { margin: 0; padding-left: 20px; }
+.ai-body p { margin: 0; }
+.ai-conclusion { font-weight: 600; }
+.ai-error { color: var(--danger); margin-bottom: 8px !important; }
+.ai-wait { display: flex; gap: 6px; padding: 6px 0; }
+.ai-wait span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); opacity: .3; animation: ai-dot 1.2s infinite; }
+.ai-wait span:nth-child(2) { animation-delay: .2s; }
+.ai-wait span:nth-child(3) { animation-delay: .4s; }
+@keyframes ai-dot { 40% { opacity: 1; } }

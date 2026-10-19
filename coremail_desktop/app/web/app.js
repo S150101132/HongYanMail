@@ -933,7 +933,7 @@ $('#reader-body').addEventListener('click', async (e) => {
     delete: () => deleteMessage(m.id), move: () => pickFolder(m.id), unread: () => setFlags(m.id, { read: false }),
     flag: () => setFlags(m.id, { flagged: !m.flags.flagged }), find: openFind,
     recall: () => recallMessage(m), status: () => loadDeliveryStatus(m, true), unschedule: () => unscheduleMessage(m),
-    print: () => printMessage(m), popout: () => popOut(m.id), more: () => moreMenu(b, m),
+    print: () => printMessage(m), popout: () => popOut(m.id), more: () => moreMenu(b, m), summarize: () => summarizeMessage(m),
   }[b.dataset.act] || (() => {}))();
 });
 
@@ -1737,6 +1737,7 @@ function openSettings() {
   renderCertStatus();
   renderTemplates(); loadTemplates().then(renderTemplates);
   renderGroups(); loadGroups().then(renderGroups);
+  renderAiSettings();  // ai.js: settings open only on a click, after every file has loaded.
   api('runtimeStatus').then((r) => { $('#runtime-note').classList.toggle('hidden', r.sandboxed); $('#data-dir').textContent = '本机数据（已加密）：' + r.dataDir; }).catch(() => {});
   api('certificateStatus').then((c) => { S.profile.certificate = c; renderCertStatus(); }).catch(() => {});
 }

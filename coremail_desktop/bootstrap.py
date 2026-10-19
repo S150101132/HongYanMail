@@ -131,7 +131,7 @@ def run_app(demo=False,minimized=False):
     from .ui.branding import app_icon
     app.setWindowIcon(app_icon())
     if demo:
-        from .app.demo import DemoAdapter
+        from .app.demo import DemoAdapter, DemoAiClient
         # Synthetic data only, in a fixed per-user folder that is wiped at start and exit,
         # so demo runs never leave files beside the executable or the working directory.
         import atexit,shutil
@@ -139,6 +139,7 @@ def run_app(demo=False,minimized=False):
         shutil.rmtree(demo_dir,ignore_errors=True)
         atexit.register(shutil.rmtree,demo_dir,True)
         backend=MailBackend(demo_dir,adapter_factory=DemoAdapter)
+        backend.ai_client=DemoAiClient()
         backend.login('https://demo.invalid/coremail/','demo@example.invalid','demo',True)
     else:
         from .crypto.service import CryptoService

@@ -154,6 +154,8 @@
         <button class="tb sent-only hidden" data-act="recall" title="撤回这封已发送邮件"><i data-icon="undo"></i><span>撤回</span></button>
         <button class="tb sent-only hidden" data-act="status" title="查看每位收件人的投递和阅读状态"><i data-icon="route"></i><span>投递状态</span></button>
         <button class="tb sched-only hidden" data-act="unschedule" title="取消定时，邮件转为普通草稿"><i data-icon="clock"></i><span>取消定时</span></button>
+        <span class="tb-sep"></span>
+        <button class="tb" data-act="summarize" title="AI 总结这封邮件（正文会发送到 AI 服务）"><i data-icon="spark"></i><span>总结</span></button>
         <span class="spacer"></span>
         <button class="tb" data-act="find" title="在正文中查找"><i data-icon="search"></i></button>
         <button class="tb" data-act="print" title="打印 (Ctrl+P)"><i data-icon="print"></i></button>
@@ -270,6 +272,14 @@
         <p class="muted small">发给同事的邮件默认加密（使用公司通讯录中的证书），含外部收件人时默认不加密。加密的邮件默认同时用个人证书数字签名。阅读加密邮件和签名发送需要解锁个人证书（.pfx）。</p>
         <p class="small" id="cert-status"></p>
         <div class="row-gap"><button class="btn ghost" id="btn-cert">解锁个人证书…</button><button class="btn ghost hidden" id="btn-cert-forget">忘记证书</button></div>
+        <h3 id="ai-section">AI 助手</h3>
+        <p class="muted small">阅读邮件时点「总结」，由 AI 生成摘要。邮件正文会发送到下面的 AI 服务（默认 DeepSeek）；加密邮件每次都会先征求你的同意。API Key 由 Windows 加密保存在本机，界面上无法查看。</p>
+        <label class="pref-row">接口地址<input id="ai-base" type="text" spellcheck="false"></label>
+        <label class="pref-row">模型<input id="ai-model" type="text" spellcheck="false"></label>
+        <label class="pref-row">API Key<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
+        <p class="muted small" id="ai-status"></p>
+        <div class="row-gap"><button class="btn ghost" id="ai-save">保存 AI 设置</button><button class="btn ghost" id="ai-test">测试连接</button>
+          <button class="btn ghost danger hidden" id="ai-clear">清除 Key</button></div>
         <h3>账号</h3>
         <p class="muted small" id="settings-account"></p>
         <p class="muted small" id="data-dir"></p>
@@ -322,5 +332,6 @@
 <script src="signature.js"></script>
 <script src="groups.js"></script>
 <script src="mention.js"></script>
+<script src="ai.js"></script>
 </body>
 </html>

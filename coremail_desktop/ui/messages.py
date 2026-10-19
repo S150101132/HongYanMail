@@ -134,6 +134,18 @@ MESSAGES = {
     'SENDER_LIST_LIMIT': '名单最多 500 项，请先删除不用的条目。',
     'PREVIEW_UNAVAILABLE': '这个附件不能在鸿雁里预览，请用系统中的程序打开。',
     'ATTACHMENT_BLOCKED': '这是程序或脚本文件，为安全起见不能从邮件直接打开。如确实需要，请先保存，确认来源可靠后再运行。',
+    'AI_NOT_CONFIGURED': '还没有设置 AI 助手，请在「设置 → AI 助手」中填写 API Key。',
+    'INVALID_AI_SETTINGS': 'AI 设置无效：接口地址须以 https:// 开头；模型名称和 API Key 不能包含空格或中文。',
+    'AI_NOT_FOUND': 'AI 接口地址或模型名称不正确，服务器上没有找到对应的接口。',
+    'AI_AUTH_FAILED': 'API Key 无效或已停用，请在「设置 → AI 助手」中重新填写。',
+    'AI_QUOTA': 'AI 服务账户余额不足，请充值后再试。',
+    'AI_RATE_LIMITED': 'AI 服务请求过于频繁，请稍后再试。',
+    'AI_TIMEOUT': 'AI 服务响应超时，请稍后再试。',
+    'AI_UNAVAILABLE': 'AI 服务暂时不可用，请稍后再试。',
+    'AI_CONTEXT_TOO_LONG': '邮件太长，超出了 AI 模型一次能处理的长度。',
+    'AI_BAD_RESPONSE': 'AI 服务没有返回可用的结果，请重试。',
+    'AI_ENCRYPTED_CONFIRM': '这是一封加密邮件，需要你确认后才会发送给 AI 服务。',
+    'AI_MAIL_UNAVAILABLE': '这封邮件的正文还没有下载到本机，请先打开邮件再总结。',
 }
 
 GENERIC = '操作未完成。请检查连接或稍后重试，本应用不会自动重发邮件。'
