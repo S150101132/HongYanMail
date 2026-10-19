@@ -122,6 +122,7 @@ function showMenu(x, y, items) {
     m.appendChild(b);
   }
   renderIcons(m);
+  m.opener = window.event;  // The click that opens a menu must not also close it on its way up to document.
   m.classList.remove('hidden');
   const r = m.getBoundingClientRect();
   m.style.left = Math.min(x, innerWidth - r.width - 8) + 'px';
@@ -1838,7 +1839,7 @@ function readerKey(e) {
 }
 function isTyping(t) { return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
 document.addEventListener('keydown', handleKey);
-document.addEventListener('click', (e) => { if (!e.target.closest('#menu')) hideMenu(); if (!e.target.closest('#suggest') && !e.target.closest('.chips')) hideSuggest(); });
+document.addEventListener('click', (e) => { if (!e.target.closest('#menu') && $('#menu').opener !== e) hideMenu(); if (!e.target.closest('#suggest') && !e.target.closest('.chips')) hideSuggest(); });
 document.addEventListener('contextmenu', (e) => { if (!isTyping(e.target) && !e.target.closest('.reader-scroll')) e.preventDefault(); });
 
 // ---------------------------------------------------------------- push events from Python

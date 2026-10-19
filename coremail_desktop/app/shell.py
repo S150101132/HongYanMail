@@ -81,6 +81,32 @@ POPOUT_EVENTS = {'mailChanged', 'authRequired'}
 # One-shot documents for printing, served at hongyan://app/print/<token>.html.
 _PRINT_DOCS = {}
 BACKGROUND_METHODS = {'prefetch'}
+_LAST_SAVE_DIR = []  # Folder of the last successful save this session.
+
+
+def _writable(folder):
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe = folder / ('.write-test-%d' % os.getpid())
+        probe.write_bytes(b'x')
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _save_dir(backend):
+    """Where save dialogs open: the last folder used, else 下载, else 下载 inside the
+    data folder. Some managed PCs forbid this program from writing the user profile,
+    and Windows' own dialog would then refuse 下载 with a permission box."""
+    for folder in (*_LAST_SAVE_DIR, Path.home() / 'Downloads'):
+        if _writable(folder):
+            return folder
+    return backend.data_dir / '下载'
+
+
+def _saved(target):
+    _LAST_SAVE_DIR[:] = [Path(target).parent]
 
 
 def _png_from_image(data):
@@ -316,7 +342,7 @@ class _PrintHost:
 
     def native_exportPdf(self, mid='', remote=False):
         name = self.backend.file_stem(mid) + '.pdf'
-        target, _ = QFileDialog.getSaveFileName(self, '导出为 PDF', str(Path.home() / 'Downloads' / name), 'PDF 文件 (*.pdf)')
+        target, _ = QFileDialog.getSaveFileName(self, '导出为 PDF', str(_save_dir(self.backend) / name), 'PDF 文件 (*.pdf)')
         if not target:
             return False
 
@@ -331,6 +357,7 @@ class _PrintHost:
                 except ValueError:
                     self._print_done(view, False, 'PRINT_FAILED', 'pdf')
                 else:
+                    _saved(target)
                     self._print_done(view, True, kind='pdf')
             layout = QPageLayout(QPageSize(QPageSize.PageSizeId.A4), QPageLayout.Orientation.Portrait,
                                  QMarginsF(15, 15, 15, 15), QPageLayout.Unit.Millimeter)
@@ -340,10 +367,11 @@ class _PrintHost:
 
     def native_exportEml(self, mid='', decrypted=False):
         name, data = self.backend.export_eml(mid, decrypted is True)
-        target, _ = QFileDialog.getSaveFileName(self, '导出邮件', str(Path.home() / 'Downloads' / name), '邮件文件 (*.eml)')
+        target, _ = QFileDialog.getSaveFileName(self, '导出邮件', str(_save_dir(self.backend) / name), '邮件文件 (*.eml)')
         if not target:
             return False
         Path(target).write_bytes(data)
+        _saved(target)
         return True
 
 
@@ -561,7 +589,8 @@ class AppShell(_PrintHost, QMainWindow):
         box = QMessageBox(self)
         box.setWindowTitle('关闭鸿雁')
         box.setIcon(QMessageBox.Icon.Question)
-        box.setStyleSheet('QLabel { min-width: 400px; }')
+        # Only the two text labels: a bare QLabel rule also widens the icon label.
+        box.setStyleSheet('QLabel#qt_msgbox_label, QLabel#qt_msgbox_informativelabel { min-width: 420px; }')
         box.setText('关闭窗口后，鸿雁要继续在后台收信吗？')
         where = ('点右下角托盘里的鸿雁图标可重新打开，新邮件会弹出提醒。' if self._tray_shown() else
                  '这台电脑没有显示鸿雁的托盘图标，窗口会最小化到任务栏，点任务栏上的鸿雁即可重新打开。')
@@ -782,16 +811,17 @@ class AppShell(_PrintHost, QMainWindow):
 
     def native_saveAttachment(self, mid='', part=''):
         name, _kind, data = self.backend.attachment(mid, part)
-        target, _ = QFileDialog.getSaveFileName(self._parent(), '保存附件', str(Path.home() / 'Downloads' / name))
+        target, _ = QFileDialog.getSaveFileName(self._parent(), '保存附件', str(_save_dir(self.backend) / name))
         if not target:
             return False
         Path(target).write_bytes(data)
+        _saved(target)
         return True
 
     def native_saveAllAttachments(self, mid=''):
         from coremail_desktop.app.backend import safe_file_name
         document = self.backend._document(mid)
-        folder = QFileDialog.getExistingDirectory(self._parent(), '保存全部附件到', str(Path.home() / 'Downloads'))
+        folder = QFileDialog.getExistingDirectory(self._parent(), '保存全部附件到', str(_save_dir(self.backend)))
         if not folder:
             return 0
         count = 0
@@ -805,6 +835,7 @@ class AppShell(_PrintHost, QMainWindow):
                 target = target.with_name(f'{stem} ({n}){suffix}')
                 n += 1
             target.write_bytes(data)
+            _saved(target)
             count += 1
         return count
 
