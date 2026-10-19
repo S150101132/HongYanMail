@@ -43,6 +43,9 @@ class LayoutPrefsAndTemplatesTest(unittest.TestCase):
         self.assertEqual((prefs['sidebarWidth'], prefs['listWidth']), (180, 900))
         prefs = self.backend.set_prefs({'sidebarWidth': 300, 'listWidth': '500'})  # Wrong type is ignored.
         self.assertEqual((prefs['sidebarWidth'], prefs['listWidth']), (300, 900))
+        self.assertEqual((prefs['ctTreeWidth'], prefs['ctListWidth'], prefs['tagsOpen']), (250, 340, False))  # Contacts columns; tags folded.
+        prefs = self.backend.set_prefs({'ctTreeWidth': 10, 'ctListWidth': 5000, 'tagsOpen': True})
+        self.assertEqual((prefs['ctTreeWidth'], prefs['ctListWidth'], prefs['tagsOpen']), (160, 720, True))
 
     def test_templates_round_trip_encrypted_rename_and_delete(self):
         value = {'subject': '本周工作周报', 'html': '<p>本周完成：机密项目</p>', 'to': ['rd@example.invalid'], 'cc': ['x@example.invalid']}

@@ -61,14 +61,14 @@ BACKEND_METHODS = {
     'createFolder': 'create_folder', 'renameFolder': 'rename_folder', 'deleteFolder': 'delete_folder', 'markAllRead': 'mark_all_read',
     'reportSpam': 'report_spam', 'purge': 'purge', 'emptyFolder': 'empty_folder',
     'senderLists': 'sender_lists', 'addSenders': 'add_senders', 'removeSender': 'remove_sender',
-    'previewAttachment': 'attachment_preview',
+    'previewAttachment': 'attachment_preview', 'openAttachment': 'open_attachment',
     'threadCounts': 'thread_counts', 'thread': 'thread',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
                 'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
-                'cancelSend', 'heldSends', 'threadCounts'}
+                'cancelSend', 'heldSends', 'threadCounts', 'openAttachment'}
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}
 # Events a pop-out reader may pass on to the main window.
@@ -76,6 +76,19 @@ POPOUT_EVENTS = {'mailChanged', 'authRequired'}
 # One-shot documents for printing, served at hongyan://app/print/<token>.html.
 _PRINT_DOCS = {}
 BACKGROUND_METHODS = {'prefetch'}
+
+
+def _png_from_image(data):
+    """Image bytes Chromium cannot show (TIFF) as PNG, decoded by Qt's image plugins.
+    Called on a worker thread: QImage needs no GUI thread."""
+    from PySide6.QtGui import QImage
+    image = QImage.fromData(QByteArray(bytes(data)))
+    if image.isNull() or image.width() * image.height() > 80_000_000:
+        return None
+    out = QBuffer()
+    out.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(out, 'PNG')
+    return bytes(out.data())
 
 
 class _SchemeHandler(QWebEngineUrlSchemeHandler):
@@ -392,6 +405,7 @@ class AppShell(_PrintHost, QMainWindow):
     def __init__(self, backend, demo=False, sandboxed=True, relaunch_without_sandbox=None):
         super().__init__()
         self.backend = backend
+        backend.convert_image = _png_from_image
         self.demo = demo
         self.sandboxed = sandboxed
         self._relaunch_without_sandbox = relaunch_without_sandbox
@@ -718,6 +732,7 @@ class AppShell(_PrintHost, QMainWindow):
         return True
 
     def native_saveAllAttachments(self, mid=''):
+        from coremail_desktop.app.backend import safe_file_name
         document = self.backend._document(mid)
         folder = QFileDialog.getExistingDirectory(self._parent(), '保存全部附件到', str(Path.home() / 'Downloads'))
         if not folder:
@@ -727,7 +742,7 @@ class AppShell(_PrintHost, QMainWindow):
             data = document.attachment_payloads.get(info.part_id)
             if data is None:
                 continue
-            target = Path(folder) / info.name
+            target = Path(folder) / safe_file_name(info.name)  # Names Windows refuses (a:b.xlsx) would fail.
             stem, suffix, n = target.stem, target.suffix, 1
             while target.exists():
                 target = target.with_name(f'{stem} ({n}){suffix}')
@@ -735,16 +750,6 @@ class AppShell(_PrintHost, QMainWindow):
             target.write_bytes(data)
             count += 1
         return count
-
-    def native_openAttachment(self, mid='', part=''):
-        name, _kind, data = self.backend.attachment(mid, part)
-        # The data folder is known to be writable; some machines forbid TEMP for scripts.
-        folder = self.backend.data_dir / 'opened' / os.urandom(6).hex()
-        folder.mkdir(parents=True, exist_ok=True)
-        target = folder / name
-        target.write_bytes(data)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
-        return True
 
     # PDF preview. The Chromium PDF viewer stays off (PdfViewerEnabled False): it would
     # run as a page of its own next to the bridge. Instead QtPdf (PDFium, built without

@@ -135,6 +135,11 @@ body.resizing iframe { pointer-events: none; }
 .folder.box.open .chev { transform: rotate(90deg); }
 .folder.sub { padding-left: 34px; }
 .side-section { margin: 14px 10px 4px; font-size: 11.5px; color: var(--muted); font-weight: 600; letter-spacing: .5px; }
+/* 标签 heading folds its list (collapsed by default, remembered in prefs.tagsOpen). */
+button.side-section { display: flex; align-items: center; gap: 4px; width: calc(100% - 20px); padding: 0; border: 0; background: none; font-family: inherit; text-align: left; cursor: pointer; }
+button.side-section:hover { color: var(--text-2); }
+button.side-section i { width: 12px; height: 12px; transition: transform .12s; }
+button.side-section[aria-expanded="true"] i { transform: rotate(90deg); }
 .side-foot { flex: none; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
 .account-btn { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: transparent; padding: 8px; border-radius: 10px; cursor: pointer; text-align: left; }
 .account-btn:hover { background: var(--hover); }
@@ -441,10 +446,10 @@ body.resizing iframe { pointer-events: none; }
 .btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
 
 /* Contacts view */
-.contacts-view { grid-column: 2 / 4; display: none; grid-template-columns: 250px minmax(300px, 380px) 1fr; min-height: 0; min-width: 0; background: var(--panel); }
+.contacts-view { grid-column: 2 / 4; display: none; grid-template-columns: var(--ct-tree-w, 250px) var(--ct-list-w, 340px) minmax(320px, 1fr); min-height: 0; min-width: 0; background: var(--panel); }
 .app.contacts-mode .list-pane, .app.contacts-mode .reader-pane { display: none; }
 .app.contacts-mode .contacts-view { display: grid; }
-.ct-tree-pane { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel-2); }
+.ct-tree-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); background: var(--panel-2); position: relative; }
 .ct-head { display: flex; align-items: center; padding: 14px 10px 8px 16px; }
 .ct-head h2 { margin: 0; font-size: 17px; }
 .ct-tree { flex: 1; overflow: auto; padding: 0 6px 8px; }
@@ -462,7 +467,7 @@ body.resizing iframe { pointer-events: none; }
 .ct-twist:hover { background: var(--line); }
 .ct-sep { height: 1px; background: var(--line); margin: 6px 8px; }
 .ct-note { padding: 8px 16px 12px; border-top: 1px solid var(--line-2); }
-.ct-list-pane { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.ct-list-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); position: relative; }
 .ct-row .tag { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ct-card-pane { min-width: 0; overflow: auto; display: flex; }
 .ct-card { margin: 56px auto auto; text-align: center; width: min(420px, 90%); }
@@ -475,9 +480,6 @@ body.resizing iframe { pointer-events: none; }
 .ct-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .ct-actions .btn i { width: 15px; height: 15px; }
 .ct-art { background: var(--accent-soft) !important; }
-@media (max-width: 1180px) {
-  .contacts-view { grid-template-columns: 210px minmax(260px, 320px) 1fr; }
-}
 .list-title-row .seg button { white-space: nowrap; }
 .list-title-row #list-sub { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list-title-row #list-sub + .spacer { display: none; }
@@ -656,6 +658,12 @@ i.flip { transform: rotate(180deg); }
 .pv-img { background: repeating-conic-gradient(#e8e8e8 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
 .pv-text { margin: 0; align-self: stretch; flex: 1; white-space: pre-wrap; word-break: break-word; font: 13px/1.6 Consolas, "Cascadia Mono", "Microsoft YaHei UI", monospace; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; user-select: text; }
 .pv-msg { text-align: center; display: grid; gap: 12px; justify-items: center; }
+.pv-body > .pv-frame { margin: 0; flex: 1; align-self: stretch; border: 1px solid var(--line); border-radius: 8px; background: #fff; min-width: 0; }
+.pv-body:has(> .pv-frame) { padding: 12px; }
+.pv-tabs { flex: none; display: flex; gap: 2px; padding: 0 10px; overflow-x: auto; border-top: 1px solid var(--line); background: var(--panel-2); }
+.pv-tabs button { flex: none; max-width: 220px; height: 32px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-2); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: inherit; }
+.pv-tabs button:hover { background: var(--hover); }
+.pv-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; background: var(--panel); }
 @media (max-width: 1180px) {
   #folder-list .folder { padding: 0; }
   .pv-head .btn span { display: none; }

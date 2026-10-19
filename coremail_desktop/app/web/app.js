@@ -277,25 +277,29 @@ on('mailChanged', (v) => {
 });
 
 // ---------------------------------------------------------------- resizable columns
-const SPLITS = { sidebarWidth: { el: '#split-side', prop: '--side-w', min: 180, max: 400, def: 232 },
-  listWidth: { el: '#split-list', prop: '--list-w', min: 280, max: 900, def: 400 } };
-const READER_MIN = 420;  // The reading pane never gets narrower than this while dragging.
+// `others` are the other fixed columns beside it; the last column (reader / contact
+// details) never gets narrower than `rest` while dragging.
+const SPLITS = { sidebarWidth: { el: '#split-side', prop: '--side-w', min: 180, max: 400, def: 232, others: ['.list-pane'], rest: 420 },
+  listWidth: { el: '#split-list', prop: '--list-w', min: 280, max: 900, def: 400, others: ['.sidebar'], rest: 420 },
+  ctTreeWidth: { el: '#split-ct-tree', prop: '--ct-tree-w', min: 160, max: 480, def: 250, others: ['.sidebar', '.ct-list-pane'], rest: 320 },
+  ctListWidth: { el: '#split-ct-list', prop: '--ct-list-w', min: 240, max: 720, def: 340, others: ['.sidebar', '.ct-tree-pane'], rest: 320 } };
 function applyWidths() {
   for (const [key, sp] of Object.entries(SPLITS)) $('#app').style.setProperty(sp.prop, (S.prefs[key] || sp.def) + 'px');
 }
 function saveWidths() {
-  api('setPrefs', { values: { sidebarWidth: S.prefs.sidebarWidth, listWidth: S.prefs.listWidth } }).then((p) => { S.prefs = p; applyWidths(); }).catch(() => {});
+  const values = Object.fromEntries(Object.keys(SPLITS).map((k) => [k, S.prefs[k]]).filter(([, v]) => v != null));
+  api('setPrefs', { values }).then((p) => { S.prefs = p; applyWidths(); }).catch(() => {});
 }
 for (const [key, sp] of Object.entries(SPLITS)) {
   const handle = $(sp.el);
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    const pane = handle.parentElement, other = key === 'sidebarWidth' ? $('.list-pane') : $('.sidebar');
+    const pane = handle.parentElement, others = sp.others.map((s) => $(s).getBoundingClientRect().width).reduce((a, b) => a + b, 0);
     const startX = e.clientX, startW = pane.getBoundingClientRect().width;
     handle.setPointerCapture(e.pointerId); handle.classList.add('drag'); document.body.classList.add('resizing');
     const move = (ev) => {
-      const room = innerWidth - other.getBoundingClientRect().width - READER_MIN;
+      const room = innerWidth - others - sp.rest;
       S.prefs[key] = Math.round(Math.max(sp.min, Math.min(sp.max, room, startW + ev.clientX - startX)));
       applyWidths();
     };
@@ -799,7 +803,8 @@ function renderMessage(m) {
       (fold ? `<button class="att-more" id="att-more">+${n - 3} 个</button>` : '') + '</div>';
     renderIcons(atts);
     atts.classList.remove('hidden');
-    $$('[data-open]', atts).forEach((b) => (b.onclick = () => api('openAttachment', { mid: m.id, part: b.dataset.open }).catch(fail)));
+    $$('[data-open]', atts).forEach((b) => (b.onclick = () => api('openAttachment', { mid: m.id, part: b.dataset.open })
+      .then(() => toast('正在用系统中的程序打开…')).catch(fail)));
     $$('[data-save]', atts).forEach((b) => (b.onclick = () => api('saveAttachment', { mid: m.id, part: b.dataset.save }).then((ok) => ok && toast('附件已保存')).catch(fail)));
     const all = $('#save-all'); if (all) all.onclick = () => api('saveAllAttachments', { mid: m.id }).then((n) => n && toast(`已保存 ${n} 个附件`)).catch(fail);
     const moreAtts = $('#att-more', atts);

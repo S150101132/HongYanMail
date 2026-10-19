@@ -31,11 +31,20 @@ const TG = window.TG = {
     let sec = $('#tag-section');
     if (!sec) {
       sec = document.createElement('div'); sec.id = 'tag-section';
-      sec.innerHTML = '<div class="side-section">标签</div><nav id="tag-list" class="folders" aria-label="标签"></nav>';
+      sec.innerHTML = '<button class="side-section" id="tag-head" aria-controls="tag-list" title="展开或折叠标签"><i data-icon="chevron"></i><span>标签</span></button><nav id="tag-list" class="folders" aria-label="标签"></nav>';
       ($('#shared-section') || $('#folder-list')).after(sec);
+      renderIcons(sec);
+      $('#tag-head').onclick = () => {
+        S.prefs.tagsOpen = !S.prefs.tagsOpen; this.renderSide();
+        api('setPrefs', { values: { tagsOpen: S.prefs.tagsOpen } }).then((p) => { S.prefs = p; }).catch(() => {});
+      };
     }
     sec.classList.toggle('hidden', !this.list.length);
+    // Collapsed by default; the open tag's view keeps its entry visible.
+    const open = !!S.prefs.tagsOpen || String(S.local || '').startsWith('tag:');
+    $('#tag-head').setAttribute('aria-expanded', String(open));
     const nav = $('#tag-list');
+    nav.classList.toggle('hidden', !open);
     nav.innerHTML = this.list.map((t) => `<a class="folder${S.local === 'tag:' + t.id ? ' on' : ''}" data-tag="${esc(t.id)}" title="${esc(t.name)}">
       <i class="tg-dot" style="background:${esc(t.color)}"></i><span class="fname">${esc(t.name)}</span></a>`).join('');
     $$('[data-tag]', nav).forEach((a) => (a.onclick = () => this.open(a.dataset.tag)));
@@ -407,7 +416,9 @@ const TS = {
 
 // ---------------------------------------------------------------- hooks into app.js
 const _renderFolders = renderFolders;
-renderFolders = function () { _renderFolders(); TG.renderSide(); };
+// The bridge can connect (and enterApp run) before this file has loaded: then the first
+// folder render after sign-in loads the tags instead of the enterApp hook below.
+renderFolders = function () { _renderFolders(); if (!TG.started && S.folders.length) { TG.started = true; TG.load(); } TG.renderSide(); };
 const _renderMessage = renderMessage;
 renderMessage = function (m) { _renderMessage(m); TG.renderReader(m); IV.render(m); };
 const _selectMessage = selectMessage;
@@ -415,7 +426,7 @@ selectMessage = function (id, opts) { const c = $('#iv-card'); if (c) c.remove()
 const _openSettings = openSettings;
 openSettings = function () { _openSettings(); RL.show('general'); };
 const _enterApp = enterApp;
-enterApp = async function (profile) { await _enterApp(profile); TG.load(); };
+enterApp = async function (profile) { await _enterApp(profile); TG.started = true; TG.load(); };
 // Row context menu: a 标签… entry for the user's own mail.
 $('#mail-list').addEventListener('contextmenu', (e) => {
   const row = e.target.closest('.row');

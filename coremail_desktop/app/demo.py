@@ -71,7 +71,8 @@ def _outlook_style(message):
         html.add_related(_TINY_PNG, maintype='image', subtype='png', cid=f'<image00{i}.png@01DC0000.00000000>',
                          filename=f'image00{i}.png', disposition='inline')
     message.add_attachment(b'%PDF-1.4 demo', maintype='application', subtype='pdf', filename='部署进展报告.pdf')
-    message.add_attachment(b'PK demo', maintype='application', subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    from coremail_desktop.app.demo_office import demo_xlsx
+    message.add_attachment(demo_xlsx(), maintype='application', subtype='vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                            filename='支持需求清单.xlsx')
     return bytes(message)
 
@@ -243,9 +244,19 @@ class DemoAdapter:
         message.add_alternative(BODY, subtype='html')
         if r['flags'].get('attached'):
             message.add_attachment('演示附件内容\n'.encode('utf-8'), maintype='text', subtype='plain', filename='会议纪要.txt')
-        if message_id == PREVIEW_DEMO_ID and not mboxa:  # Previewable kinds: an image and a two-page PDF.
+        if message_id == PREVIEW_DEMO_ID and not mboxa:  # Previewable kinds: images, a PDF, HTML and Office files.
+            from coremail_desktop.app import demo_office as office
+            ooxml = 'vnd.openxmlformats-officedocument.'
             message.add_attachment(_demo_chart(), maintype='image', subtype='png', filename='进度图表.png')
             message.add_attachment(_demo_pdf(), maintype='application', subtype='pdf', filename='评审报告.pdf')
+            message.add_attachment(office.demo_xlsx(), maintype='application', subtype=ooxml + 'spreadsheetml.sheet', filename='支持需求清单.xlsx')
+            message.add_attachment(office.demo_docx(_demo_chart(200, 125)), maintype='application', subtype=ooxml + 'wordprocessingml.document',
+                                   filename='评审纪要.docx')
+            message.add_attachment(office.demo_pptx(), maintype='application', subtype=ooxml + 'presentationml.presentation', filename='项目周报.pptx')
+            message.add_attachment(office.demo_html(), maintype='text', subtype='html', filename='周报.html')
+            message.add_attachment(office.demo_svg(), maintype='image', subtype='svg+xml', filename='标志.svg')
+            message.add_attachment(office.demo_bmp(), maintype='image', subtype='bmp', filename='截图.bmp')
+            message.add_attachment(b'\xd0\xcf\x11\xe0 legacy', maintype='application', subtype='vnd.ms-excel', filename='旧版报表.xls')
         return bytes(message)
 
     # Mirrors the deployment: every advanced-search filter is applied by the server.
