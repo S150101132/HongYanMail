@@ -451,6 +451,24 @@ class ForwardAndImportTest(Base):
         self.assertEqual(self.backend.compose('forward', mid)['mode'], 'forward')
         self.assertEqual(self.backend.export_eml(mid)[1], raw)
 
+    def test_attached_mail_opens_as_a_mail(self):
+        inner = b'From: "Li" <lihua@example.invalid>\r\nSubject: inner\r\nMessage-ID: <i@example.invalid>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nhello\r\n'
+        mid = self.backend.messages('1', 0, 1)['rows'][0]['id']
+        self.backend.cache.put_body(mid, (
+            b'From: a@example.invalid\r\nSubject: outer\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="b"\r\n\r\n'
+            b'--b\r\nContent-Type: text/plain\r\n\r\nsee attached\r\n'
+            b'--b\r\nContent-Type: message/rfc822\r\nContent-Disposition: attachment; filename="Re_ a.eml"\r\n\r\n' + inner +
+            b'--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename="b.eml"\r\n\r\n' + inner +
+            b'--b\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename="c.txt"\r\n\r\ntext\r\n--b--\r\n'))
+        self.backend._docs.clear()
+        parts = {a['name']: a['part'] for a in self.backend.open_message(mid)['attachments']}
+        for name in ('Re_ a.eml', 'b.eml'):
+            view = self.backend.open_message(self.backend.open_attached_mail(mid, parts[name]))
+            self.assertEqual((view['subject'], view['imported'], view['from'][0]['name']), ('inner', True, 'Li'))
+        with self.assertRaises(AppError) as raised:
+            self.backend.open_attached_mail(mid, parts['c.txt'])
+        self.assertEqual(raised.exception.code, 'PREVIEW_UNAVAILABLE')
+
     def test_bad_eml_files_are_refused(self):
         for data, code in ((b'', 'EML_INVALID'), (b'\x00\x01 not mail', 'EML_INVALID'), (b'X' * (40 * 1024 * 1024 + 1), 'EML_TOO_LARGE')):
             with self.assertRaises(AppError) as raised:

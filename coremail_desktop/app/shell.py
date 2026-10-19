@@ -836,6 +836,10 @@ class AppShell(_PrintHost, QMainWindow):
         mid = self.backend.import_eml(Path(path).read_bytes())
         return self.native_openReader(mid)
 
+    def native_openAttachedMail(self, mid='', part=''):
+        """A mail attachment opens as a mail in a pop-out reader, not as raw text."""
+        return self.native_openReader(self.backend.open_attached_mail(mid, part))
+
     def native_closeReaders(self):
         for window in list(self.readers):
             window.close()

@@ -49,6 +49,10 @@ PREVIEW_TEXT_LIMIT = 2 * 1024 * 1024
 PREVIEW_TEXT = ('.txt', '.log', '.csv', '.tsv', '.md', '.json', '.xml', '.ini', '.cfg', '.conf', '.yaml', '.yml', '.eml')
 
 
+def is_attached_mail(name, media_type=''):
+    return str(media_type or '').lower() == 'message/rfc822' or str(name or '').lower().endswith('.eml')
+
+
 def preview_kind(name, data):
     """'image/png' ... for a raster image, 'pdf', 'text' or None, from the content."""
     head = bytes(data[:16])
@@ -617,6 +621,14 @@ class MailBackend:
         if data is None or info is None:
             raise AppError('MESSAGE_UNAVAILABLE')
         return info.name, info.media_type, data
+
+    def open_attached_mail(self, mid, part):
+        """A mail attached to a message (message/rfc822 or a .eml file) opened read-only
+        like a local .eml: returns its 'eml:' id for the reader."""
+        name, kind, data = self.attachment(mid, part)
+        if not is_attached_mail(name, kind):
+            raise AppError('PREVIEW_UNAVAILABLE')
+        return self.import_eml(data)
 
     def attachment_preview(self, mid, part):
         """An attachment for the in-app viewer: a raster image as a data: URI, plain

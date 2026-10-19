@@ -276,7 +276,10 @@ const PV = {
       save: () => api('saveAttachment', { mid: m.id, part: a.part }).then((ok) => ok && toast('附件已保存')).catch(fail),
     }[name] || (() => {}))();
   },
+  isMail(a) { return (a.type || '').toLowerCase() === 'message/rfc822' || /\.eml$/i.test(a.name || ''); },
   async open(m, a) {
+    // An attached mail is read as a mail (headers, body, its own attachments) in a pop-out reader.
+    if (this.isMail(a)) { try { await api('openAttachedMail', { mid: m.id, part: a.part }); } catch (err) { fail(err); } return; }
     this.build();
     const token = ++this.token, body = $('#pv-body');
     Object.assign(this, { m, a, kind: null, zoom: 1, fit: true, page: 0, pages: 1 });
@@ -404,12 +407,13 @@ renderMessage = function (m) {
   $$('#r-attachments .att').forEach((row) => {
     const part = ($('[data-open]', row) || {}).dataset?.open;
     const a = m.attachments.find((x) => x.part === part);
-    if (!a || !PV.can(a.name)) return;
+    if (!a || !(PV.can(a.name) || PV.isMail(a))) return;
     $('[data-open]', row).insertAdjacentHTML('beforebegin', `<button class="icon-btn" data-preview title="预览"><i data-icon="eye"></i></button>`);
     renderIcons(row);
     const show = () => PV.open(m, a);
     $('[data-preview]', row).onclick = show;
     const name = $('.name', row); name.classList.add('pv-link'); name.onclick = show;
+    row.ondblclick = (e) => { if (!e.target.closest('button, .name')) show(); };
   });
 };
 const _mgSelectMessage = selectMessage;
