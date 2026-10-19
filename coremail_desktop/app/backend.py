@@ -28,7 +28,9 @@ from coremail_desktop.mime.parser import parse_mime
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
                  'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'threads': False,
                  'autostart': False, 'sidebarWidth': 232, 'listWidth': 400, 'undoSeconds': 10,
-                 'ctTreeWidth': 250, 'ctListWidth': 340, 'tagsOpen': False}
+                 'ctTreeWidth': 250, 'ctListWidth': 340, 'tagsOpen': False,
+                 'closeAction': ''}  # ✕ of the main window: '' asks, 'tray' keeps running, 'quit' exits.
+CLOSE_ACTIONS = ('', 'tray', 'quit')
 UNDO_CHOICES = (0, 5, 10, 20, 30)  # 撤销发送 delay in seconds; 0 sends at once.
 NETWORK_CODES = ('NETWORK_ERROR', 'TLS_ERROR')
 MAX_EML_BYTES = 40 * 1024 * 1024
@@ -474,6 +476,8 @@ class MailBackend:
                 prefs[key] = value
         prefs['pollSeconds'] = max(30, min(int(prefs['pollSeconds']), 3600))
         _check_signature(prefs['signature'])
+        if prefs['closeAction'] not in CLOSE_ACTIONS:
+            prefs['closeAction'] = ''
         if prefs['undoSeconds'] not in UNDO_CHOICES:
             prefs['undoSeconds'] = DEFAULT_PREFS['undoSeconds']
         for key, (low, high) in WIDTH_LIMITS.items():

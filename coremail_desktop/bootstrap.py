@@ -159,6 +159,8 @@ def run_app(demo=False,minimized=False):
     window=shell.AppShell(backend,demo=demo,sandboxed=sandboxed,relaunch_without_sandbox=None if not sandboxed else relaunch)
     guard.activated.connect(window.bring_to_front)
     from PySide6.QtWidgets import QSystemTrayIcon
-    if not (minimized and QSystemTrayIcon.isSystemTrayAvailable()):
+    if minimized and QSystemTrayIcon.isSystemTrayAvailable():
+        window.start_in_background()
+    else:
         window.show()  # Minimized: only the tray icon; the page still loads, signs in and polls.
     return app.exec()

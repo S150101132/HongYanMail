@@ -25,6 +25,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, QMenu, QSystemTrayIcon
 
 from coremail_desktop.errors import AppError
+from coremail_desktop.app.tray_check import tray_registered
 from coremail_desktop.ui.branding import app_icon
 from coremail_desktop.ui.messages import login_message, user_message
 
@@ -416,6 +417,7 @@ class AppShell(_PrintHost, QMainWindow):
         self._page_loaded = False
         self._renderer_restarts = 0
         self._quitting = False
+        self._tray_ok = False  # Windows confirmed the tray icon (see _tray_shown).
         self._unread = 0
         self._poll_busy = False
         self._last_new = None
@@ -529,24 +531,75 @@ class AppShell(_PrintHost, QMainWindow):
         self.setWindowTitle(f'({count}) {title}' if count else title)
         self.tray.setToolTip(f'{title} · {count} 封未读' if count else title)
 
+    def _tray_shown(self):
+        """The tray icon is really on screen. Qt cannot tell when Windows refused it,
+        so Windows' own record of accepted icons decides (tray_check)."""
+        if not (QSystemTrayIcon.isSystemTrayAvailable() and self.tray.isVisible()):
+            return False
+        if not self._tray_ok:
+            self._tray_ok = tray_registered() is not False
+        return self._tray_ok
+
+    def start_in_background(self):
+        """开机自动启动: only the tray icon; without one, a minimized taskbar button."""
+        if not self._tray_shown():
+            self.showMinimized()
+
+    def _to_background(self):
+        if self._tray_shown():
+            self.hide()
+            if not getattr(self, '_told_tray', False):
+                self._told_tray = True
+                self.tray.showMessage('鸿雁仍在后台运行', '新邮件会在这里提醒。右键托盘图标可退出。', app_icon(), 4000)
+        else:
+            self.showMinimized()  # No tray icon on this PC: stay reachable on the taskbar.
+
+    def _ask_close(self):
+        """First ✕: keep running in the background, or exit. The choice can be remembered
+        (设置 › 点击关闭按钮时). None when the user cancels."""
+        from PySide6.QtWidgets import QCheckBox, QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle('关闭鸿雁')
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setStyleSheet('QLabel { min-width: 400px; }')
+        box.setText('关闭窗口后，鸿雁要继续在后台收信吗？')
+        where = ('点右下角托盘里的鸿雁图标可重新打开，新邮件会弹出提醒。' if self._tray_shown() else
+                 '这台电脑没有显示鸿雁的托盘图标，窗口会最小化到任务栏，点任务栏上的鸿雁即可重新打开。')
+        box.setInformativeText(where + '\n之后可在「设置」中更改；随时可用「退出鸿雁」（Ctrl+Q）完全退出。')
+        keep = box.addButton('最小化，继续收信', QMessageBox.ButtonRole.AcceptRole)
+        leave = box.addButton('退出鸿雁', QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton('取消', QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(keep)
+        remember = QCheckBox('记住我的选择，不再询问')
+        box.setCheckBox(remember)
+        box.exec()
+        action = {id(keep): 'tray', id(leave): 'quit'}.get(id(box.clickedButton()))
+        if action and remember.isChecked():
+            try:
+                self.backend.set_prefs({'closeAction': action})
+            except Exception as error:
+                self.log_internal_error('setPrefs', error)
+        return action
+
     def closeEvent(self, event):
-        if self._quitting or not self.tray.isVisible() or self.demo:
-            # Quitting during an undo delay never sends: those drafts stay in 本机草稿
-            # and the next start lists them.
-            self.backend.abandon_held()
-            for timer in list(getattr(self, '_held_timers', {})):
-                timer.stop()
-            self.native_closeReaders()
-            self._stop_push()
-            self.bridge.shutdown()
-            event.accept()
-            QApplication.instance().quit()
-            return
-        event.ignore()
-        self.hide()
-        if not getattr(self, '_told_tray', False):
-            self._told_tray = True
-            self.tray.showMessage('鸿雁仍在后台运行', '新邮件会在这里提醒。右键托盘图标可退出。', app_icon(), 4000)
+        # Signed out (login page) or demo: nothing runs in the background, so ✕ exits.
+        if not (self._quitting or self.demo or self.backend.cache is None):
+            action = self.backend.prefs().get('closeAction') or self._ask_close()
+            if action != 'quit':
+                event.ignore()
+                if action == 'tray':
+                    self._to_background()
+                return
+        # Quitting during an undo delay never sends: those drafts stay in 本机草稿
+        # and the next start lists them.
+        self.backend.abandon_held()
+        for timer in list(getattr(self, '_held_timers', {})):
+            timer.stop()
+        self.native_closeReaders()
+        self._stop_push()
+        self.bridge.shutdown()
+        event.accept()
+        QApplication.instance().quit()
 
     def quit_app(self):
         self._quitting = True

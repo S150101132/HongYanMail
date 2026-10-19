@@ -1727,6 +1727,9 @@ function openSettings() {
   $('#pref-poll').value = String(p.pollSeconds);
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-autostart').checked = !!p.autostart;
+  $('#pref-close').value = p.closeAction || '';
+  // The first-close dialog may have remembered a choice since the page last read prefs.
+  api('prefs').then((fresh) => { S.prefs.closeAction = fresh.closeAction; $('#pref-close').value = fresh.closeAction || ''; }).catch(() => {});
   $('#pref-undo').value = String(p.undoSeconds ?? 10);
   $('#pref-signature').innerHTML = p.signature || '';
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
@@ -1748,7 +1751,8 @@ $('#btn-account').onclick = openSettings;
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, pollSeconds: +$('#pref-poll').value,
-    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, signature: signatureHtml() };
+    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, signature: signatureHtml(),
+    closeAction: $('#pref-close').value };
   try {
     S.prefs = await api('setPrefs', { values });
     applyTheme(S.prefs.theme, S.prefs.density);
@@ -1757,6 +1761,12 @@ $('#btn-save-settings').onclick = async () => {
   } catch (err) { fail(err); }
 };
 $('#btn-cert').onclick = () => { $('#settings').classList.add('hidden'); unlockCertificate(); };
+async function quitApp() {
+  // A letter being written is kept as a draft first, as closing the composer would.
+  if (!$('#composer').classList.contains('hidden') && C.dirty) await saveDraft(true).catch(() => {});
+  api('quit').catch(() => {});
+}
+$('#btn-quit').onclick = quitApp;
 $('#btn-logout').onclick = async () => {
   if (!(await confirmDialog('退出登录', '退出后需要重新输入密码。本机缓存保持加密保存。', '退出登录'))) return;
   $('#settings').classList.add('hidden');
@@ -1772,6 +1782,7 @@ function handleKey(e) {
     if (e.key === 'Escape') { $$('#prompt [data-close], #settings [data-close]').forEach((b) => !b.closest('.hidden') && b.click()); }
     return;
   }
+  if (e.ctrlKey && (e.key === 'q' || e.key === 'Q')) { e.preventDefault(); quitApp(); return; }
   if (READER_MID) { readerKey(e); return; }
   if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); if (S.message && S.multi.size < 2 && !$('#reader-body').classList.contains('hidden')) printMessage(S.message); return; }
   if (e.key === 'Escape') { const menu = !$('#menu').classList.contains('hidden'); hideMenu(); closeFind(); if (!isTyping(t)) clearSelection(); void menu; }

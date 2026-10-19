@@ -260,6 +260,8 @@
         <label class="check"><input type="checkbox" id="pref-notify"> 新邮件桌面通知</label>
         <label class="check"><input type="checkbox" id="pref-markread"> 打开邮件时自动标为已读</label>
         <label class="check"><input type="checkbox" id="pref-autostart"> 开机自动启动（最小化到托盘）</label>
+        <label class="pref-row">点击关闭按钮时
+          <select id="pref-close"><option value="">每次询问</option><option value="tray">最小化，继续在后台收信</option><option value="quit">退出鸿雁</option></select></label>
         <h3>发送</h3>
         <label class="pref-row">撤销发送
           <select id="pref-undo"><option value="0">关闭</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="20">20 秒</option><option value="30">30 秒</option></select></label>
@@ -272,7 +274,8 @@
         <p class="muted small" id="settings-account"></p>
         <p class="muted small" id="data-dir"></p>
         <p class="muted small hidden" id="runtime-note">本机安全软件阻止了浏览器内核沙箱，鸿雁已自动以兼容模式运行。邮件正文仍在禁止脚本、禁止联网的隔离框架中显示。</p>
-        <button class="btn ghost danger" id="btn-logout">退出登录</button>
+        <div class="row-gap"><button class="btn ghost" id="btn-quit" title="完全退出鸿雁，不再在后台收信 (Ctrl+Q)">退出鸿雁</button>
+          <button class="btn ghost danger" id="btn-logout">退出登录</button></div>
       </section>
       <section>
         <h3>邮件签名</h3>
