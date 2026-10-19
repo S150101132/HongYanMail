@@ -587,3 +587,4 @@ img.avatar.photo { object-fit: cover; background: var(--line); }
 .pp-note { margin: 10px 0; }
 .pp-actions { display: flex; gap: 8px; margin-top: 4px; }
 .pp-actions .btn i { width: 15px; height: 15px; }
+.ct-row .ct-unit { color: var(--muted); }
