@@ -45,24 +45,27 @@ const MG = {
       applyFolders(await api('renameFolder', { folder_id: f.id, name })); toast('文件夹已重命名');
     });
   },
-  // Mail still in the folder is never deleted with it: the user picks 移到「已删除」 or keeps the folder.
+  // Mail still in the folder is never deleted with it: it goes to 已删除 (recoverable) or
+  // 收件箱 first, or the folder is kept.
   async deleteFolder(f) {
     if (S.folders.some((x) => x.parent === f.id)) { toast(`「${f.name}」下还有子文件夹，请先删除子文件夹。`, { error: true }); return; }
-    const n = f.total || 0;
+    const n = f.total || 0, names = { trash: '已删除', inbox: '收件箱' };
+    let mail = 'trash';
     if (n) {
-      const choice = await promptDialog({ title: `删除文件夹「${f.name}」`, okText: '删除文件夹',
-        text: `这个文件夹里还有 ${n} 封邮件。删除文件夹之前，这些邮件怎么处理？`,
-        body: `<label class="mg-choice"><input type="radio" name="mg-mail" value="trash" checked><span>先把 ${n} 封邮件移到「已删除」，再删除文件夹<small class="muted">邮件仍可以在「已删除」中找回</small></span></label>
+      mail = await promptDialog({ title: `删除文件夹「${f.name}」`, okText: '删除文件夹',
+        text: `这个文件夹里还有 ${n} 封邮件。删除文件夹时，这些邮件怎么处理？`,
+        body: `<label class="mg-choice"><input type="radio" name="mg-mail" value="trash" checked><span>删除文件夹及其中的 ${n} 封邮件<small class="muted">邮件移到「已删除」，仍可以在那里找回，不会彻底删除</small></span></label>
+          <label class="mg-choice"><input type="radio" name="mg-mail" value="inbox"><span>删除文件夹，把 ${n} 封邮件移到「收件箱」</span></label>
           <label class="mg-choice"><input type="radio" name="mg-mail" value="keep"><span>保留文件夹和邮件，不删除</span></label>`,
         collect: () => $('input[name="mg-mail"]:checked').value });
-      if (choice !== 'trash') return;
-      toast(`正在把 ${n} 封邮件移到「已删除」…`);
+      if (!names[mail]) return;
+      toast(`正在把 ${n} 封邮件移到「${names[mail]}」…`);
     } else if (!(await confirmDialog(`删除文件夹「${f.name}」？`, '这个文件夹是空的，删除不会影响任何邮件。', '删除'))) return;
     try {
-      const res = await api('deleteFolder', { folder_id: f.id, mail: 'trash' });
+      const res = await api('deleteFolder', { folder_id: f.id, mail });
       const here = S.folderId === f.id && !S.local;
       applyFolders(res);
-      toast(res.moved ? `已删除文件夹「${f.name}」，${res.moved} 封邮件已移到「已删除」` : `已删除文件夹「${f.name}」`);
+      toast(res.moved ? `已删除文件夹「${f.name}」，${res.moved} 封邮件已移到「${names[mail]}」` : `已删除文件夹「${f.name}」`);
       if (here) selectFolder((S.folders.find((x) => x.role === 'inbox') || S.folders[0]).id);
     } catch (err) { fail(err); this.refresh(); }
   },
@@ -239,28 +242,37 @@ const SL = {
 };
 
 // ---------------------------------------------------------------- attachment preview
-// Images arrive as data: URIs of bytes the backend recognised as PNG/JPEG/GIF/WebP; PDFs as
-// one PNG per page rendered by QtPdf in the shell; text as plain text. Nothing else is shown.
+// Images arrive as data: URIs of bytes the backend recognised (SVG only sanitised, shown as an
+// <img>, which never runs script); PDFs as one PNG per page rendered by QtPdf in the shell; text as
+// plain text; HTML files, Word and PowerPoint as sanitised HTML and workbooks as one table per
+// sheet, both shown in a frame with the mail body's rules: no scripts, no network unless the user
+// asks for remote pictures. Legacy .doc/.xls/.ppt and the rest open with the system's program.
+const PV_EXT = ('png jpg jpeg gif webp bmp ico avif tif tiff svg pdf html htm xhtml docx docm dotx dotm xlsx xlsm xltx xltm pptx pptm ppsx ppsm potx ' +
+  'txt log csv tsv md markdown json xml ini cfg conf yaml yml eml toml properties rst tex srt vtt ics vcf diff patch sql py pyw js mjs ts tsx jsx vue ' +
+  'java kt kts gradle groovy scala c h cc cpp cxx hpp cs go rs rb php pl lua r swift m dart sh bash bat cmd ps1 psm1 css scss sass less proto ' +
+  'graphql dockerfile env gitignore editorconfig reg nfo asc pem crt').split(' ');
 const PV = {
-  m: null, a: null, kind: null, zoom: 1, fit: true, page: 0, pages: 1, token: 0,
+  m: null, a: null, kind: null, zoom: 1, fit: true, page: 0, pages: 1, token: 0, res: null, sheet: 0, remote: false,
   ZOOMS: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4],
-  can(name) { return /\.(png|jpe?g|gif|webp|pdf|txt|log|csv|tsv|md|json|xml|ini|cfg|conf|ya?ml|eml)$/i.test(name || ''); },
+  can(name) { const m = /\.([a-z0-9]+)$/i.exec(name || ''); return !!m && PV_EXT.includes(m[1].toLowerCase()); },
   isOpen() { const d = $('#preview'); return !!d && !d.classList.contains('hidden'); },
   build() {
     if ($('#preview')) return;
     document.body.insertAdjacentHTML('beforeend', `<div id="preview" class="modal preview hidden" role="dialog" aria-label="附件预览"><div class="pv-card">
       <div class="pv-head"><span id="pv-ext" class="ext"></span><b id="pv-name"></b><span id="pv-size" class="muted small"></span><span class="spacer"></span>
         <span id="pv-pager" class="pv-group hidden"><button class="icon-btn" data-pv="prev" title="上一页 (←)"><i data-icon="chevron" class="flip"></i></button><span id="pv-page"></span><button class="icon-btn" data-pv="next" title="下一页 (→)"><i data-icon="chevron"></i></button></span>
+        <button id="pv-remote" class="btn ghost hidden" data-pv="remote" title="这个文件引用了网络上的图片，默认不加载"><i data-icon="image"></i><span>显示网络图片</span></button>
         <span id="pv-zoom" class="pv-group"><button class="icon-btn" data-pv="out" title="缩小 (-)">−</button><button class="pv-pct" data-pv="fit" id="pv-pct" title="适合窗口 (0)">适合</button><button class="icon-btn" data-pv="in" title="放大 (+)">+</button></span>
         <button class="btn ghost" data-pv="open" title="用系统中的程序打开"><i data-icon="open"></i><span>打开</span></button>
         <button class="btn ghost" data-pv="save" title="另存为"><i data-icon="download"></i><span>保存</span></button>
         <button class="icon-btn" data-pv="close" title="关闭 (Esc)"><i data-icon="close"></i></button></div>
-      <div id="pv-body" class="pv-body" tabindex="-1"></div></div></div>`);
+      <div id="pv-body" class="pv-body" tabindex="-1"></div><div id="pv-tabs" class="pv-tabs hidden" role="tablist" aria-label="工作表"></div></div></div>`);
     const d = $('#preview');
     renderIcons(d);
     d.addEventListener('click', (e) => {
       const b = e.target.closest('[data-pv]');
       if (!b) { if (e.target === d) this.close(); return; }
+      if (b.dataset.sheet) { this.showSheet(Number(b.dataset.sheet)); return; }
       this.act(b.dataset.pv);
     });
     $('#pv-body').addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); this.zoomBy(e.deltaY < 0 ? 1 : -1); } }, { passive: false });
@@ -272,7 +284,8 @@ const PV = {
     ({
       close: () => this.close(), prev: () => this.go(-1), next: () => this.go(1), in: () => this.zoomBy(1), out: () => this.zoomBy(-1),
       fit: () => { this.fit = true; this.zoom = 1; this.layout(true); },
-      open: () => api('openAttachment', { mid: m.id, part: a.part }).catch(fail),
+      open: () => openWithSystem(m, a),
+      remote: () => { this.remote = true; $('#pv-remote').classList.add('hidden'); this.frame(this.res.html, this.res.doc); },
       save: () => api('saveAttachment', { mid: m.id, part: a.part }).then((ok) => ok && toast('附件已保存')).catch(fail),
     }[name] || (() => {}))();
   },
@@ -282,18 +295,25 @@ const PV = {
     if (this.isMail(a)) { try { await api('openAttachedMail', { mid: m.id, part: a.part }); } catch (err) { fail(err); } return; }
     this.build();
     const token = ++this.token, body = $('#pv-body');
-    Object.assign(this, { m, a, kind: null, zoom: 1, fit: true, page: 0, pages: 1 });
+    Object.assign(this, { m, a, kind: null, zoom: 1, fit: true, page: 0, pages: 1, res: null, sheet: 0, remote: false });
     const [color, ext] = extColor(a.name);
     $('#pv-ext').textContent = ext; $('#pv-ext').style.background = color;
     $('#pv-name').textContent = a.name; $('#pv-name').title = a.name; $('#pv-size').textContent = size(a.size);
     body.innerHTML = '<div class="pv-msg muted">正在载入…</div>';
-    $('#pv-pager').classList.add('hidden'); $('#pv-zoom').classList.add('hidden');
+    $('#pv-pager').classList.add('hidden'); $('#pv-zoom').classList.add('hidden'); $('#pv-remote').classList.add('hidden'); $('#pv-tabs').classList.add('hidden');
     $('#preview').classList.remove('hidden'); body.focus();
     try {
       const res = await api('previewAttachment', { mid: m.id, part: a.part });
       if (token !== this.token) return;
-      this.kind = res.kind;
-      if (res.kind === 'image') {
+      this.kind = res.kind; this.res = res;
+      if (res.kind === 'html') {
+        this.frame(res.html, res.doc);
+        $('#pv-remote').classList.toggle('hidden', !res.hasRemoteImages);
+      } else if (res.kind === 'sheet') {
+        $('#pv-tabs').innerHTML = res.sheets.map((s, i) => `<button role="tab" data-sheet="${i}" title="${esc(s.name)}">${esc(s.name)}</button>`).join('');
+        $('#pv-tabs').classList.remove('hidden');
+        this.showSheet(0);
+      } else if (res.kind === 'image') {
         body.innerHTML = '<img class="pv-img" alt="">';
         const img = $('img', body); img.onload = () => this.layout(); img.src = res.data;
       } else if (res.kind === 'text') {
@@ -308,6 +328,30 @@ const PV = {
       if (token !== this.token) return;
       body.innerHTML = `<div class="pv-msg"><p>${esc(err.message)}</p><button class="btn primary" data-pv="open">用系统中的程序打开</button></div>`;
     }
+  },
+  // HTML in a sandboxed frame (scripts never enabled) whose CSP forbids every fetch except data:
+  // pictures, and remote ones only after 显示网络图片. Links open in the browser (shell).
+  frame(html, doc, note) {
+    const body = $('#pv-body');
+    body.innerHTML = `<iframe class="pv-frame" sandbox="allow-same-origin" title="${esc(this.a.name)}"></iframe>`;
+    const frame = $('iframe', body);
+    const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src data: ${this.remote ? 'https: http:' : ''}; font-src data:`;
+    frame.addEventListener('load', () => {
+      const d = frame.contentDocument; if (!d) return;
+      d.addEventListener('keydown', (e) => { if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && /^[-+=0]$/.test(e.key))) { this.key(e); } });
+      d.addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); this.zoomBy(e.deltaY < 0 ? 1 : -1); } }, { passive: false });
+      this.layout();
+    });
+    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
+      <style>${PV_CSS.base}${PV_CSS[doc] || ''}</style></head><body class="${esc(doc || '')}">${note ? `<div class="pv-note">${esc(note)}</div>` : ''}${html}</body></html>`;
+  },
+  showSheet(i) {
+    const s = this.res.sheets[i]; if (!s) return;
+    this.sheet = i;
+    $$('#pv-tabs button').forEach((b) => b.classList.toggle('on', Number(b.dataset.sheet) === i));
+    const note = s.note === 'chart' ? '这是图表工作表，鸿雁里不能显示，请用系统中的程序打开。'
+      : !s.rows ? '这个工作表是空的。' : s.truncated ? '工作表较大，这里只显示前 2000 行、100 列；完整内容请用系统中的程序打开。' : '';
+    this.frame(s.html, 'sheet', note);
   },
   close() {
     if (!this.isOpen()) return;
@@ -341,6 +385,9 @@ const PV = {
       else { img.style.maxWidth = img.style.maxHeight = 'none'; img.style.width = Math.round(img.naturalWidth * this.zoom) + 'px'; }
     } else if (this.kind === 'text') {
       $('.pv-text', body).style.fontSize = (13 * (this.fit ? 1 : this.zoom)).toFixed(1) + 'px';
+    } else if (this.kind === 'html' || this.kind === 'sheet') {
+      const d = ($('.pv-frame', body) || {}).contentDocument;
+      if (d && d.documentElement) d.documentElement.style.zoom = String(this.fit ? 1 : this.zoom);
     } else if (this.kind === 'pdf' && render) {
       // Zoom is relative to the page fitted to the window's width.
       const css = Math.round(room.w * (this.fit ? 1 : this.zoom)), token = this.token;
@@ -367,6 +414,31 @@ const PV = {
     e.preventDefault();
   },
 };
+// The preview frame's own styles (it inherits nothing from the app).
+const PV_CSS = {
+  base: `html{background:#fff}body{margin:0;color:#1d2433;font:14px/1.65 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;overflow-wrap:anywhere}
+    img{max-width:100%;height:auto}a{color:#2563eb}pre{white-space:pre-wrap}::selection{background:#bfd3ff}
+    .pv-note{position:sticky;top:0;left:0;z-index:3;padding:7px 14px;background:#fffbeb;color:#92400e;border-bottom:1px solid #fde68a;font-size:12.5px}`,
+  html: 'body{padding:18px 22px}',
+  docx: `html{background:#eef0f3}body{max-width:794px;margin:20px auto;padding:56px 64px;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.15);box-sizing:border-box}
+    p{margin:0 0 .45em;white-space:pre-wrap}h1,h2,h3,h4,h5,h6{margin:.8em 0 .4em;line-height:1.35}
+    table.wt{border-collapse:collapse;margin:.6em 0;max-width:100%}table.wt td{border:1px solid #b8bec8;padding:4px 8px;vertical-align:top}table.wt td p{margin:0}`,
+  pptx: `html{background:#eef0f3}body{padding:8px 16px 24px}
+    section.slide{position:relative;max-width:880px;min-height:180px;margin:16px auto;padding:30px 44px;background:#fff;border-radius:6px;box-shadow:0 1px 6px rgba(0,0,0,.15)}
+    section.slide h2{margin:0 0 14px;font-size:22px}.sn{position:absolute;top:10px;right:14px;color:#98a2b3;font-size:12px}
+    section.slide p{margin:0 0 .4em}.empty{color:#98a2b3}table.wt{border-collapse:collapse;margin:.6em 0}table.wt td{border:1px solid #b8bec8;padding:4px 10px}table.wt td p{margin:0}`,
+  sheet: `body{font-size:13px}table.xl{border-collapse:separate;border-spacing:0;table-layout:fixed;width:max-content}
+    table.xl td,table.xl th{border-right:1px solid #e3e6eb;border-bottom:1px solid #e3e6eb;padding:2px 6px;height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:600px}
+    table.xl td.n{text-align:right;font-variant-numeric:tabular-nums}table.xl td[colspan],table.xl td[rowspan]{text-align:center;vertical-align:middle}
+    table.xl thead th{position:sticky;top:0;z-index:2;background:#f3f4f6;color:#667085;font-weight:500;text-align:center}
+    table.xl tbody th{position:sticky;left:0;z-index:1;background:#f3f4f6;color:#667085;font-weight:500;text-align:center}
+    table.xl thead th.xc{left:0;z-index:3}col.xh{width:44px}`,
+};
+// 打开 copies the file to the data folder and hands it to the system on a worker thread.
+function openWithSystem(m, a) {
+  return api('openAttachment', { mid: m.id, part: a.part }).then(() => toast(`正在用系统中的程序打开「${a.name}」…`)).catch(fail);
+}
+
 // While the preview is open its keys go to it, not to the mail list behind it.
 window.addEventListener('keydown', (e) => { if (PV.isOpen()) { PV.key(e); e.stopImmediatePropagation(); } }, true);
 

@@ -27,12 +27,13 @@ from coremail_desktop.mime.parser import parse_mime
 
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
                  'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'threads': False,
-                 'autostart': False, 'sidebarWidth': 232, 'listWidth': 400, 'undoSeconds': 10}
+                 'autostart': False, 'sidebarWidth': 232, 'listWidth': 400, 'undoSeconds': 10,
+                 'ctTreeWidth': 250, 'ctListWidth': 340, 'tagsOpen': False}
 UNDO_CHOICES = (0, 5, 10, 20, 30)  # 撤销发送 delay in seconds; 0 sends at once.
 NETWORK_CODES = ('NETWORK_ERROR', 'TLS_ERROR')
 MAX_EML_BYTES = 40 * 1024 * 1024
 # Column widths the page may store (px); the page enforces the same bounds while dragging.
-WIDTH_LIMITS = {'sidebarWidth': (180, 400), 'listWidth': (280, 900)}
+WIDTH_LIMITS = {'sidebarWidth': (180, 400), 'listWidth': (280, 900), 'ctTreeWidth': (160, 480), 'ctListWidth': (240, 720)}
 TEMPLATE_LIMIT = 100
 # Coremail system folder ids. Used only for icons and ordering; the name shown is
 # always the server's own folder name.
@@ -41,12 +42,29 @@ REAUTH_CODES = ('SESSION_EXPIRED', 'NOT_AUTHENTICATED')
 FOLDER_ORDER = {'inbox': 0, 'drafts': 2, 'sent': 3, 'trash': 8, 'spam': 7, 'virus': 9}
 MAX_FOLDER_DEPTH = 5  # Nesting levels the server allows (index.jsp maxFolderNestLevel).
 SENDER_LIST_LIMIT = 500
-# Attachment preview: only these, recognised by their bytes, never by name alone.
-# SVG and HTML are not images here (they can carry script); Office files open externally.
+# Attachment preview. Images and PDFs are recognised by their bytes, never by name alone;
+# SVG is shown only sanitised and as an <img>; HTML and Office documents become sanitised
+# HTML shown in the same script-less, network-less frame as mail bodies.
 PREVIEW_IMAGE_LIMIT = 20 * 1024 * 1024
 PREVIEW_PDF_LIMIT = 50 * 1024 * 1024
 PREVIEW_TEXT_LIMIT = 2 * 1024 * 1024
-PREVIEW_TEXT = ('.txt', '.log', '.csv', '.tsv', '.md', '.json', '.xml', '.ini', '.cfg', '.conf', '.yaml', '.yml', '.eml')
+PREVIEW_HTML_LIMIT = 5 * 1024 * 1024
+PREVIEW_OFFICE_LIMIT = 30 * 1024 * 1024
+PREVIEW_TEXT = ('.txt', '.log', '.csv', '.tsv', '.md', '.markdown', '.json', '.xml', '.ini', '.cfg', '.conf', '.yaml', '.yml',
+                '.eml', '.toml', '.properties', '.rst', '.tex', '.srt', '.vtt', '.ics', '.vcf', '.diff', '.patch', '.sql',
+                '.py', '.pyw', '.js', '.mjs', '.ts', '.tsx', '.jsx', '.vue', '.java', '.kt', '.kts', '.gradle', '.groovy', '.scala',
+                '.c', '.h', '.cc', '.cpp', '.cxx', '.hpp', '.cs', '.go', '.rs', '.rb', '.php', '.pl', '.lua', '.r', '.swift',
+                '.m', '.dart', '.sh', '.bash', '.bat', '.cmd', '.ps1', '.psm1', '.css', '.scss', '.sass', '.less', '.proto',
+                '.graphql', '.dockerfile', '.env', '.gitignore', '.editorconfig', '.reg', '.nfo', '.asc', '.pem', '.crt')
+PREVIEW_HTML = ('.html', '.htm', '.xhtml')
+PREVIEW_OFFICE = {'.docx': 'docx', '.docm': 'docx', '.dotx': 'docx', '.dotm': 'docx',
+                  '.xlsx': 'xlsx', '.xlsm': 'xlsx', '.xltx': 'xlsx', '.xltm': 'xlsx',
+                  '.pptx': 'pptx', '.pptm': 'pptx', '.ppsx': 'pptx', '.ppsm': 'pptx', '.potx': 'pptx'}
+# 打开 never starts programs or scripts straight from a mail; they can still be saved.
+BLOCKED_OPEN = ('.exe', '.com', '.scr', '.pif', '.bat', '.cmd', '.msi', '.msp', '.mst', '.cpl', '.msc', '.jar', '.lnk',
+                '.url', '.website', '.appref-ms', '.application', '.gadget', '.hta', '.js', '.jse', '.vb', '.vbs', '.vbe',
+                '.wsf', '.wsh', '.wsc', '.ws', '.ps1', '.ps1xml', '.ps2', '.psc1', '.psm1', '.reg', '.inf', '.scf', '.sct',
+                '.shb', '.shs', '.chm', '.hlp', '.vsto', '.xll', '.dll', '.sys', '.drv', '.ocx', '.library-ms', '.settingcontent-ms')
 
 
 def is_attached_mail(name, media_type=''):
@@ -54,8 +72,8 @@ def is_attached_mail(name, media_type=''):
 
 
 def preview_kind(name, data):
-    """'image/png' ... for a raster image, 'pdf', 'text' or None, from the content."""
-    head = bytes(data[:16])
+    """'image/png' ... for an image, 'pdf', 'html', 'docx' / 'xlsx' / 'pptx', 'text' or None."""
+    head, lower = bytes(data[:16]), str(name or '').lower()
     if head.startswith(b'\x89PNG\r\n\x1a\n'):
         return 'image/png'
     if head.startswith(b'\xff\xd8\xff'):
@@ -64,11 +82,78 @@ def preview_kind(name, data):
         return 'image/gif'
     if head[:4] == b'RIFF' and head[8:12] == b'WEBP':
         return 'image/webp'
+    if head[:2] == b'BM' and len(data) > 26:
+        return 'image/bmp'
+    if head[:4] == b'\x00\x00\x01\x00' and lower.endswith(('.ico', '.cur')):
+        return 'image/x-icon'
+    if head[4:12] in (b'ftypavif', b'ftypavis'):
+        return 'image/avif'
+    if head[:4] in (b'II*\x00', b'MM\x00*'):
+        return 'image/tiff'
     if head.startswith(b'%PDF-'):
         return 'pdf'
-    if str(name or '').lower().endswith(PREVIEW_TEXT) and b'\x00' not in bytes(data[:8192]):
+    if head.startswith(b'PK\x03\x04') and lower.endswith(tuple(PREVIEW_OFFICE)):
+        return PREVIEW_OFFICE[lower[lower.rindex('.'):]]
+    if b'\x00' in bytes(data[:8192]):
+        return None
+    if lower.endswith('.svg'):
+        return 'image/svg+xml'  # Only ever shown after office.sanitize_svg.
+    if lower.endswith(PREVIEW_HTML):
+        return 'html'
+    if lower.endswith(PREVIEW_TEXT):
         return 'text'
     return None
+
+
+def _decode_text(raw, declared=None):
+    """Text of unknown encoding: BOM, the declared charset, UTF-8, then GB18030."""
+    if raw.startswith(b'\xff\xfe') or raw.startswith(b'\xfe\xff'):
+        return raw.decode('utf-16', errors='replace')
+    for encoding in ([declared] if declared else []) + ['utf-8-sig', 'gb18030']:
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode('utf-8', errors='replace')
+
+
+def _with_images(source, images):
+    """cid: pictures of a converted document as data: URIs."""
+    def cid(match):
+        found = images.get(match.group(2))
+        return f'src={match.group(1)}data:{found[0]};base64,{base64.b64encode(found[1]).decode("ascii")}{match.group(1)}' if found else ''
+    return re.sub(r'src=(["\'])cid:([^"\']+)\1', cid, source)
+
+
+def safe_file_name(name):
+    """A Windows-safe file name that keeps the extension (for the opened/ copy)."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', str(name or '')).replace(',', '，').strip().rstrip('. ')
+    stem, dot, ext = name.rpartition('.')
+    if not dot:
+        stem, ext = name, ''
+    if re.fullmatch(r'(?i)(con|prn|aux|nul|com\d|lpt\d)', stem.strip()):
+        stem = '_' + stem
+    ext = ext[:16]
+    stem = (stem or '附件')[:max(1, 120 - len(ext))]
+    return stem + ('.' + ext if ext else '')
+
+
+def shell_open(path):
+    """Open a file with its default program, started by the desktop shell rather than as a
+    child of this process: explorer.exe hands the file to the running Explorer and exits.
+    A program started straight from here inherits Hongyan's environment and restrictions
+    (the same ones that break Hongyan's own Chromium sandbox) and its start-up handshake
+    (Excel's DDE) used to hold up the window."""
+    import os
+    import subprocess
+    if os.name != 'nt':
+        subprocess.Popen(['xdg-open', str(path)], close_fds=True)
+        return
+    explorer = Path(os.environ.get('SystemRoot') or r'C:\Windows') / 'explorer.exe'
+    try:
+        subprocess.Popen([str(explorer), str(path)], close_fds=True)
+    except OSError:
+        os.startfile(str(path))  # noqa: S606 -- the user's own 打开; executables are refused before this.
 SENDER_RE = re.compile(r'(?:[^\s<>@,;*]+|\*)@[^\s<>@,;*]+\.[^\s<>@,;*]+')
 
 
@@ -236,6 +321,8 @@ class MailBackend:
         self._signer_directory = {}  # (sender, signer fingerprint) -> matches the company directory
         self._rules = {}  # Rule id -> the rule as the server last listed it.
         self.autostart = None  # Set by the app (not in demo mode): reads and writes the Windows Run key.
+        self.open_file = shell_open  # 打开 for attachments; tests replace it.
+        self.convert_image = None  # Set by the app: image bytes -> PNG bytes (Qt), for TIFF previews.
         # 撤销发送: drafts waiting out their undo delay, local id -> {revision, subject, until}.
         # Memory only on purpose: if the app ends during the delay nothing is sent and
         # the draft stays in 本机草稿 (abandon_held records which ones).
@@ -647,27 +734,59 @@ class MailBackend:
             raise AppError('PREVIEW_UNAVAILABLE')
         return self.import_eml(data)
 
+    def open_attachment(self, mid, part):
+        """打开: a copy in opened/ handed to the default program. Runs on a worker thread,
+        so the window never waits for the program to start."""
+        name, _kind, data = self.attachment(mid, part)
+        if str(name).lower().rstrip('. ').endswith(BLOCKED_OPEN):
+            raise AppError('ATTACHMENT_BLOCKED')
+        # The data folder is known to be writable; some machines forbid TEMP for scripts.
+        folder = self.data_dir / 'opened' / uuid.uuid4().hex[:12]
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / safe_file_name(name)
+        target.write_bytes(data)
+        self.open_file(target)
+        return True
+
     def attachment_preview(self, mid, part):
-        """An attachment for the in-app viewer: a raster image as a data: URI, plain
-        text, or for a PDF only its name (the shell renders its pages to images)."""
+        """An attachment for the in-app viewer: an image as a data: URI, plain text,
+        sanitised HTML (HTML files, Word, PowerPoint), the sheets of a workbook as tables,
+        or for a PDF only its name (the shell renders its pages to images)."""
+        from coremail_desktop.mime import office
+        from coremail_desktop.mime.sanitizer import sanitize_rich_html
         name, _kind, data = self.attachment(mid, part)
         kind = preview_kind(name, data)
         result = {'name': name, 'size': len(data)}
-        if kind == 'pdf' and len(data) <= PREVIEW_PDF_LIMIT:
-            return {**result, 'kind': 'pdf'}
-        if kind and kind.startswith('image/') and len(data) <= PREVIEW_IMAGE_LIMIT:
-            return {**result, 'kind': 'image', 'data': f'data:{kind};base64,' + base64.b64encode(data).decode('ascii')}
-        if kind == 'text':
-            raw = bytes(data[:PREVIEW_TEXT_LIMIT])
-            for encoding in ('utf-8-sig', 'gb18030'):
-                try:
-                    text = raw.decode(encoding)
-                    break
-                except UnicodeDecodeError:
-                    continue
-            else:
-                text = raw.decode('utf-8', errors='replace')
-            return {**result, 'kind': 'text', 'text': text, 'truncated': len(data) > PREVIEW_TEXT_LIMIT}
+        try:
+            if kind == 'pdf' and len(data) <= PREVIEW_PDF_LIMIT:
+                return {**result, 'kind': 'pdf'}
+            if kind and kind.startswith('image/') and len(data) <= PREVIEW_IMAGE_LIMIT:
+                if kind == 'image/svg+xml':
+                    data = office.sanitize_svg(data)
+                elif kind == 'image/tiff':
+                    if self.convert_image is None:
+                        raise AppError('PREVIEW_UNAVAILABLE')
+                    data, kind = self.convert_image(data), 'image/png'
+                    if not data:
+                        raise AppError('PREVIEW_UNAVAILABLE')
+                return {**result, 'kind': 'image', 'data': f'data:{kind};base64,' + base64.b64encode(data).decode('ascii')}
+            if kind == 'text':
+                return {**result, 'kind': 'text', 'text': _decode_text(bytes(data[:PREVIEW_TEXT_LIMIT])),
+                        'truncated': len(data) > PREVIEW_TEXT_LIMIT}
+            if kind == 'html' and len(data) <= PREVIEW_HTML_LIMIT:
+                raw = bytes(data)
+                declared = re.search(rb'<meta[^>]+charset=["\']?([\w-]+)', raw[:4096], re.I)
+                body = sanitize_rich_html(_decode_text(raw, declared and declared.group(1).decode('ascii')), {}, data_images=True)
+                return {**result, 'kind': 'html', 'doc': 'html', 'html': body,
+                        'hasRemoteImages': bool(re.search(r'<img[^>]+src=["\']https?://', body, re.I))}
+            if kind in ('docx', 'pptx') and len(data) <= PREVIEW_OFFICE_LIMIT:
+                source, images, truncated = (office.docx_html if kind == 'docx' else office.pptx_html)(data)
+                body = _with_images(sanitize_rich_html(source, images), images)
+                return {**result, 'kind': 'html', 'doc': kind, 'html': body, 'truncated': truncated}
+            if kind == 'xlsx' and len(data) <= PREVIEW_OFFICE_LIMIT:
+                return {**result, 'kind': 'sheet', 'sheets': office.xlsx_sheets(data)}
+        except office.OfficeError:
+            pass  # Damaged, password-protected or over a limit: 用系统中的程序打开.
         raise AppError('PREVIEW_UNAVAILABLE')
 
     def _certificate_path(self):
@@ -870,19 +989,20 @@ class MailBackend:
 
     def delete_folder(self, folder_id, mail='trash'):
         """Delete one of the user's folders. Mail still in it is first moved to 已删除
-        (mail='trash'), or the folder is kept (mail='keep'); it is never deleted with
-        the folder. Sub-folders have to go first."""
+        (mail='trash', still recoverable there) or to 收件箱 (mail='inbox'); any other
+        choice keeps the folder. Mail is never deleted with the folder. Sub-folders
+        have to go first."""
         folder = self._user_folder(folder_id, refresh=True)
         if any(f['parent'] == folder['id'] for f in self._folders):
             raise AppError('FOLDER_HAS_CHILDREN')
         moved = 0
         if folder['total']:
-            if mail != 'trash':
+            if mail not in ('trash', 'inbox'):
                 raise AppError('FOLDER_NOT_EMPTY')
-            trash = next((f['id'] for f in self._folders if f['role'] == 'trash'), '4')
+            target = self._role_id(mail, '4' if mail == 'trash' else '1')
             ids = self._folder_ids(folder['id'], folder['total'])
             for start in range(0, len(ids), 100):
-                result = self.move(ids[start:start + 100], trash)
+                result = self.move(ids[start:start + 100], target)
                 moved += len(result['done'])
             folder = self._user_folder(folder['id'], refresh=True)
             if folder['total']:

@@ -162,6 +162,19 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(self.folder('4')['total'], trash_before + 5)
         self.assertEqual({b.adapter.rows[i]['fid'] for i in ids}, {'4'})  # Nothing deleted with the folder.
 
+    def test_delete_folder_can_move_mail_to_inbox(self):
+        b = self.backend
+        fid = b.create_folder('临时')['id']
+        ids = [r['id'] for r in b.messages('1', 0, 3)['rows']]
+        b.move(ids, fid)
+        inbox_before = self.folder('1')['total']
+        self.assertEqual(self.code(b.delete_folder, fid, mail='purge'), 'FOLDER_NOT_EMPTY')  # Never deleted for good.
+        res = b.delete_folder(fid, mail='inbox')
+        self.assertEqual(res['moved'], 3)
+        self.assertNotIn(fid, {f['id'] for f in res['folders']})
+        self.assertEqual(self.folder('1')['total'], inbox_before + 3)
+        self.assertEqual({b.adapter.rows[i]['fid'] for i in ids}, {'1'})
+
     def test_mark_all_read(self):
         b = self.backend
         unread = self.folder('1')['unread']
@@ -232,8 +245,8 @@ class BackendTest(unittest.TestCase):
         text = b.attachment_preview('demo1', parts['会议纪要.txt'])
         self.assertEqual((text['kind'], text['text'].strip(), text['truncated']), ('text', '演示附件内容', False))
         self.assertEqual(preview_kind('a.png', b'<svg onload=x>'), None)  # Judged by the bytes, never the name alone.
-        self.assertEqual(preview_kind('a.svg', b'<svg/>'), None)
-        self.assertEqual(preview_kind('a.html', b'<html>'), None)
+        self.assertEqual(preview_kind('a.svg', b'<svg/>'), 'image/svg+xml')  # Shown only after office.sanitize_svg (v0.6).
+        self.assertEqual(preview_kind('a.html', b'<html>'), 'html')
         self.assertEqual(preview_kind('a.txt', b'MZ\x00\x00'), None)
         self.assertEqual(preview_kind('x.bin', b'RIFF\x00\x00\x00\x00WEBPVP8 '), 'image/webp')
         self.assertEqual(preview_kind('a.pdf', _demo_pdf()), 'pdf')

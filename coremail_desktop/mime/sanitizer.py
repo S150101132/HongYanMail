@@ -1,4 +1,5 @@
 """Conservative HTML subset. No CSS, external resources or active content."""
+import re
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
 import bleach
@@ -88,7 +89,18 @@ def _clean_style_blocks(html):
     return re.sub(r'(<style[^>]*>)(.*?)(</style>)', scrub, html, flags=re.S | re.I)
 
 
-def sanitize_rich_html(source: str, cid_resources: dict) -> str:
+# Elements whose content is not page text: stripping only their tags would show
+# script source or the <title> as text. (Nothing here could run anyway.)
+_DROP_BLOCKS = re.compile(r'<(script|title|template|iframe|object|embed|applet|frameset|noembed)\b[^>]*>.*?</\1\s*>|'
+                          r'<(script|iframe|object|embed|applet)\b[^>]*/?>', re.S | re.I)
+_DATA_IMAGE = re.compile(r'data:image/(png|jpeg|gif|webp|bmp);base64,[A-Za-z0-9+/=\s]*$', re.I)
+
+
+def sanitize_rich_html(source: str, cid_resources: dict, data_images: bool = False) -> str:
+    """data_images also keeps <img src="data:image/...;base64,..."> (HTML attachments carry
+    their pictures that way; mail bodies use cid: parts)."""
+    source = _DROP_BLOCKS.sub('', source)
+
     def attribute(tag, name, value):
         if name in {'title', 'alt', 'style', 'class'} or name in _RICH_ATTRS:
             return True
@@ -102,10 +114,12 @@ def sanitize_rich_html(source: str, cid_resources: dict) -> str:
             low = value.strip().lower()
             if low.startswith('cid:'):
                 return normalize_cid(value.strip()[4:]) in cid_resources
+            if data_images and _DATA_IMAGE.match(value.strip()):
+                return True
             return low.startswith(('https://', 'http://'))
         if tag in {'td', 'th'} and name in {'colspan', 'rowspan'}:
             return value.isdigit() and 0 < int(value) <= 100
         return False
     cleaned = bleach.clean(source, tags=RICH_TAGS, attributes=attribute, css_sanitizer=_CssFilter(),
-                           protocols={'http', 'https', 'cid', 'mailto'}, strip=True, strip_comments=True)
+                           protocols={'http', 'https', 'cid', 'mailto'} | ({'data'} if data_images else set()), strip=True, strip_comments=True)
     return _clean_style_blocks(cleaned)
