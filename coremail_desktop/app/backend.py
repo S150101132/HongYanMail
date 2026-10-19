@@ -741,12 +741,70 @@ class MailBackend:
         value = self._stale('directory', self.adapter.directory_tree, refresh)
         return {'tree': value['data'], 'at': value['at'], 'cached': value['cached']}
 
+    # The server lists only a department's own people (oab:listEx) and offers no
+    # subtree listing (contact.jsp oabSearch needs a keyword; oab:searchEx at the root
+    # answers one entry), while many departments hold nobody directly (2026-10-19,
+    # analysis/contacts-subtree-shape{,2}-2026-10-18.json). A department with
+    # sub-departments is therefore shown with everyone beneath it, gathered here one
+    # department at a time from the same cached listings; each row names its unit.
+    # The root (the whole group, 168 departments) is not gathered: search covers it.
+    SUBTREE_DEPARTMENTS = 25
+    SUBTREE_PEOPLE = 3000
+
+    def _department(self, dn, refresh):
+        key = 'members:' + hashlib.sha256(dn.encode('utf-8')).hexdigest()[:24]
+        return self._stale(key, lambda: self.adapter.directory_members(dn), refresh)
+
+    def _subtree(self, dn):
+        """[(node, unit path below dn)] for every department under dn, from the cached tree."""
+        tree = (self.cache.get('directory') or {}).get('data') or []
+
+        def find(nodes):
+            for n in nodes:
+                if n.get('id') == dn:
+                    return n
+                hit = find(n.get('children') or [])
+                if hit:
+                    return hit
+            return None
+
+        def below(node, path):
+            for child in node.get('children') or []:
+                unit = path + [child.get('name') or '']
+                yield child, ' / '.join(unit)
+                yield from below(child, unit)
+        node = None if any(n.get('id') == dn for n in tree) else find(tree)
+        return list(below(node, [])) if node else []
+
     def members(self, dn, refresh=False):
         if not isinstance(dn, str) or not dn or len(dn) > 500 or not hasattr(self.adapter, 'directory_members'):
             raise AppError('INVALID_CONTACT')
-        key = 'members:' + hashlib.sha256(dn.encode('utf-8')).hexdigest()[:24]
-        value = self._stale(key, lambda: self.adapter.directory_members(dn), refresh)
-        return {**value['data'], 'at': value['at'], 'cached': value['cached']}
+        own = self._department(dn, refresh)
+        subs = self._subtree(dn)
+        result = {**own['data'], 'direct': own['data']['total'], 'departments': len(subs), 'partial': False,
+                  'at': own['at'], 'cached': own['cached']}
+        if not subs:
+            return result
+        rows = list(own['data']['rows'])
+        seen = {r['email'].casefold() for r in rows}
+        total = own['data']['total']
+        for node, unit in subs[:self.SUBTREE_DEPARTMENTS]:
+            try:
+                part = self._department(node['id'], refresh)
+            except AppError as error:
+                if error.code in ('SESSION_EXPIRED', 'NOT_AUTHENTICATED'):
+                    raise
+                result['partial'] = True  # The rest still shows; the page says some are missing.
+                continue
+            total += part['data']['total']
+            result['partial'] |= part['data']['total'] > len(part['data']['rows'])
+            result['cached'] &= part['cached']
+            for r in part['data']['rows']:
+                if len(rows) < self.SUBTREE_PEOPLE and r['email'].casefold() not in seen:
+                    seen.add(r['email'].casefold())
+                    rows.append({**r, 'unit': unit})
+        result['partial'] |= len(subs) > self.SUBTREE_DEPARTMENTS
+        return {**result, 'rows': rows, 'total': total}
 
     def personal_contacts(self, refresh=False):
         if not hasattr(self.adapter, 'personal_contacts'):

@@ -231,7 +231,10 @@ class DemoAdapter:
 
     # Synthetic directory: a root, departments and people (example.invalid only).
     DIRECTORY = [('d/rd', '研发中心', [('d/rd-fe', '前端组', []), ('d/rd-be', '后端组', [])]),
-                 ('d/product', '产品部', []), ('d/hr', '人力资源部', []), ('d/it', 'IT 服务部', [])]
+                 ('d/product', '产品部', []), ('d/hr', '人力资源部', []), ('d/it', 'IT 服务部', []),
+                 # As on the real server: a parent with nobody of its own, people only in
+                 # its leaves, and a leaf where nobody is registered.
+                 ('d/sales', '销售中心', [('d/sales-n', '华北区', []), ('d/sales-s', '华南区', []), ('d/sales-w', '西部区', [])])]
     STAFF = {'d/rd': [('研发团队', 'rd@example.invalid', '公共邮箱')],
              'd/rd-fe': [('张晓明', 'zhangxm@example.invalid', '前端工程师'), ('王芳', 'wangfang@example.invalid', '高级工程师'),
                          ('赵磊', 'zhaolei@example.invalid', '工程师')],
@@ -240,7 +243,10 @@ class DemoAdapter:
              'd/product': [('产品协作组', 'product@example.invalid', '公共邮箱'), ('孙悦', 'sunyue@example.invalid', '产品经理'),
                            ('周婷', 'zhouting@example.invalid', '交互设计师')],
              'd/hr': [('人力资源部', 'hr@example.invalid', '公共邮箱'), ('吴敏', 'wumin@example.invalid', 'HRBP')],
-             'd/it': [('IT 服务台', 'itsupport@example.invalid', '公共邮箱'), ('郑凯', 'zhengkai@example.invalid', '运维工程师')]}
+             'd/it': [('IT 服务台', 'itsupport@example.invalid', '公共邮箱'), ('郑凯', 'zhengkai@example.invalid', '运维工程师')],
+             'd/sales-n': [('马超', 'machao@example.invalid', '区域经理'), ('黄蕾', 'huanglei@example.invalid', '销售代表')],
+             'd/sales-s': [('林峰', 'linfeng@example.invalid', '区域经理'), ('何静', 'hejing@example.invalid', '销售代表'),
+                           ('郭明', 'guoming@example.invalid', '售前工程师')]}
 
     def directory_tree(self):
         self._need()

@@ -153,7 +153,7 @@ function showContactsHint() {
 
 async function openDepartment(dn, name, refresh = false) {
   const token = ++CT.token;
-  CT.mode = 'dept'; CT.dn = dn; CT.title = name; CT.person = null;
+  CT.mode = 'dept'; CT.dn = dn; CT.title = name; CT.person = null; CT.page = null;
   renderTree();
   $('#ct-title').textContent = name || '部门'; $('#ct-sub').textContent = '正在读取…';
   if (!refresh) $('#ct-list').innerHTML = '<div class="skeleton"></div>'.repeat(5);
@@ -172,7 +172,7 @@ async function openDepartment(dn, name, refresh = false) {
   }
 }
 function showMembers(page) {
-  CT.rows = page.rows; CT.total = page.total;
+  CT.rows = page.rows; CT.total = page.total; CT.page = page;
   drawMembers();
 }
 function showPersonal() {
@@ -181,18 +181,29 @@ function showPersonal() {
 }
 
 function memberFilter() { return CT.mode === 'search' ? '' : $('#ct-search').value.trim().toLowerCase(); }
+// A department with sub-departments lists everyone beneath it (backend.members gathers
+// them); each such row names its unit. Many departments have nobody registered.
 function drawMembers() {
   const q = memberFilter();
-  const rows = q ? CT.rows.filter((p) => [p.name, p.email, p.title, p.dept].some((v) => String(v || '').toLowerCase().includes(q))) : CT.rows;
+  const page = CT.mode === 'dept' ? CT.page || {} : {};
+  const index = new Map(CT.rows.map((p, i) => [p, i]));
+  const rows = q ? CT.rows.filter((p) => [p.name, p.email, p.title, p.dept, p.unit].some((v) => String(v || '').toLowerCase().includes(q))) : CT.rows;
   const more = CT.mode === 'dept' && CT.total > CT.rows.length;
-  $('#ct-sub').textContent = CT.mode === 'search' ? `${rows.length} 人` : q ? `${rows.length} / ${CT.rows.length} 人` : `${CT.total} 人` + (more ? ` · 显示前 ${CT.rows.length} 人` : '');
+  const scope = page.departments ? ` · 含 ${page.departments} 个子部门${page.direct ? `，直属 ${page.direct} 人` : ''}` : '';
+  $('#ct-sub').textContent = CT.mode === 'search' ? `${rows.length} 人` : q ? `${rows.length} / ${CT.rows.length} 人`
+    : `${CT.total} 人${scope}` + (more ? ` · 显示前 ${CT.rows.length} 人` : '');
+  const empty = q ? (CT.mode === 'search' ? '全公司没有找到匹配的人' : '本部门没有匹配的人 · 回车搜索全公司')
+    : page.departments ? '这个部门及其子部门在组织通讯录中都没有登记成员。<br>可在上方输入姓名，回车搜索全公司。'
+    : CT.mode === 'dept' && CT.tree.some((n) => n.id === CT.dn) ? '请选择下级部门查看成员，或在上方输入姓名，回车搜索全公司。'
+    : CT.mode === 'dept' ? '组织通讯录中这个部门没有登记成员。<br>同事可能登记在上级部门或其他部门，可在上方输入姓名，回车搜索全公司。' : '没有联系人';
   const list = $('#ct-list');
-  list.innerHTML = rows.length ? rows.map((p, i) => `<div class="row ct-row${CT.person && CT.person.email === p.email ? ' sel' : ''}" data-i="${CT.rows.indexOf(p)}" role="option">
+  list.innerHTML = rows.length ? rows.map((p) => `<div class="row ct-row${CT.person && CT.person.email === p.email ? ' sel' : ''}" data-i="${index.get(p)}" role="option">
       ${avatarHtml(p.name, p.email)}
       <div class="main"><div class="line1"><span class="who">${esc(p.name || p.email)}</span>${p.title ? `<span class="tag">${esc(p.title)}</span>` : ''}</div>
-      <div class="prev">${esc(p.email)}</div></div></div>`).join('')
+      <div class="prev">${esc(p.email)}${p.unit ? `<span class="ct-unit"> · ${esc(p.unit)}</span>` : ''}</div></div></div>`).join('')
     + (more && !q ? '<div class="list-foot">人数较多，只显示一部分。请在上方输入姓名搜索。</div>' : '')
-    : `<div class="list-foot">${q ? (CT.mode === 'search' ? '全公司没有找到匹配的人' : '本部门没有匹配的人 · 回车搜索全公司') : '这个部门没有直属成员'}</div>`;
+    + (page.partial && !more && !q ? '<div class="list-foot">部分子部门没能读取，名单可能不完整。点击刷新重试。</div>' : '')
+    : `<div class="list-foot">${empty}</div>`;
   renderIcons(list);
   if (!CT.person) renderCard(null);  // A new list starts without a selection.
 }
@@ -229,7 +240,7 @@ $('#ct-search').addEventListener('keydown', async (e) => {
 // refreshed daily). Fields the directory leaves empty are not shown (this server
 // exposes no 工号/办公地点/上级 today). Every field copies on click; the head image replaces the
 // coloured initials when the directory has one.
-const PERSON_FIELDS = [['name', '姓名'], ['email', '邮箱'], ['dept', '部门'], ['title', '职位'], ['mobile', '手机'], ['phone', '办公电话'],
+const PERSON_FIELDS = [['name', '姓名'], ['email', '邮箱'], ['dept', '部门'], ['unit', '子部门'], ['title', '职位'], ['mobile', '手机'], ['phone', '办公电话'],
   ['fax', '传真'], ['address', '地址'], ['employeeNo', '工号'], ['office', '办公地点'], ['manager', '上级']];
 const PERSON = new Map();  // email (lower case) -> details promise, for this run only.
 function personDetails(email, refresh = false) {
