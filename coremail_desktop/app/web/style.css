@@ -109,8 +109,8 @@ i[data-icon] svg { width: 100%; height: 100%; }
 /* App layout */
 .app { display: grid; grid-template-columns: var(--side-w, 232px) clamp(280px, var(--list-w, 400px), calc(100vw - var(--side-w, 232px) - 420px)) minmax(0, 1fr); height: 100vh; }
 .sidebar { background: var(--side); display: flex; flex-direction: column; padding: 14px 10px 10px; min-height: 0; min-width: 0; border-right: 1px solid var(--line); position: relative; }
-.side-head { display: flex; align-items: center; gap: 9px; padding: 2px 8px 14px; }
-.compose-row { display: flex; gap: 1px; margin: 0 4px 12px; }
+.side-head { flex: none; display: flex; align-items: center; gap: 9px; padding: 2px 8px 14px; }
+.compose-row { flex: none; display: flex; gap: 1px; margin: 0 4px 12px; }
 .compose-btn { flex: 1; min-width: 0; height: 40px; border-radius: 10px 0 0 10px; font-size: 14.5px; box-shadow: 0 2px 6px rgba(37,99,235,.25); white-space: nowrap; }
 .compose-more { width: 32px; height: 40px; padding: 0; border-radius: 0 10px 10px 0; box-shadow: 0 2px 6px rgba(37,99,235,.25); }
 .compose-more i[data-icon] { transform: rotate(90deg); width: 14px; height: 14px; }
@@ -121,20 +121,21 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .splitter:hover::after, .splitter.drag::after { background: var(--accent); }
 body.resizing, body.resizing * { cursor: col-resize !important; }
 body.resizing iframe { pointer-events: none; }
-.folders { display: grid; gap: 1px; }
-#folder-list { overflow: auto; min-height: 0; }
-.folder { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; cursor: pointer; color: var(--text-2); }
+/* The sidebar body (folders, scheduled, shared, tags, local) scrolls as one area; nothing in it scrolls sideways. */
+.side-scroll { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
+.folders { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
+.folder { display: flex; align-items: center; gap: 10px; min-width: 0; height: 36px; padding: 0 10px; border-radius: 8px; cursor: pointer; color: var(--text-2); }
 .folder:hover { background: var(--hover); }
 .folder.on { background: var(--sel); color: var(--accent); font-weight: 600; }
 .folder .fname { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.folder i[data-icon], .folder .count { flex: none; }
 .folder .count { font-size: 12px; font-weight: 600; color: var(--accent); }
 .folder.drop { outline: 2px dashed var(--accent); }
-#shared-list { overflow: auto; max-height: 38vh; }
 .folder.box .chev { width: 14px; height: 14px; margin-right: -4px; color: var(--muted); transition: transform .15s; }
 .folder.box.open .chev { transform: rotate(90deg); }
 .folder.sub { padding-left: 34px; }
 .side-section { margin: 14px 10px 4px; font-size: 11.5px; color: var(--muted); font-weight: 600; letter-spacing: .5px; }
-.side-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
+.side-foot { flex: none; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
 .account-btn { width: 100%; display: flex; align-items: center; gap: 10px; border: 0; background: transparent; padding: 8px; border-radius: 10px; cursor: pointer; text-align: left; }
 .account-btn:hover { background: var(--hover); }
 .account-text { flex: 1; min-width: 0; display: grid; }
