@@ -204,6 +204,7 @@ async function enterApp(profile) {
   loadShared();
   api('startSync', { seconds: S.prefs.pollSeconds });
   refreshDraftCount();
+  refreshOutbox();
   setTimeout(refreshScheduled, 1500);
   loadTemplates();
 }
@@ -221,10 +222,11 @@ async function enterReader(mid) {
   loadTemplates();
   selectMessage(mid);
 }
-function popOut(id) { if (id && S.local !== 'drafts') api('openReader', { mid: id }).catch(fail); }
+function popOut(id) { if (id && S.local !== 'drafts' && S.local !== 'outbox') api('openReader', { mid: id }).catch(fail); }
 // Changes made in a pop-out reach the main window's list (read state, star, deletion).
 function notifyMain(value) { if (READER_MID) api('notifyMain', { name: 'mailChanged', value }).catch(() => {}); }
 async function readerAct(act, m) {
+  if (m.imported && ['flag', 'unread', 'delete', 'move'].includes(act)) { toast('这是从本机文件打开的邮件，只能阅读、回复和转发'); return true; }
   if (act === 'flag' || act === 'unread') {
     const flags = act === 'flag' ? { flagged: !m.flags.flagged } : { read: false };
     const before = { ...m.flags };
@@ -326,6 +328,7 @@ function renderFolders() {
   });
   $('#nav-drafts').classList.toggle('on', S.local === 'drafts');
   $('#nav-scheduled').classList.toggle('on', S.local === 'scheduled');
+  $('#nav-outbox').classList.toggle('on', S.local === 'outbox');
   $('#nav-contacts').classList.toggle('on', S.local === 'contacts');
   $('#app').classList.toggle('contacts-mode', S.local === 'contacts');
   SF.renderChips();
@@ -530,6 +533,7 @@ $('#mail-list').addEventListener('click', (e) => {
   if (e.target.closest('#convo-back')) { closeConversation(); return; }
   const row = e.target.closest('.row'); if (!row) return;
   if (S.local === 'drafts') { openLocalDraft(row.dataset.id); return; }
+  if (S.local === 'outbox') { outboxOpen(row.dataset.id); return; }
   if (e.detail > 1) return;  // The second click of a double-click pops the message out instead.
   if (e.ctrlKey || e.metaKey) { toggleItem(row.dataset.id); return; }
   if (e.shiftKey) { selectRange(row.dataset.id); return; }
@@ -540,7 +544,7 @@ $('#mail-list').addEventListener('click', (e) => {
   selectMessage(row.dataset.id);
 });
 $('#mail-list').addEventListener('dblclick', (e) => {
-  if (e.target.closest('.row') && !S.local) popOut(S.selected);
+  if (e.target.closest('.row') && !S.local) (inDraftsFolder() ? editServerDraft(S.selected) : popOut(S.selected));
 });
 $('#mail-list').addEventListener('dragstart', (e) => {
   const row = e.target.closest('.row'); if (!row || S.local) return;
@@ -551,6 +555,7 @@ $('#mail-list').addEventListener('dragstart', (e) => {
 $('#mail-list').addEventListener('contextmenu', (e) => {
   const row = e.target.closest('.row'); if (!row) return;
   e.preventDefault();
+  if (S.local === 'outbox') { outboxMenu(e, row.dataset.id); return; }
   if (S.local === 'drafts') {
     showMenu(e.clientX, e.clientY, [{ label: '打开草稿', icon: 'pen', run: () => openLocalDraft(row.dataset.id) },
       { label: '删除草稿', icon: 'trash', run: () => deleteLocalDraft(row.dataset.id) }]);
@@ -574,6 +579,8 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
     { label: '回复', icon: 'reply', run: () => startCompose('reply', r.id) },
     { label: '全部回复', icon: 'replyall', run: () => startCompose('reply_all', r.id) },
     { label: '转发', icon: 'forward', run: () => startCompose('forward', r.id) },
+    { label: '作为附件转发', icon: 'clip', run: () => startCompose('forward_attach', r.id) },
+    ...(inDraftsFolder() && !r.flags.scheduleDelivery ? [{ label: '继续编辑草稿', icon: 'pen', run: () => editServerDraft(r.id) }] : []),
     '-',
     { label: r.flags.read ? '标为未读' : '标为已读', icon: 'mail', run: () => setFlags(r.id, { read: !r.flags.read }), write: true },
     { label: r.flags.flagged ? '取消星标' : '添加星标', icon: 'star', run: () => setFlags(r.id, { flagged: !r.flags.flagged }), write: true },
@@ -717,13 +724,15 @@ function renderMessage(m) {
   const panel = $('#ds-panel'); if (panel) panel.remove();
   $$('#reader-body .sent-only').forEach((b) => b.classList.toggle('hidden', role !== 'sent'));
   const box = m.mailbox;
-  $$('#reader-body .rw-only').forEach((b) => b.classList.toggle('hidden', !!box && !box.rw));
+  $$('#reader-body .rw-only').forEach((b) => b.classList.toggle('hidden', (!!box && !box.rw) || !!m.imported));
   setRecallAllowed(!box, '共享邮箱的邮件请在网页版中撤回');
   $$('#reader-body .sched-only').forEach((b) => b.classList.toggle('hidden', !m.scheduled));
   // Banners
   const banners = [];
   if (box) banners.push(`<div class="banner info"><i data-icon="shared"></i><span>共享邮箱「${esc(box.name || box.email)}」${box.rw ? '' : ' · 只读'} · 回复${box.send ? '将以该邮箱身份发出' : '将以你自己的地址发出'}。</span></div>`);
   if (m.scheduled) banners.push(`<div class="banner info"><i data-icon="clock"></i><span>这是一封定时邮件${m.scheduleAt ? `，将于 <b>${esc(scheduleText(m.scheduleAt))}</b> 由服务器发出` : '，到时间由服务器发出'}。</span><span class="spacer"></span><button class="btn ghost" data-act="unschedule">取消定时</button></div>`);
+  if (m.imported) banners.push('<div class="banner info"><i data-icon="open"></i><span>这是从本机 .eml 文件打开的邮件（只读，不在服务器上）。可以回复或转发。</span></div>');
+  if (m.serverDraft) banners.push('<div class="banner info"><i data-icon="draft"></i><span>这是服务器草稿箱中的草稿（网页版、手机或其他客户端保存）。</span><span class="spacer"></span><button class="btn primary" id="b-edit-draft">继续编辑</button></div>');
   if (m.encryption === 'locked') banners.push(`<div class="banner"><i data-icon="lock"></i><span>这是一封证书加密邮件，解锁个人证书后即可阅读。</span><span class="spacer"></span><button class="btn primary" id="b-unlock">解锁证书</button></div>`);
   if (m.encryption === 'decrypted') banners.push(`<div class="banner info"><i data-icon="lock"></i><span>此邮件已使用你的证书在本机解密。</span></div>`);
   const sig = signatureBanner(m.signature); if (sig) banners.push(sig);
@@ -731,6 +740,7 @@ function renderMessage(m) {
   $('#r-banners').innerHTML = banners.join('');
   renderIcons($('#r-banners'));
   const unlock = $('#b-unlock'); if (unlock) unlock.onclick = unlockCertificate;
+  const editDraft = $('#b-edit-draft'); if (editDraft) editDraft.onclick = () => editServerDraft(m.id);
   const images = $('#b-images'); if (images) images.onclick = async () => { S.allowRemote.add(m.id); await api('allowRemoteImages', { allow: true }); renderMessage(m); };
   // Attachments
   const atts = $('#r-attachments');
@@ -905,6 +915,8 @@ async function exportEml(m) {
 function moreMenu(button, m) {
   const r = button.getBoundingClientRect();
   showMenu(r.left, r.bottom + 4, [
+    { label: '作为附件转发', icon: 'clip', run: () => startCompose('forward_attach', m.id) },
+    '-',
     { label: '打印…', icon: 'print', run: () => printMessage(m) },
     { label: '导出为 PDF…', icon: 'file', run: () => exportPdf(m) },
     { label: m.encryption === 'none' ? '导出为 .eml…' : '导出为 .eml（加密原件或解密副本）…', icon: 'download', run: () => exportEml(m) },
@@ -1197,7 +1209,7 @@ function openComposer(draft) {
   C.sign = draft.sign === true ? true : draft.sign === false ? false : null;
   const box = $('#composer');
   box.classList.remove('hidden');
-  $('#cmp-title').textContent = { new: '写邮件', reply: '回复', reply_all: '全部回复', forward: '转发' }[draft.mode] || '写邮件';
+  $('#cmp-title').textContent = { new: '写邮件', reply: '回复', reply_all: '全部回复', forward: '转发', forward_attach: '作为附件转发' }[draft.title || draft.mode] || '写邮件';
   $('#cmp-status').textContent = '';
   const ids = draft.fromChoices || S.profile.identities || [S.profile.account];
   $('#cmp-from').innerHTML = ids.map((i) => `<option${i === draft.from ? ' selected' : ''}>${esc(i)}</option>`).join('');
@@ -1211,12 +1223,13 @@ function openComposer(draft) {
   renderEncrypt();
   $('#cmp-receipt').checked = !!draft.receipt;
   renderSchedule();
+  composerOpened(draft);
   setTimeout(() => {
     if (!(draft.to || []).length) $('.chips[data-field="to"] input').focus();
     else { const ed = $('#cmp-editor'); ed.focus(); const r = document.createRange(); r.setStart(ed, 0); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
   }, 30);
   clearInterval(C.timer);
-  C.timer = setInterval(() => { if (C.dirty) saveDraft(true); }, 20000);
+  C.timer = setInterval(() => { if (C.dirty) saveDraft(true, false); }, 20000);  // Autosave stays local.
 }
 
 function chipEl(addr) {
@@ -1362,15 +1375,26 @@ composer.addEventListener('dragleave', (e) => { if (!composer.contains(e.related
 composer.addEventListener('drop', async (e) => {
   if (!e.dataTransfer.files.length) return;
   e.preventDefault(); $('#cmp-drop').classList.add('hidden');
-  addAttachments(await Promise.all(Array.from(e.dataTransfer.files).map(readFile)));
+  let files = Array.from(e.dataTransfer.files);
+  if (e.target.closest && e.target.closest('#cmp-editor')) {
+    // Pictures dropped onto the text go into the body where they were dropped.
+    const images = files.filter(isBodyImage);
+    files = files.filter((f) => !isBodyImage(f));
+    if (images.length) await insertImageFiles(images, document.caretRangeFromPoint(e.clientX, e.clientY));
+  }
+  if (files.length) addAttachments(await Promise.all(files.map(readFile)));
 });
 $('#cmp-editor').addEventListener('paste', async (e) => {
   // Excel and Word put an HTML table AND a picture of it on the clipboard: when HTML
-  // is there, let the normal paste keep the table. Only a pure image (a screenshot)
-  // is taken as an attachment.
+  // is there, let the normal paste keep the table. A pure image (a screenshot) goes
+  // into the body; other pasted files become attachments.
   if (Array.from(e.clipboardData.types || []).includes('text/html')) return;
   const files = Array.from(e.clipboardData.files || []);
-  if (files.length) { e.preventDefault(); addAttachments(await Promise.all(files.map(readFile))); toast('粘贴的图片已作为附件添加'); }
+  if (!files.length) return;
+  e.preventDefault();
+  const images = files.filter(isBodyImage), others = files.filter((f) => !isBodyImage(f));
+  if (images.length) await insertImageFiles(images);
+  if (others.length) { addAttachments(await Promise.all(others.map(readFile))); toast('粘贴的文件已作为附件添加'); }
 });
 $('#cmp-editor').addEventListener('input', () => { C.dirty = true; });
 $('#cmp-subject').addEventListener('input', () => { C.dirty = true; });
@@ -1451,15 +1475,20 @@ $('#cmp-schedule').onclick = pickSchedule;
 $('#cmp-schedule-chip span').onclick = pickSchedule;
 $('#cmp-schedule-chip button').onclick = () => { C.draft.scheduleAt = null; C.dirty = true; renderSchedule(); };
 $('#cmp-receipt').onchange = () => { C.dirty = true; };
-async function saveDraft(quiet) {
-  if (!C.draft) return;
+// server: a draft opened from the server's 草稿箱 is written back there (never when encrypted).
+async function saveDraft(quiet, server = !!(C.draft && C.draft.serverDraftId)) {
+  if (!C.draft) return null;
   try {
-    const res = await api('saveDraft', { value: collectDraft() });
+    const res = await api('saveDraft', { value: collectDraft(), server });
     C.draft.revision = res.revision; C.dirty = false;
-    $('#cmp-status').textContent = '已保存 ' + new Date().toTimeString().slice(0, 5);
-    if (!quiet) toast('草稿已保存到本机');
+    const time = new Date().toTimeString().slice(0, 5);
+    if (res.serverDraftId) { C.draft.serverDraftId = res.serverDraftId; serverDraftSaved(); }
+    $('#cmp-status').textContent = res.serverError ? '已保存到本机 ' + time : (res.serverDraftId ? '已保存到服务器草稿箱 ' : '已保存 ') + time;
+    if (res.serverError) toast(res.serverError, { error: res.serverErrorCode !== 'DRAFT_ENCRYPTED_LOCAL' });
+    else if (!quiet) toast(res.serverDraftId ? '草稿已保存到服务器草稿箱' : '草稿已保存到本机');
     refreshDraftCount();
-  } catch (err) { $('#cmp-status').textContent = '草稿保存失败'; if (!quiet) fail(err); }
+    return res;
+  } catch (err) { $('#cmp-status').textContent = '草稿保存失败'; if (!quiet) fail(err); return null; }
 }
 async function sendMail() {
   const value = collectDraft();
@@ -1481,7 +1510,7 @@ async function sendMail() {
   const btn = $('#cmp-send'); btn.disabled = true; btn.innerHTML = value.scheduleAt ? '<i data-icon="clock"></i>提交中…' : '<i data-icon="send"></i>发送中…'; renderIcons(btn);
   $('#cmp-status').textContent = (value.attachments || []).length ? '正在上传附件并发送…' : '正在发送…';
   try {
-    const res = await api('send', { value });
+    const res = await api('send', { value, hold: true });
     C.draft.revision = res.revision;
     if (res.state === 'NeedsCertificates') {
       $('#cmp-status').textContent = '部分收件人没有加密证书';
@@ -1501,16 +1530,17 @@ async function sendMail() {
       if (go && (await unlockCertificate())) setTimeout(sendMail, 0);
       return;
     }
-    if (res.state === 'Accepted') {
+    const meta = { encrypt: value.encrypt, sign: value.sign, subject: value.subject };
+    if (res.state === 'Held') {
+      // 撤销发送: the composer closes; the bar counts down and can bring it back.
       closeComposer(true);
-      const sentText = value.encrypt ? (value.sign ? '已签名并加密发送' : '加密邮件已发送') : value.sign ? '已签名发送' : '邮件已发送';
-      toast(res.scheduledAt ? `${value.sign ? '已签名的' : ''}邮件已定时，将于 ${scheduleText(res.scheduledAt)} 发送` : sentText);
-      if (res.scheduledAt) refreshScheduled();
-      refreshDraftCount();
-      const sent = S.folders.find((f) => f.role === 'sent'); if (sent && S.folderId === sent.id) loadList(true);
+      showHold(res, meta);
+    } else if (res.state === 'Accepted' || res.state === 'Queued') {
+      closeComposer(true);
+      sendOutcome(res, meta);
     } else if (res.state === 'Unknown') {
       $('#cmp-status').textContent = '发送结果待确认';
-      toast('发送结果不确定：请先在“已发送”中核对，本应用不会自动重发。草稿已保留。', { error: true, ms: 9000 });
+      sendOutcome(res, meta);
     } else {
       $('#cmp-status').textContent = '发送失败，草稿已保留';
       fail({ message: res.failureMessage || '发送失败，草稿已保存在本机，可修改后重试。' });
@@ -1521,7 +1551,7 @@ async function sendMail() {
 function closeComposer(sent) {
   clearInterval(C.timer);
   $('#composer').classList.add('hidden'); $('#composer').classList.remove('max'); hideSuggest();
-  if (!sent && C.dirty) saveDraft(true).then(() => toast('已保存到本机草稿'));
+  if (!sent && C.dirty) saveDraft(true).then((res) => res && !res.serverError && toast(res.serverDraftId ? '已保存到服务器草稿箱' : '已保存到本机草稿'));
   if (sent) C.draft = null;
 }
 $('#cmp-send').onclick = sendMail;
@@ -1601,7 +1631,8 @@ $('#cmp-template').onclick = (e) => templateMenu(e.currentTarget);
 $('#btn-compose-more').onclick = (e) => {
   const r = e.currentTarget.getBoundingClientRect();
   showMenu(r.left, r.bottom + 4, [{ label: '写邮件', icon: 'pen', run: () => startCompose('new') },
-    { label: '从模板新建…', icon: 'template', run: newFromTemplate }]);
+    { label: '从模板新建…', icon: 'template', run: newFromTemplate },
+    '-', { label: '打开 .eml 邮件文件…', icon: 'open', run: importEml }]);
 };
 function renderTemplates() {
   const box = $('#tpl-list');
@@ -1637,6 +1668,7 @@ function openSettings() {
   $('#pref-poll').value = String(p.pollSeconds);
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-autostart').checked = !!p.autostart;
+  $('#pref-undo').value = String(p.undoSeconds ?? 10);
   $('#pref-signature').innerHTML = p.signature || '';
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
   renderCertStatus();
@@ -1656,7 +1688,7 @@ $('#btn-account').onclick = openSettings;
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, pollSeconds: +$('#pref-poll').value,
-    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, signature: $('#pref-signature').innerHTML.replace(/^(<br>)+$/, '') };
+    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, signature: $('#pref-signature').innerHTML.replace(/^(<br>)+$/, '') };
   try {
     S.prefs = await api('setPrefs', { values });
     applyTheme(S.prefs.theme, S.prefs.density);

@@ -107,6 +107,13 @@ MESSAGES = {
     'TAG_UNCONFIRMED': '服务器没有确认标签的修改，请刷新后核对。',
     'INVITE_UNAVAILABLE': '服务器上找不到这封邀请对应的日程，无法在这里答复，请在网页版日历中处理。',
     'SHARED_UNAVAILABLE': '无法打开这个共享邮箱，可能已不再与你共享。',
+    'DRAFT_ENCRYPTED_LOCAL': '加密或签名邮件的草稿只保存在本机（已加密），不会以明文存到服务器草稿箱。',
+    'DRAFT_SAVE_UNCONFIRMED': '服务器没有确认草稿已保存，请稍后在草稿箱核对。本机草稿已保留。',
+    'DRAFT_SCHEDULED': '这是一封定时邮件，请先取消定时，再继续编辑。',
+    'DRAFT_UNAVAILABLE': '无法在这里编辑这份草稿：它属于共享邮箱，或已不在服务器草稿箱中。',
+    'SEND_NOT_HELD': '这封邮件已经开始发送，无法撤销。',
+    'EML_INVALID': '这个文件不是有效的邮件（.eml），无法打开。',
+    'EML_TOO_LARGE': '邮件文件超过 40 MiB，无法打开。',
 }
 
 GENERIC = '操作未完成。请检查连接或稍后重试，本应用不会自动重发邮件。'

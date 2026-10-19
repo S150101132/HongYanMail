@@ -87,6 +87,8 @@ class DraftDocument(_ImmutableMappings):
     request_receipt: bool = False
     # mboxa ('@'+id) of the shared mailbox holding reply_source_id; '' for the user's own.
     reply_mailbox: str = ''
+    # The server draft (草稿箱 message id) this draft edits; sending or saving replaces it.
+    server_draft_id: str = ''
 
 @dataclass(frozen=True)
 class SendJob:

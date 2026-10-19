@@ -124,6 +124,43 @@ STEPS = [
     (600, lambda: render_pdf('demo3'), None),
     (2500, "S.message && writeFrame && 0; document.body.offsetWidth", None),
 ]
+# v0.5 compose and send (HONGYAN_WALK_V05=1 runs only these).
+V05 = len(STEPS)
+SHOT_PNG = ("(() => { const c = document.createElement('canvas'); c.width = 280; c.height = 110; const g = c.getContext('2d');"
+            " g.fillStyle = '#e8efff'; g.fillRect(0, 0, 280, 110); g.strokeStyle = '#2563eb'; g.strokeRect(1, 1, 278, 108);"
+            " g.fillStyle = '#1d4ed8'; g.font = '18px Microsoft YaHei'; g.fillText('粘贴的截图（演示）', 24, 62);"
+            " insertImageData([{ name: '截图.png', type: 'image/png', size: 2000, data: c.toDataURL().split(',')[1] }]); })()")
+STEPS += [
+    (900, "api('closeReaders'); selectFolder('1')", None),
+    (900, "startCompose('new', null, { to: ['partner@external.example'], subject: '本周进展（含表格和截图）' })", None),
+    (700, "$('#cmp-editor').focus(); document.execCommand('insertHTML', false, '<p>各位好，本周进展如下：</p>' + tableHtml(3, 3));"
+          " $$('#cmp-editor td').forEach((td, i) => { td.textContent = ['事项', '负责人', '截止', '接口联调', '张晓明', '10-22', '验收', '李华', '10-24'][i]; });"
+          " const s = getSelection(); s.selectAllChildren($('#cmp-editor')); s.collapseToEnd();", None),
+    (700, SHOT_PNG, None),
+    (600, "(() => { const td = $$('#cmp-editor td')[4]; const r = td.getBoundingClientRect(); caretIn(td); tableMenu(r.left + 20, r.bottom, td); })()", 'compose-table'),
+    (600, "hideMenu(); tablePicker($('#cmp-table')); const cell = $('#tbl-picker [data-r=\"3\"][data-c=\"4\"]'); cell.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))", 'table-picker'),
+    (500, "$('#tbl-picker').classList.add('hidden'); sendMail()", None),
+    (1200, "document.body.offsetWidth", 'undo-send'),
+    (600, "$('.toast.hold button').click()", None),
+    (900, "document.body.offsetWidth", 'undo-restored'),
+    (300, lambda: (setattr(backend.adapter, 'offline', True), backend.set_prefs({'undoSeconds': 0})), None),
+    (600, "sendMail()", None),
+    (1200, "document.body.offsetWidth", 'offline-queued'),
+    (600, "$('#nav-outbox').click()", None),
+    (900, "document.body.offsetWidth", 'outbox'),
+    (300, lambda: (setattr(backend.adapter, 'offline', False), backend.set_prefs({'undoSeconds': 10})), None),
+    (600, "selectFolder('2')", None),
+    (1200, "selectMessage('demo-draft0')", 'server-draft'),
+    (900, "editServerDraft('demo-draft0')", 'server-draft-edit'),
+    (700, "closeComposer(true); openSettings(); setTimeout(() => $('#pref-undo').scrollIntoView({ block: 'center' }), 100)", 'settings-undo'),
+    (600, "$('#settings').classList.add('hidden'); selectFolder('1')", None),
+    (1200, "selectMessage(S.rows[0].id)", None),
+    (900, "startCompose('forward_attach', S.selected)", 'forward-attach'),
+    (600, "closeComposer(true); $('#nav-outbox').click()", None),
+    (900, "flushOutboxNow()", 'outbox-flushed'),
+    (700, lambda: window.native_openReader(backend.import_eml(backend._raw('demo3'))), None),
+    (2500, None, 'eml-reader', 'reader'),
+]
 
 
 def render_pdf(mid):
@@ -161,6 +198,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run()
+run(V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

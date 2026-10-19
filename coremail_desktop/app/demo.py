@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from coremail_desktop.errors import AppError
-from coremail_desktop.models import Folder, MessageSummary
+from coremail_desktop.models import DraftAttachment, Folder, MessageSummary
 
 PEOPLE = [('产品协作组', 'product@example.invalid'), ('研发团队', 'rd@example.invalid'),
           ('张晓明', 'zhangxm@example.invalid'), ('李华', 'lihua@example.invalid'),
@@ -142,6 +142,18 @@ class DemoAdapter:
         self.sent = []
         self.sent_payloads = []
         self._counter = 0
+        self.offline = False  # True: every server call fails as if the network were down.
+        self.saved_drafts = []
+        # Two server drafts saved elsewhere (webmail / phone), one with a table and an attachment.
+        for i, (subject, body) in enumerate([
+                ('季度预算草案（演示服务器草稿）', '<p>各位：</p><p>预算草案如下，请补充：</p><table border="1" cellpadding="6" '
+                 'style="border-collapse:collapse"><tr><th>项目</th><th>金额</th></tr><tr><td>设备</td><td>12 万</td></tr></table>'),
+                ('周五例会提纲（手机草稿）', '<p>1. 进度回顾</p><p>2. 风险</p>')]):
+            mid = f'demo-draft{i}'
+            self.rows[mid] = {'id': mid, 'fid': '2', 'subject': subject, 'from': '"演示用户" <demo@example.invalid>',
+                              'to': '"研发团队" <rd@example.invalid>', 'date': (now - timedelta(hours=3 + i)).strftime('%Y-%m-%d %H:%M:%S'),
+                              'flags': {'read': True, 'draft': True, 'attached': i == 0}, 'html': body,
+                              'files': (DraftAttachment('预算明细.txt', 'text/plain', '设备 12 万（演示）'.encode('utf-8')),) if i == 0 else ()}
 
     def login(self, account, password):
         self.signed_in = True
@@ -150,6 +162,8 @@ class DemoAdapter:
         self.signed_in = False
 
     def _need(self):
+        if self.offline:
+            raise AppError('NETWORK_ERROR')
         if not self.signed_in:
             raise AppError('NOT_AUTHENTICATED')
 
@@ -209,6 +223,19 @@ class DemoAdapter:
             message.add_alternative(_demo_ics(cancel), subtype='calendar', params={'method': 'CANCEL' if cancel else 'REQUEST'})
             return bytes(message)
         message.set_content('各位同事：本周的设计评审已经完成。（合成演示数据）')
+        if r.get('html'):
+            # Mail written in this session keeps its own body; its pictures as related parts.
+            from coremail_desktop.compose.inline import extract_inline, fill_inline
+            template, images = extract_inline(r['html'])
+            message.add_alternative(fill_inline(template, [f'cid:img{i}@demo.invalid' for i in range(len(images))]), subtype='html')
+            for i, image in enumerate(images):
+                maintype, _, subtype = image.media_type.partition('/')
+                message.get_payload()[1].add_related(image.payload, maintype=maintype, subtype=subtype,
+                                                     cid=f'<img{i}@demo.invalid>', filename=image.name, disposition='inline')
+            for a in r.get('files', ()):
+                maintype, _, subtype = a.media_type.partition('/')
+                message.add_attachment(a.payload, maintype=maintype, subtype=subtype, filename=a.name)
+            return bytes(message)
         message.add_alternative(BODY, subtype='html')
         if r['flags'].get('attached'):
             message.add_attachment('演示附件内容\n'.encode('utf-8'), maintype='text', subtype='plain', filename='会议纪要.txt')
@@ -325,19 +352,42 @@ class DemoAdapter:
         return [{'name': n, 'email': a} for n, a in people if keyword.casefold() in (n + a).casefold()][:limit]
 
     def create_compose(self, draft):
+        self._need()
         self._counter += 1
         return f'compose{self._counter}'
 
+    def _consume(self, draft):
+        # Like CoremailAdapter._retire_draft: the replaced server draft moves to the trash.
+        if draft is not None and draft.server_draft_id in self.rows:
+            self.rows[draft.server_draft_id]['fid'] = '4'
+
     def deliver(self, compose_id, draft):
+        self._need()
         self.sent.append(draft)
+        self._consume(draft)
         self._counter += 1
         mid = f'demo-new{self._counter}'
         scheduled = bool(getattr(draft, 'schedule_at', None))
         self.rows[mid] = {'id': mid, 'fid': '2' if scheduled else '3', 'subject': draft.subject, 'from': '"演示用户" <demo@example.invalid>',
                           'to': ', '.join(draft.to), 'date': datetime(2026, 10, 17, 10, 31).strftime('%Y-%m-%d %H:%M:%S'),
                           'flags': {'read': True, 'scheduleDelivery': True} if scheduled else {'read': True, 'rcptQueued': True},
-                          'scheduleAt': draft.schedule_at}
+                          'scheduleAt': draft.schedule_at, 'html': draft.body if draft.is_html else None, 'files': draft.attachments}
         return {'code': 'S_OK', **({'scheduledSent': {'mid': mid}} if scheduled else {})}
+
+    def save_server_draft(self, draft):
+        """A fresh compose saved as a draft; the draft it replaces goes to the trash."""
+        if draft.encryption_required or draft.signature_required:
+            raise AppError('DRAFT_ENCRYPTED_LOCAL')
+        self.create_compose(draft)
+        self._consume(draft)
+        self.saved_drafts.append(draft)
+        self._counter += 1
+        mid = f'demo-draft-s{self._counter}'
+        self.rows[mid] = {'id': mid, 'fid': '2', 'subject': draft.subject, 'from': '"演示用户" <demo@example.invalid>',
+                          'to': ', '.join(draft.to), 'date': datetime(2026, 10, 17, 10, 32).strftime('%Y-%m-%d %H:%M:%S'),
+                          'flags': {'read': True, 'draft': True, 'attached': bool(draft.attachments)},
+                          'html': draft.body, 'files': draft.attachments}
+        return mid
 
     supports_scheduled_encrypted = False
 
@@ -381,10 +431,13 @@ class DemoAdapter:
 
     def public_certificates(self, emails):
         """Synthetic company directory: every example.invalid colleague has a certificate."""
+        self._need()
         return {e.casefold(): demo_certificate(e)[0] for e in emails if e.casefold().endswith('@example.invalid')}
 
     def submit_encrypted(self, payload, recipients, draft=None):
+        self._need()
         self.sent.append(draft)
+        self._consume(draft)
         self.sent_payloads.append(payload)
         return {'code': 'S_OK'}
 

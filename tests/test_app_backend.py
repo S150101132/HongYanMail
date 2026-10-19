@@ -30,7 +30,8 @@ def local_services_stub(adapter, directory, prepare_encrypted=None):
     outbox = OutboxService(adapter, journal, prepare_encrypted)
     return {'save_draft': lambda draft: drafts.save(draft), 'list_drafts': drafts.list_summaries,
             'restore_draft': lambda local_id: drafts.load(local_id), 'delete_draft': lambda local_id: drafts.delete(local_id),
-            'request_send': lambda draft: journal.load(outbox.request_send(draft))}
+            'request_send': lambda draft: journal.load(outbox.request_send(draft)),
+            'review_jobs': outbox.review_jobs, 'dismiss_job': lambda local_id: outbox.dismiss(local_id)}
 
 
 class BackendTest(unittest.TestCase):

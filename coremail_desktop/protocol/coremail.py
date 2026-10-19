@@ -132,22 +132,31 @@ class DesktopSession(CoremailSession):
         data=urlencode({**form,**(fields or {}),'start':offset,'limit':limit,'summaryWindowSize':0}).encode('utf-8')
         raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
         return self._decode_response(raw)
-    def upload_attachment(self,compose_id,attachment):
+    def upload_attachment(self,compose_id,attachment,inlined=False):
+        """inlined: an image shown in the body (webmail's inlined upload, X.03931.js:
+        upload:prepare and directData both carry inlined)."""
         if not self.sid: raise AppError('NOT_AUTHENTICATED')
         from coremail_desktop.compose.attachments import validate_attachments
         validate_attachments((attachment,))
         size=len(attachment.payload)
-        value=self.call('upload:prepare',{'composeId':compose_id,'attachmentId':-1,'fileName':attachment.name,'displayName':attachment.name,'contentType':attachment.media_type,'size':size}).get('var')
+        value=self.call('upload:prepare',{'composeId':compose_id,'attachmentId':-1,'fileName':attachment.name,'displayName':attachment.name,'contentType':attachment.media_type,'size':size,**({'inlined':True} if inlined else {})}).get('var')
         if not isinstance(value,dict) or type(value.get('attachmentId')) is not int or value['attachmentId']<0: raise AppError('ATTACHMENT_UPLOAD_FAILED')
         attachment_id=value['attachmentId']; chunk_size=2*1024*1024
         for offset in range(0,max(1,size),chunk_size):
             chunk=attachment.payload[offset:offset+chunk_size]; boundary='Hongyan'+uuid.uuid4().hex
             data=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{attachment.name}"\r\nContent-Type: {attachment.media_type}\r\n\r\n'.encode('utf-8')+chunk+f'\r\n--{boundary}--\r\n'.encode('ascii'))
-            url=urljoin(self.base_url,'XT/jsp/upload.jsp')+'?'+urlencode({'func':'directData','sid':self.sid,'composeId':compose_id,'attachmentId':attachment_id,'offset':offset})
+            url=urljoin(self.base_url,'XT/jsp/upload.jsp')+'?'+urlencode({'func':'directData','sid':self.sid,'composeId':compose_id,'attachmentId':attachment_id,'offset':offset,**({'inlined':'1'} if inlined else {})})
             raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'multipart/form-data; boundary='+boundary,'Accept':'text/x-json'}))
             uploaded=self._decode_response(raw).get('var')
             if not isinstance(uploaded,dict) or uploaded.get('attachmentId')!=attachment_id or uploaded.get('size')!=size or uploaded.get('actualSize')!=offset+len(chunk): raise AppError('ATTACHMENT_UPLOAD_FAILED')
-        return {'id':attachment_id,'type':'upload','name':attachment.name,'size':size}
+        return {'id':attachment_id,'type':'upload','name':attachment.name,'size':size,**({'inlined':True} if inlined else {})}
+    def compose_data_url(self,compose_id,attachment_id):
+        """Where webmail's editor shows an inlined upload (X.03931.js Zt: s/json
+        func=mbox:getComposeData). On save/deliver the server turns this src into
+        cid: and the image into a multipart/related part; no sid is left in the
+        message (verified 2026-10-18, analysis/compose-v05-shape-2026-10-18.json)."""
+        if not self.sid: raise AppError('NOT_AUTHENTICATED')
+        return urljoin(self.base_url,'s/json')+'?'+urlencode({'sid':self.sid,'func':'mbox:getComposeData','composeId':compose_id,'attachId':attachment_id})
     def deliver_preencoded(self,compose_id,fields,lettercontent):
         """Submit a fully built MIME message (webmail's lettercontent path).
 
@@ -421,12 +430,28 @@ class CoremailAdapter:
         moment=datetime.strptime(draft.schedule_at,'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
         return moment.astimezone(self._zone).strftime('%Y-%m-%d %H:%M:%S')
     def create_compose(self, draft):
+        from coremail_desktop.compose.inline import extract_inline, fill_inline
         self._attrs(draft)  # Validate before creating a server-side session.
+        template,images=extract_inline(draft.body) if getattr(draft,'is_html',False) else (draft.body,[])
         compose_id=self._compose_session(draft)
-        if draft.attachments:
+        if draft.attachments or images:
             attachments=[self._session.upload_attachment(compose_id,attachment) for attachment in draft.attachments]
-            self._compose_attachments[compose_id]=(draft,attachments)
+            inline=[self._session.upload_attachment(compose_id,image,inlined=True) for image in images]
+            content=fill_inline(template,[self._session.compose_data_url(compose_id,item['id']) for item in inline])
+            self._compose_attachments[compose_id]=(draft,attachments+inline,content)
         return compose_id
+    def _retire_draft(self,draft,response):
+        """After the edited copy of a server draft was saved or sent, move the draft it
+        replaces to the trash (a move, so it can be restored). A fresh compose is used
+        instead of reopening the draft (compose.jsp ctype=draft): a reopened session
+        keeps the draft's own attachments, so re-uploading doubled them, and the
+        pre-encoded deliver left the reopened draft in place (verified 2026-10-19,
+        analysis/compose-v05-real-verification-2026-10-18.json)."""
+        old=getattr(draft,'server_draft_id','')
+        if old and isinstance(response,dict) and response.get('code')=='S_OK':
+            try: self.move_message(old,self.TRASH_FOLDER_ID)
+            except AppError: pass  # The edited copy is already safe; at worst the old one stays.
+        return response
     def _compose_session(self, draft, encrypted=False):
         if draft.mode in ('reply','reply_all'):
             # Restoring a draft under another session must not bind its reply to
@@ -447,11 +472,7 @@ class CoremailAdapter:
             if not isinstance(compose_id,str) or not compose_id: raise AppError('INVALID_RESPONSE')
         return compose_id
     def deliver(self, compose_id, draft):
-        attrs=self._attrs(draft)
-        if draft.attachments:
-            prepared=self._compose_attachments.get(compose_id)
-            if prepared is None or prepared[0]!=draft: raise AppError('ATTACHMENT_UPLOAD_FAILED')
-            attrs['attachments']=prepared[1]
+        attrs=self._prepared(compose_id,draft)
         action='deliver'
         if getattr(draft,'schedule_at',None):
             # Verified 2026-10-17: action 'schedule' keeps the message in the drafts
@@ -461,7 +482,28 @@ class CoremailAdapter:
         finally: self._compose_attachments.pop(compose_id,None)
         # A scheduled save is confirmed by the stored copy the server reports back.
         if action=='schedule' and not isinstance(response.get('scheduledSent'),dict): raise AppError('INVALID_RESPONSE')
-        return response
+        return self._retire_draft(draft,response)
+    def _prepared(self,compose_id,draft):
+        """Compose attrs with the uploads create_compose made for this exact draft."""
+        from coremail_desktop.compose.inline import has_inline
+        attrs=self._attrs(draft)
+        prepared=self._compose_attachments.get(compose_id)
+        if draft.attachments or (getattr(draft,'is_html',False) and has_inline(draft.body)):
+            if prepared is None or prepared[0]!=draft: raise AppError('ATTACHMENT_UPLOAD_FAILED')
+            attrs['attachments'],attrs['content']=prepared[1],prepared[2]
+        return attrs
+    def save_server_draft(self,draft):
+        """Write a plaintext draft to the server's 草稿箱 (mbox:compose action save).
+        Returns the draft's new message id. Encrypted drafts never reach the server."""
+        if draft.encryption_required or draft.signature_required: raise AppError('DRAFT_ENCRYPTED_LOCAL')
+        compose_id=self.create_compose(draft)
+        try:
+            attrs=self._prepared(compose_id,draft)
+            response=self._call('%mbox/compose',{'action':'save','id':compose_id,'returnInfo':True,'attrs':attrs})
+        finally: self._compose_attachments.pop(compose_id,None)
+        if not isinstance(response.get('draftId'),str) or not response['draftId']: raise AppError('DRAFT_SAVE_UNCONFIRMED')
+        self._retire_draft(draft,response)
+        return response['draftId']
     def match_contacts(self,keyword,limit=8):
         """Organization directory autocomplete; shape verified read-only 2026-10-17."""
         if not isinstance(keyword,str) or not keyword.strip() or len(keyword)>100: return []
@@ -678,7 +720,7 @@ class CoremailAdapter:
         compose_id=self._compose_session(draft,encrypted=True)
         fields={'returnInfo':'true','account':attrs['account'],'to':','.join(attrs['to']),'cc':','.join(attrs['cc']),'bcc':','.join(attrs['bcc']),
                 'subject':attrs['subject'],'isHtml':'false','saveSentCopy':'true'}
-        return self._session.deliver_preencoded(compose_id,fields,payload.decode('ascii'))
+        return self._retire_draft(draft,self._session.deliver_preencoded(compose_id,fields,payload.decode('ascii')))
     def delivery_history(self,message_id,mboxa=''):
         """Per-recipient delivery records of a sent message.
 

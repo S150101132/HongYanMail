@@ -56,10 +56,16 @@ BACKEND_METHODS = {
     'autoReply': 'auto_reply', 'setAutoReply': 'set_auto_reply', 'tags': 'tags', 'saveTag': 'save_tag', 'deleteTag': 'delete_tag',
     'tagMessages': 'tag_messages', 'tagView': 'tag_view', 'respondInvitation': 'respond_invitation',
     'templates': 'templates', 'saveTemplate': 'save_template', 'renameTemplate': 'rename_template', 'deleteTemplate': 'delete_template',
+    'cancelSend': 'cancel_send', 'heldSends': 'held_sends', 'outbox': 'outbox', 'outboxRemove': 'outbox_remove',
+    'dismissReview': 'dismiss_review', 'flushOutbox': 'flush_outbox', 'editServerDraft': 'edit_server_draft',
 }
-# Read-only calls may run beside a long send or list fetch.
+# Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
+# wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
-                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person'}
+                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
+                'cancelSend', 'heldSends'}
+# Called only by the app itself (the undo timer), never by the page.
+INTERNAL_METHODS = {'releaseSend': 'release_send'}
 # Events a pop-out reader may pass on to the main window.
 POPOUT_EVENTS = {'mailChanged', 'authRequired'}
 # One-shot documents for printing, served at hongyan://app/print/<token>.html.
@@ -193,7 +199,11 @@ class Bridge(QObject):
     def run(self, request_id, name, params):
         def work():
             try:
-                result = getattr(self.backend, BACKEND_METHODS[name])(**params)
+                result = getattr(self.backend, BACKEND_METHODS.get(name) or INTERNAL_METHODS[name])(**params)
+                if name == 'send' and isinstance(result, dict) and result.get('state') == 'Held':
+                    # The undo delay runs in the main window, so closing to the tray (or
+                    # closing the pop-out that sent it) still sends when it ends.
+                    self.shell.send_held.emit(result['localId'], result['revision'], result['delayMs'])
                 self._done.emit(request_id, True, json.dumps(result, ensure_ascii=False, default=str))
             except Exception as error:  # Only fixed codes and fixed text reach the page.
                 code = getattr(error, 'code', 'INTERNAL_ERROR') if isinstance(error, AppError) or hasattr(error, 'code') else 'INTERNAL_ERROR'
@@ -204,7 +214,10 @@ class Bridge(QObject):
                     self.emit_event('authRequired')
                 self._done.emit(request_id, False, json.dumps({'code': code, 'message': text}, ensure_ascii=False))
         pool = self._background if name in BACKGROUND_METHODS else self._fast if name in FAST_METHODS else self._serial
-        pool.submit(work)
+        try:
+            pool.submit(work)
+        except RuntimeError:
+            pass  # The window is closing: its mail thread no longer takes work.
 
     @Slot(str, str, str)
     def call(self, request_id, method, args_json):
@@ -368,6 +381,7 @@ class ReaderWindow(_PrintHost, QMainWindow):
 class AppShell(_PrintHost, QMainWindow):
     push_changed = Signal(str)
     push_state = Signal(str, str)
+    send_held = Signal(str, int, int)  # local id, revision, delay in ms
     PUSH_FALLBACK_SECONDS = 300  # Polling interval while the push channel is up.
 
     def __init__(self, backend, demo=False, sandboxed=True, relaunch_without_sandbox=None):
@@ -414,6 +428,8 @@ class AppShell(_PrintHost, QMainWindow):
         self._push_debounce.timeout.connect(self.poll_now)
         self.push_changed.connect(self._push_event, Qt.ConnectionType.QueuedConnection)
         self.push_state.connect(self._push_state_changed, Qt.ConnectionType.QueuedConnection)
+        self.send_held.connect(self.hold_send, Qt.ConnectionType.QueuedConnection)
+        self._flush_busy = False
         self._make_tray()
         QShortcut(QKeySequence('Ctrl+Shift+I'), self, activated=self._devtools)
 
@@ -492,6 +508,11 @@ class AppShell(_PrintHost, QMainWindow):
 
     def closeEvent(self, event):
         if self._quitting or not self.tray.isVisible() or self.demo:
+            # Quitting during an undo delay never sends: those drafts stay in 本机草稿
+            # and the next start lists them.
+            self.backend.abandon_held()
+            for timer in list(getattr(self, '_held_timers', {})):
+                timer.stop()
             self.native_closeReaders()
             self._stop_push()
             self.bridge.shutdown()
@@ -562,7 +583,58 @@ class AppShell(_PrintHost, QMainWindow):
         self._poll_busy = True
         self.bridge.run('internal:poll', 'poll', {})
 
+    # 撤销发送 and 离线发件箱 ------------------------------------------------------
+    def broadcast(self, name, value=None):
+        """An event for the main window and every pop-out (a mail may be sent from either)."""
+        self.bridge.emit_event(name, value)
+        for window in list(self.readers):
+            window.bridge.emit_event(name, value)
+
+    def hold_send(self, local_id, revision, ms):
+        self._held_timers = getattr(self, '_held_timers', {})
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._release(local_id, revision, timer))
+        self._held_timers[timer] = local_id
+        timer.start(max(0, int(ms)))
+
+    def _release(self, local_id, revision, timer):
+        self._held_timers.pop(timer, None)
+        timer.deleteLater()
+        self.bridge.run('internal:release:' + local_id, 'releaseSend', {'local_id': local_id, 'revision': revision})
+
+    def flush_outbox(self):
+        if self._flush_busy or self.backend.cache is None or not self.backend.cache.get('outbox'):
+            return
+        self._flush_busy = True
+        self.bridge.run('internal:flush', 'flushOutbox', {})
+
+    def _sent_notice(self, results):
+        """While the window is hidden in the tray, say how background sends ended."""
+        if self.isVisible() or not results:
+            return
+        done = [r for r in results if r.get('state') == 'Accepted']
+        bad = [r for r in results if r.get('state') not in ('Accepted', 'Cancelled', 'Queued')]
+        if bad:
+            self.tray.showMessage('邮件未发出', '有邮件发送失败或结果待确认，草稿已保留。打开鸿雁查看发件箱。', app_icon(), 8000)
+        elif done:
+            self.tray.showMessage('邮件已发送', done[0].get('subject') or '（无主题）', app_icon(), 4000)
+
     def internal_result(self, request_id, ok, payload):
+        if request_id.startswith('internal:release:'):
+            local_id = request_id[len('internal:release:'):]
+            value = json.loads(payload) if ok else {'state': 'Error', 'localId': local_id, **json.loads(payload)}
+            self.broadcast('sendResult', value)
+            self._sent_notice([value])
+            return
+        if request_id == 'internal:flush':
+            self._flush_busy = False
+            if ok:
+                value = json.loads(payload)
+                if value['results']:
+                    self.broadcast('outboxFlushed', value)
+                    self._sent_notice(value['results'])
+            return
         if request_id == 'internal:poll':
             self._poll_busy = False
             if self._push_pending:  # A push arrived while this poll was running.
@@ -572,6 +644,7 @@ class AppShell(_PrintHost, QMainWindow):
                 self.bridge.emit_event('syncError', json.loads(payload))
                 return
             value = json.loads(payload)
+            self.flush_outbox()  # The server answered: queued offline mail can go now.
             inbox = next((f for f in value['folders'] if f['id'] == value['inbox']), None)
             self._set_unread((inbox or {}).get('unread') or 0)
             self.bridge.emit_event('synced', value)
@@ -617,8 +690,11 @@ class AppShell(_PrintHost, QMainWindow):
         """Dialogs open over the window the user is in: the main window or a pop-out."""
         return QApplication.activeWindow() or self
 
-    def native_pickFiles(self):
-        paths, _ = QFileDialog.getOpenFileNames(self._parent(), '添加附件')
+    def native_pickFiles(self, images=False):
+        if images:
+            paths, _ = QFileDialog.getOpenFileNames(self._parent(), '插入图片', '', '图片 (*.png *.jpg *.jpeg *.gif *.bmp *.webp)')
+        else:
+            paths, _ = QFileDialog.getOpenFileNames(self._parent(), '添加附件')
         result = []
         for path in paths:
             data = Path(path).read_bytes() if Path(path).stat().st_size <= 10 * 1024 * 1024 else None
@@ -693,6 +769,17 @@ class AppShell(_PrintHost, QMainWindow):
         window.raise_()
         window.activateWindow()
         return True
+
+    def native_importEml(self):
+        """导入 .eml: a local message file, opened read-only in a pop-out reader."""
+        path, _ = QFileDialog.getOpenFileName(self._parent(), '打开邮件文件', str(Path.home() / 'Downloads'), '邮件文件 (*.eml);;所有文件 (*)')
+        if not path:
+            return False
+        from coremail_desktop.app.backend import MAX_EML_BYTES
+        if Path(path).stat().st_size > MAX_EML_BYTES:
+            raise AppError('EML_TOO_LARGE')
+        mid = self.backend.import_eml(Path(path).read_bytes())
+        return self.native_openReader(mid)
 
     def native_closeReaders(self):
         for window in list(self.readers):

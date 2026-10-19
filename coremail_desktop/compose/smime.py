@@ -12,6 +12,7 @@ import base64
 import uuid
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
+from coremail_desktop.compose.inline import extract_inline, fill_inline
 from coremail_desktop.compose.recipients import normalize_recipients
 from coremail_desktop.crypto.backend import encrypt_envelope_der
 from coremail_desktop.crypto.signature import sign_detached, sign_opaque
@@ -23,11 +24,25 @@ def inner_entity(draft, seven_bit=False) -> bytes:
     body = EmailMessage()
     cte = {'cte': 'base64'} if seven_bit else {}
     if getattr(draft, 'is_html', False):
-        body.set_content(html_to_text(draft.body) or ' ', **cte)
-        body.add_alternative(draft.body, subtype='html', **cte)
+        # Body images become multipart/related parts referenced by cid:.
+        template, images = extract_inline(draft.body)
+        cids = [make_msgid(domain='hongyan.invalid')[1:-1] for _ in images]
+        body.set_content(html_to_text(template) or ' ', **cte)
+        body.add_alternative(fill_inline(template, ['cid:' + c for c in cids]), subtype='html', **cte)
+        html_part = body.get_payload()[1]
+        for cid, image in zip(cids, images):
+            maintype, _, subtype = image.media_type.partition('/')
+            html_part.add_related(image.payload, maintype=maintype, subtype=subtype, cid=f'<{cid}>',
+                                  filename=image.name, disposition='inline')
     else:
         body.set_content(draft.body, **cte)
     for attachment in draft.attachments:
+        if attachment.media_type == 'message/rfc822':
+            # A forwarded message is attached as a message (7bit/8bit), never re-encoded base64.
+            from email import policy as _policy
+            from email.parser import BytesParser
+            body.add_attachment(BytesParser(policy=_policy.default).parsebytes(attachment.payload), filename=attachment.name)
+            continue
         maintype, _, subtype = attachment.media_type.partition('/')
         body.add_attachment(attachment.payload, maintype=maintype, subtype=subtype or 'octet-stream',
                             filename=attachment.name)
