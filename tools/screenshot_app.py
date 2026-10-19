@@ -161,6 +161,57 @@ STEPS += [
     (700, lambda: window.native_openReader(backend.import_eml(backend._raw('demo3'))), None),
     (2500, None, 'eml-reader', 'reader'),
 ]
+# v0.7 signature logo, recipient groups, @mentions (HONGYAN_WALK_V07=1 runs only these).
+V07 = len(STEPS)
+LOGO_PNG = ("(() => { const c = document.createElement('canvas'); c.width = 720; c.height = 180; const g = c.getContext('2d');"
+            " g.fillStyle = '#ffffff'; g.fillRect(0, 0, 720, 180); g.fillStyle = '#1d4ed8'; g.beginPath(); g.arc(90, 90, 62, 0, 7); g.fill();"
+            " g.fillStyle = '#ffffff'; g.font = 'bold 64px Microsoft YaHei'; g.fillText('雁', 58, 112);"
+            " g.fillStyle = '#1d4ed8'; g.font = 'bold 66px Microsoft YaHei'; g.fillText('演示公司', 180, 112);"
+            " g.fillStyle = '#64748b'; g.font = '26px Microsoft YaHei'; g.fillText('DEMO CORPORATION', 184, 152);"
+            " const ed = $('#pref-signature'); ed.focus(); const s = getSelection(); s.selectAllChildren(ed); s.collapseToStart();"
+            " insertSignatureImages([{ name: '公司LOGO.png', type: 'image/png', size: 9000, data: c.toDataURL().split(',')[1] }], s.getRangeAt(0));"
+            " document.execCommand('insertHTML', false, '<br>'); })()")
+TYPE_AT = ("(() => { const ed = $('#cmp-editor'); ed.focus(); const s = getSelection(); s.selectAllChildren(ed.firstChild || ed); s.collapseToStart();"
+           " document.execCommand('insertText', false, '请 '); document.execCommand('insertText', false, '@李'); })()")
+STEPS += [
+    (900, "api('closeReaders'); selectFolder('1')", None),
+    (900, "openSettings()", None),
+    (700, LOGO_PNG, None),
+    (700, "$('#pref-signature img').click(); $('#pref-signature').scrollIntoView({ block: 'center' })", 'signature-logo'),
+    (500, "$('#btn-save-settings').click()", None),
+    (900, lambda: (backend.set_prefs({'undoSeconds': 0}),
+                   backend.save_recipient_group({'name': '项目周会', 'members': [
+                       {'name': '张晓明', 'email': 'zhangxm@example.invalid', 'field': 'to'},
+                       {'name': '李华', 'email': 'lihua@example.invalid', 'field': 'to'},
+                       {'name': '产品协作组', 'email': 'product@example.invalid', 'field': 'cc'}]}),
+                   backend.save_recipient_group({'name': '前端组', 'members': [
+                       {'name': '张晓明', 'email': 'zhangxm@example.invalid', 'field': 'cc'},
+                       {'name': '王芳', 'email': 'wangfang@example.invalid', 'field': 'to'},
+                       {'name': '赵磊', 'email': 'zhaolei@example.invalid', 'field': 'cc'}]})), None),
+    (600, "startCompose('new', null, { subject: '项目周会纪要' })", 'compose-signature'),
+    (700, "groupMenu($('#cmp-groups'))", 'group-menu'),
+    (700, "hideMenu(); applyGroup(S.groups.find((g) => g.name === '项目周会'))", None),
+    (700, "applyGroup(S.groups.find((g) => g.name === '前端组'))", 'groups-applied'),
+    (700, TYPE_AT, None),
+    (1000, "document.body.offsetWidth", 'mention-suggest'),
+    (600, "pickSuggest(sug.items.findIndex((p) => p.email === 'lihua@example.invalid'))", None),
+    (600, "document.execCommand('insertText', false, '确认接口时间；'); $('#cmp-editor').focus()", None),
+    (600, TYPE_AT.replace('@李', '@陈'), None),
+    (1000, "pickSuggest(0)", 'mention-inserted'),
+    (700, "(() => { const m = $$('#cmp-editor .hy-mention').pop(); const r = document.createRange(); r.selectNode(m); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('delete'); })()", None),
+    (900, "document.body.offsetWidth", 'mention-removed-ask'),
+    (600, "$('#prompt-ok').click()", None),
+    (600, "C.encrypt = false; C.sign = false; renderEncrypt(); sendMail()", None),
+    (1200, "selectFolder('3')", None),
+    (1200, "selectMessage(S.rows[0].id)", 'sent-logo-mention'),
+    (700, "groupFromMessage(S.message)", None),
+    (900, "document.body.offsetWidth", 'group-from-message'),
+    (600, "$('#grp-name').value = '周会纪要收件人'; $('#grp-name').dispatchEvent(new Event('input')); $('#prompt-ok').click()", None),
+    (900, "openSettings(); setTimeout(() => $('#grp-section').scrollIntoView({ block: 'center' }), 100)", 'settings-groups'),
+    (700, "editGroup(S.groups.find((g) => g.name === '项目周会')); setTimeout(() => { const i = $('#grp-input'); i.value = '王'; i.dispatchEvent(new Event('input')); }, 100)", None),
+    (1000, "document.body.offsetWidth", 'group-editor'),
+    (500, "hideSuggest(); $('#prompt').classList.add('hidden'); $('#settings').classList.add('hidden')", None),
+]
 
 
 def render_pdf(mid):
@@ -198,6 +249,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

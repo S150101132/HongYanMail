@@ -56,6 +56,9 @@ BACKEND_METHODS = {
     'autoReply': 'auto_reply', 'setAutoReply': 'set_auto_reply', 'tags': 'tags', 'saveTag': 'save_tag', 'deleteTag': 'delete_tag',
     'tagMessages': 'tag_messages', 'tagView': 'tag_view', 'respondInvitation': 'respond_invitation',
     'templates': 'templates', 'saveTemplate': 'save_template', 'renameTemplate': 'rename_template', 'deleteTemplate': 'delete_template',
+    'recipientGroups': 'recipient_groups', 'saveRecipientGroup': 'save_recipient_group',
+    'deleteRecipientGroup': 'delete_recipient_group', 'applyRecipientGroups': 'apply_recipient_groups',
+    'messageRecipients': 'message_recipients',
     'cancelSend': 'cancel_send', 'heldSends': 'held_sends', 'outbox': 'outbox', 'outboxRemove': 'outbox_remove',
     'dismissReview': 'dismiss_review', 'flushOutbox': 'flush_outbox', 'editServerDraft': 'edit_server_draft',
     'createFolder': 'create_folder', 'renameFolder': 'rename_folder', 'deleteFolder': 'delete_folder', 'markAllRead': 'mark_all_read',
@@ -68,6 +71,7 @@ BACKEND_METHODS = {
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
                 'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
+                'recipientGroups',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment'}
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}
