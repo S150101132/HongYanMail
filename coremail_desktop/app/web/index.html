@@ -46,6 +46,7 @@
     <nav class="folders">
       <a id="nav-outbox" class="folder" data-local="outbox" title="网络不通时发送的邮件在这里等待，恢复连接后自动发出；发送结果待确认的邮件也在这里"><i data-icon="send"></i><span class="fname">发件箱</span><span id="outbox-count" class="count"></span></a>
       <a id="nav-drafts" class="folder" data-local="drafts"><i data-icon="draft"></i><span class="fname">本机草稿</span><span id="draft-count" class="count"></span></a>
+      <a id="nav-archive" class="folder hidden" data-local="archive" title="官方客户端移到这台电脑上的邮件（只读）"><i data-icon="archive"></i><span class="fname">本地存档</span><span id="archive-count" class="count"></span></a>
       <a id="nav-contacts" class="folder" data-local="contacts" title="公司通讯录和个人通讯录（只读）"><i data-icon="contacts"></i><span class="fname">通讯录</span></a>
     </nav>
     </div>
@@ -65,6 +66,7 @@
         <i data-icon="search"></i>
         <input id="search" type="search" placeholder="搜索邮件（Ctrl+F 或 /）" spellcheck="false">
         <button id="btn-search-filters" class="icon-btn sm" title="高级搜索：发件人、日期、附件等条件"><i data-icon="filter"></i></button>
+        <button id="btn-ask" class="icon-btn sm" title="问邮箱：用一句话提问，AI 搜索并阅读邮件后回答"><i data-icon="spark"></i></button>
       </div>
       <div id="search-panel" class="search-panel hidden" role="dialog" aria-label="高级搜索">
         <div class="sp-row"><label>关键词</label><div class="seg" id="sp-scope"><button data-scope="all" class="on">全文</button><button data-scope="subject">仅主题</button></div></div>
@@ -138,6 +140,21 @@
         <h2>已选择 <span id="multi-count-big"></span> 封邮件</h2>
         <p id="multi-sub" class="muted"></p>
         <p class="muted small">Ctrl+点击 增减 · Shift+点击 连选 · Ctrl+A 全选 · X 选择当前 · Esc 取消</p>
+      </div>
+    </div>
+    <div id="reader-ask" class="ask" aria-label="问邮箱">
+      <div class="reader-toolbar">
+        <b class="multi-title ask-title"><i data-icon="spark"></i>问邮箱</b>
+        <span class="spacer"></span>
+        <button class="tb" id="ask-close" title="关闭 (Esc)"><i data-icon="close"></i></button>
+      </div>
+      <div class="reader-scroll">
+        <form id="ask-form" class="ask-form">
+          <textarea id="ask-input" rows="2" maxlength="500" spellcheck="false" placeholder="用一句话提问，例如：CRM 的 LDAP 对接信息客户发过来了吗？"></textarea>
+          <button class="btn primary" id="ask-run" type="submit">提问</button>
+        </form>
+        <p class="muted small ask-note">AI 会在服务器上搜索你的邮件，并阅读其中最多 5 封。问题、搜索到的邮件摘要和被阅读邮件的正文会发送到 AI 服务；加密邮件默认不读取。设置了「本地存档」时也会搜索其中的邮件（在「设置 → 本地存档」中选择）。答案仅供参考，请点开出处核对。</p>
+        <div id="ask-out"></div>
       </div>
     </div>
     <article id="reader-body" class="hidden">
@@ -273,13 +290,19 @@
         <p class="small" id="cert-status"></p>
         <div class="row-gap"><button class="btn ghost" id="btn-cert">解锁个人证书…</button><button class="btn ghost hidden" id="btn-cert-forget">忘记证书</button></div>
         <h3 id="ai-section">AI 助手</h3>
-        <p class="muted small">阅读邮件时点「总结」，由 AI 生成摘要。邮件正文会发送到下面的 AI 服务（默认 DeepSeek）；加密邮件每次都会先征求你的同意。API Key 由 Windows 加密保存在本机，界面上无法查看。</p>
+        <p class="muted small">阅读邮件时点「总结」，由 AI 生成摘要；点搜索框旁的 ✦「问邮箱」，用一句话提问，由 AI 搜索并阅读邮件后回答。邮件内容会发送到下面的 AI 服务（默认 DeepSeek）；加密邮件每次都会先征求你的同意。API Key 由 Windows 加密保存在本机，界面上无法查看。</p>
         <label class="pref-row">接口地址<input id="ai-base" type="text" spellcheck="false"></label>
         <label class="pref-row">模型<input id="ai-model" type="text" spellcheck="false"></label>
         <label class="pref-row">API Key<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
         <p class="muted small" id="ai-status"></p>
         <div class="row-gap"><button class="btn ghost" id="ai-save">保存 AI 设置</button><button class="btn ghost" id="ai-test">测试连接</button>
           <button class="btn ghost danger hidden" id="ai-clear">清除 Key</button></div>
+        <h3 id="archive-section">本地存档</h3>
+        <p class="muted small">官方 Coremail 客户端「本地存档」里的邮件已不在服务器上。选择它的邮箱文件夹（其中有 archmails 文件夹，例如 D:\work\email\你的邮箱地址）后，鸿雁只读地扫描这些邮件，可以在左侧「本地存档」中浏览，搜索和「问邮箱」也会包含它们。不会修改官方客户端的任何文件；扫描结果加密保存在本机。</p>
+        <label class="pref-row">文件夹<input id="archive-folder" type="text" spellcheck="false" placeholder="未设置"></label>
+        <p class="muted small" id="archive-status"></p>
+        <div class="row-gap"><button class="btn ghost" id="archive-pick">选择文件夹…</button><button class="btn ghost" id="archive-save">保存并扫描</button>
+          <button class="btn ghost" id="archive-rescan">重新扫描</button><button class="btn ghost danger" id="archive-off">停用</button></div>
         <h3>账号</h3>
         <p class="muted small" id="settings-account"></p>
         <p class="muted small" id="data-dir"></p>
@@ -333,5 +356,6 @@
 <script src="groups.js"></script>
 <script src="mention.js"></script>
 <script src="ai.js"></script>
+<script src="archive.js"></script>
 </body>
 </html>

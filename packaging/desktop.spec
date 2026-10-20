@@ -59,7 +59,9 @@ a = Analysis(
     # The daily-use interface is HTML/CSS/JS served from the private hongyan:// scheme.
     datas=[(str(root / 'coremail_desktop' / 'app' / 'web'), 'coremail_desktop/app/web')],
     # QtPdf renders PDF attachment pages to images for the in-app preview (app/shell.py).
-    hiddenimports=['PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore', 'PySide6.QtWebChannel', 'PySide6.QtPdf'],
+    # zstandard's C backend is imported by name at run time (本地存档, archive/reader.py).
+    hiddenimports=['PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore', 'PySide6.QtWebChannel', 'PySide6.QtPdf',
+                   'zstandard.backend_c'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

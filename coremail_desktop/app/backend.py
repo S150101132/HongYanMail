@@ -348,8 +348,12 @@ class MailBackend:
         self._held = {}
         self._held_lock = threading.Lock()
         self._imported = {}  # 'eml:<digest>' -> raw bytes of .eml files opened read-only.
+        self.archive = None  # 本地存档: the catalog of the official client's archmails (archive/catalog.py).
+        self._archive_scan = None  # {'done', 'total'} while a scan runs.
+        self._archive_key = ''
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
         self._ai_lock = threading.Lock()
+        self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
 
     # Accounts --------------------------------------------------------------
     def _accounts_path(self):
@@ -408,7 +412,9 @@ class MailBackend:
         if self.cache:
             self.abandon_held()
             self.cache.close()
-        self.cache = self.account = None
+        if self.archive:
+            self.archive.close()
+        self.cache = self.account = self.archive = None
         self._shared = {}
         return True
 
@@ -418,6 +424,10 @@ class MailBackend:
             if self.cache:
                 self.cache.close()
             self.cache = MailCache(self.data_dir / 'cache' / (account_key + '.db'), self.protector)
+            if self.archive:
+                self.archive.close()
+            self.archive = None
+            self._archive_key = account_key
         self.account = username
         self.services = self._services_factory(self.adapter, self.data_dir, prepare_encrypted=self._prepare_encrypted)
         self._auto_unlock_certificate()
@@ -664,6 +674,8 @@ class MailBackend:
         """The message exactly as the server stores it (still encrypted if it was)."""
         if mid in self._imported:
             return self._imported[mid]
+        if mid.startswith('arc:'):
+            return self._archive_raw(mid)
         raw = self.cache.get_body(mid)
         if raw is None:
             remote, box = self._locate(mid)
@@ -687,7 +699,7 @@ class MailBackend:
         if body_html:
             body_html = _cid_to_data(document, body_html)
             remote = bool(re.search(r'<img[^>]+src=["\']https?://', body_html, re.I))
-        summary = self.cache.summary(mid) or {}
+        summary = self.cache.summary(mid) or self._archive_summary(mid) or {}
         result = {'id': mid, 'fid': summary.get('fid'), 'subject': header('subject') or summary.get('subject', ''),
                   'from': _people(header('from')), 'to': _people(header('to')), 'cc': _people(header('cc')),
                   'replyTo': _people(header('reply-to')), 'date': summary.get('date') or header('date'),
@@ -698,8 +710,9 @@ class MailBackend:
                   'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
                                   for a in document.attachments],
                   'mailbox': self._box_view(self._locate(mid)[1]), 'tags': list(summary.get('tags') or [])}
-        if mid in self._imported:
-            result['imported'] = True  # A local .eml file: read-only, not on the server.
+        if self._local_only(mid):
+            result['imported'] = True  # A local .eml file or archived mail: read-only, not on the server.
+            result['archived'] = mid.startswith('arc:')
         elif self._is_server_draft(summary):
             result['serverDraft'] = True
         invitation = self._invitation(mid, document)
@@ -1449,8 +1462,8 @@ class MailBackend:
                      'html': '<p><br></p>' + self._signature_html() + _quote_html(document),
                      'replySourceId': draft.reply_source_id, 'referenceHeaders': dict(draft.reference_headers),
                      'encrypt': True if document.encryption_state != 'none' else None}
-            if mid in self._imported:
-                # An imported .eml is not on the server, so the reply cannot be threaded
+            if self._local_only(mid):
+                # An imported .eml or archived mail is not on the server, so the reply cannot be threaded
                 # to it there: it goes out as a new message with the quote.
                 value.update(mode='new', replySourceId=None, referenceHeaders={}, title=value['mode'])
             return value
@@ -1551,7 +1564,7 @@ class MailBackend:
         return role == 'drafts' and not summary.get('flags', {}).get('scheduleDelivery')
 
     def edit_server_draft(self, mid):
-        if not isinstance(mid, str) or self._locate(mid)[1] or mid in self._imported:
+        if not isinstance(mid, str) or self._locate(mid)[1] or self._local_only(mid):
             raise AppError('DRAFT_UNAVAILABLE')  # Shared mailboxes keep their drafts in webmail.
         summary = self.cache.summary(mid) or {}
         if summary.get('flags', {}).get('scheduleDelivery'):
@@ -2310,16 +2323,19 @@ class MailBackend:
             content, tokens = client.chat(messages, **kwargs)
             return content, tokens
         finally:
-            with self._ai_lock:
-                record = self._ai_record()
-                month = datetime.now().strftime('%Y-%m')
-                usage = record.get('usage') if (record.get('usage') or {}).get('month') == month else {'month': month}
-                usage.update(tokens=usage.get('tokens', 0) + tokens, calls=usage.get('calls', 0) + 1)
-                record['usage'] = usage
-                try:
-                    self._save_ai(record)
-                except OSError:
-                    pass  # A blocked data folder must not hide the result.
+            self._count_ai(tokens)
+
+    def _count_ai(self, tokens):
+        with self._ai_lock:
+            record = self._ai_record()
+            month = datetime.now().strftime('%Y-%m')
+            usage = record.get('usage') if (record.get('usage') or {}).get('month') == month else {'month': month}
+            usage.update(tokens=usage.get('tokens', 0) + tokens, calls=usage.get('calls', 0) + 1)
+            record['usage'] = usage
+            try:
+                self._save_ai(record)
+            except OSError:
+                pass  # A blocked data folder must not hide the result.
 
     def ai_test(self):
         self._ai_call([{'role': 'user', 'content': '只回复一个字：好'}], max_tokens=5)
@@ -2334,7 +2350,7 @@ class MailBackend:
             raise AppError('NOT_AUTHENTICATED')
         client = self._ai()  # Not configured: say so before touching the mail.
         model = getattr(client, 'model', '')
-        if mid not in self._imported and mid not in self._docs and self.cache.get_body(mid) is None:
+        if not self._local_only(mid) and mid not in self._docs and self.cache.get_body(mid) is None:
             raise AppError('AI_MAIL_UNAVAILABLE')  # Opening the mail downloads it; this thread never does.
         document = self._document(mid)
         if document.encryption_state == 'locked':
@@ -2353,6 +2369,141 @@ class MailBackend:
             saved[mid] = result
             self.cache.set('aiSummaries', dict(list(saved.items())[-300:]))
         return result
+
+    # 问邮箱: the model searches the server and reads mail through read-only tools
+    # (ai/tools.py). Runs on the AI thread; like the fast thread it only reads.
+    def ask_mailbox(self, question, allow=(), progress=None):
+        """allow: ids of encrypted mail the user agreed, for this question, to send."""
+        from coremail_desktop.ai.agent import ANSWER_TOKENS, ask
+        from coremail_desktop.ai.tools import MailboxTools
+        question = question.strip() if isinstance(question, str) else ''
+        if not question or len(question) > 500 or not isinstance(allow, (list, tuple)) or len(allow) > 20:
+            raise AppError('INVALID_QUESTION')
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        client = self._ai()
+        self._ask_cancel.clear()
+        known = self._folders or self.cache.get('folders') or []
+        roles = {f.get('role'): f['id'] for f in known if f.get('role') in ('inbox', 'sent')}
+        folders = {**roles, 'names': {f['id']: f['name'] for f in known}}
+        tools = MailboxTools(self._ask_search, self._document, self._ask_match, folders, {str(m) for m in allow},
+                             archive=self._ask_archive if self._archive_folder() else None)
+
+        def call(messages, specs):
+            tokens = 0
+            try:
+                message, tokens = client.complete(messages, tools=specs, max_tokens=ANSWER_TOKENS)
+                return message
+            finally:
+                self._count_ai(tokens)
+        result = ask(question, call, tools, progress or (lambda step: None), self._ask_cancel.is_set,
+                     today=datetime.now().strftime('%Y-%m-%d'))
+        return {**result, 'model': getattr(client, 'model', '')}
+
+    def cancel_ask(self):
+        self._ask_cancel.set()
+        return True
+
+    def _ask_search(self, pattern, offset, limit, filters):
+        found = self._online(self.adapter.search_messages, pattern, offset, limit, filters=filters, snippet=True)
+        rows = [_summary_dict(item) for item in found['messages']]
+        fresh = [r for r in rows if not self.cache.summary(r['id'])]
+        for fid in {str(r['fid']) for r in fresh}:  # So a source card opens like any listed mail.
+            self.cache.put_summaries(fid, [r for r in fresh if str(r['fid']) == fid])
+        return {'rows': rows, 'total': found['total']}
+
+    def _ask_archive(self, pattern, offset, limit, filters):
+        rows, total = self._catalog().search(pattern.split(), sender=filters.get('from', ''),
+                                             since=date_ts(filters['since']) if filters.get('since') else None,
+                                             until=date_ts(filters['until']) + 86400 if filters.get('until') else None,
+                                             limit=offset + limit)
+        return {'rows': rows[offset:offset + limit], 'total': total}
+
+    def _ask_match(self, name):
+        return self._online(self.adapter.match_contacts, name, 5) if hasattr(self.adapter, 'match_contacts') else []
+
+    # 本地存档 -----------------------------------------------------------------
+    # The official client's local archive (archmails/*.cmpack), read-only. Its catalog
+    # is an encrypted SQLite beside the mail cache; originals stay in the packs.
+    def _local_only(self, mid):
+        return mid in self._imported or str(mid).startswith('arc:')
+
+    def _archive_folder(self):
+        return (self.cache.get('archive') or {}).get('folder', '') if self.cache else ''
+
+    def _catalog(self):
+        from coremail_desktop.archive.catalog import ArchiveCatalog
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        if self.archive is None:
+            self.archive = ArchiveCatalog(self.data_dir / 'cache' / (self._archive_key + '.archive.db'), self.protector)
+        return self.archive
+
+    def _archive_raw(self, mid):
+        folder = self._archive_folder()
+        if not folder:
+            raise AppError('ARCHIVE_NOT_FOUND')
+        return self._catalog().raw(folder, mid)
+
+    def _archive_summary(self, mid):
+        return self._catalog().summary(mid) if str(mid).startswith('arc:') and self.cache is not None else None
+
+    def archive_status(self):
+        folder = self._archive_folder()
+        catalog = self._catalog() if folder else None
+        return {'folder': folder, 'messages': len(catalog.rows) if catalog else 0,
+                'lastScan': catalog.get('lastScan') if catalog else None, 'scanning': self._archive_scan}
+
+    def set_archive_folder(self, folder=''):
+        """The account folder of the official client (or its archmails); '' turns it off."""
+        from coremail_desktop.archive.catalog import archive_dir
+        folder = folder.strip() if isinstance(folder, str) else ''
+        if folder:
+            if len(folder) > 500 or not archive_dir(folder).is_dir():
+                raise AppError('ARCHIVE_NOT_FOUND')
+        self.cache.set('archive', {'folder': folder})
+        return self.archive_status()
+
+    def archive_scan(self, progress=None):
+        """Bring the catalog up to date (minutes the first time; unchanged packs are skipped)."""
+        folder = self._archive_folder()
+        if not folder:
+            raise AppError('ARCHIVE_NOT_FOUND')
+        if self._archive_scan is not None:
+            raise AppError('ARCHIVE_SCANNING')
+        self._archive_scan = {'done': 0, 'total': 0}
+
+        def step(done, total):
+            self._archive_scan = {'done': done, 'total': total}
+            if progress:
+                progress({'done': done, 'total': total})
+        try:
+            result = self._catalog().scan(folder, step)
+        finally:
+            self._archive_scan = None
+        return {**self.archive_status(), 'failed': result['failed'][:50]}
+
+    def archive_view(self, offset=0, limit=5000):
+        if not self._archive_folder():
+            return {'rows': [], 'total': 0}
+        rows, total = self._catalog().listing(int(offset), max(1, min(int(limit), 5000)))
+        return {'rows': rows, 'total': total}
+
+    def search_archive(self, query, filters=None):
+        """Archived mail matching the search box (every word) and the filters it supports."""
+        if not self._archive_folder():
+            return {'rows': [], 'total': 0}
+        filters = search_filters(filters)
+        if filters.get('to') or filters.get('unread') or filters.get('flagged') or filters.get('folder'):
+            return {'rows': [], 'total': 0}  # Conditions archived mail cannot meet (or another folder).
+        rows, total = self._catalog().search(
+            str(query or '').split(), sender=filters.get('from') or filters.get('with') or '',
+            since=date_ts(filters['since']) if filters.get('since') else None,
+            until=date_ts(filters['until']) + 86400 if filters.get('until') else None,
+            subject_only=filters.get('scope') == 'subject')
+        if filters.get('attachment'):
+            rows = [r for r in rows if r['flags'].get('attached')]
+        return {'rows': rows, 'total': total}
 
     # Background sync -------------------------------------------------------
     def poll(self):

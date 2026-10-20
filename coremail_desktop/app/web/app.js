@@ -227,7 +227,7 @@ function popOut(id) { if (id && S.local !== 'drafts' && S.local !== 'outbox') ap
 // Changes made in a pop-out reach the main window's list (read state, star, deletion).
 function notifyMain(value) { if (READER_MID) api('notifyMain', { name: 'mailChanged', value }).catch(() => {}); }
 async function readerAct(act, m) {
-  if (m.imported && ['flag', 'unread', 'delete', 'move'].includes(act)) { toast('这是从本机文件打开的邮件，只能阅读、回复和转发'); return true; }
+  if (m.imported && ['flag', 'unread', 'delete', 'move'].includes(act)) { toast(m.archived ? '这是本地存档中的邮件，只能阅读、回复和转发' : '这是从本机文件打开的邮件，只能阅读、回复和转发'); return true; }
   if (act === 'flag' || act === 'unread') {
     const flags = act === 'flag' ? { flagged: !m.flags.flagged } : { read: false };
     const before = { ...m.flags };
@@ -399,7 +399,8 @@ async function loadList(reset) {
     if (cached && cached.rows.length) { S.rows = cached.rows; renderList(); }
     else { $('#mail-list').innerHTML = '<div class="skeleton"></div>'.repeat(6); }
   }
-  S.loading = true;
+  S.loading = true; S.moreFailed = false;
+  if (!reset && $('#load-more')) $('#load-more').textContent = '正在加载更多…';
   try {
     const offset = reset ? 0 : S.rows.length;
     const page = await api('messages', { folder_id: fid, offset, limit: 50 });
@@ -408,13 +409,17 @@ async function loadList(reset) {
     if (reset) S.counts.clear();  // Conversation sizes are re-read with the fresh page.
     S.total = page.total; S.more = page.more;
     $('#sync-bar').classList.add('hidden');
+    S.loading = false;  // Before rendering, so the footer offers the next page.
     renderList();
     if (reset) api('prefetch', { ids: page.rows.slice(0, 15).map((r) => r.id) }).catch(() => {});
   } catch (err) {
     if (token !== S.listToken) return;
+    if (!reset) { S.loading = false; S.moreFailed = true; renderList(); return; }
     if (S.rows.length) { $('#sync-bar').textContent = '无法连接服务器，正在显示本机缓存。' ; $('#sync-bar').classList.remove('hidden'); }
     else $('#mail-list').innerHTML = `<div class="list-foot">${esc(err.message)}<br><br><button class="btn ghost" onclick="loadList(true)">重试</button></div>`;
   } finally { if (token === S.listToken) S.loading = false; }
+  // Still at the bottom (a short page, or the scroll ended while this page loaded): keep going.
+  if (token === S.listToken) requestAnimationFrame(loadMoreIfNear);
 }
 function dedupe(rows) { const seen = new Set(); return rows.filter((r) => !seen.has(r.id) && seen.add(r.id)); }
 
@@ -501,7 +506,8 @@ function rowHtml(r, item = { ids: [r.id], rows: [r] }) {
   const size = threadSize(item), thread = size > 1, open = thread && S.open.has(item.key);
   const sentLike = ['sent', 'drafts'].includes((folderById(r.fid) || {}).role);
   const who = thread ? participants(item) : sentLike ? '致 ' + (parseAddressList(r.to).map((p) => p.name || p.email).join('、') || '（无收件人）') : (r.fromName || r.fromEmail || '（未知发件人）');
-  const folderTag = S.search && folderById(r.fid) && r.fid !== S.folderId ? `<span class="tag">${esc(folderById(r.fid).name)}</span>` : '';
+  const folderTag = r.archived && S.local !== 'archive' ? '<span class="tag">本地存档</span>'
+    : S.search && folderById(r.fid) && r.fid !== S.folderId ? `<span class="tag">${esc(folderById(r.fid).name)}</span>` : '';
   const any = (flag) => item.rows.some((x) => x.flags[flag]);
   const marks = (any('attached') ? '<i data-icon="clip"></i>' : '') + (any('flagged') ? '<i class="star" data-icon="star"></i>' : '') +
     (r.flags.encrypted ? '<i data-icon="lock"></i>' : '') + (r.flags.replied ? '<i data-icon="reply"></i>' : '');
@@ -552,7 +558,9 @@ function renderList() {
   if (!rows.length) {
     html = `<div class="list-foot">${S.local === 'scheduled' ? '没有等待发出的定时邮件' : S.search ? '没有找到匹配的邮件' : S.filter === 'unread' ? '没有未读邮件 🎉' : S.filter === 'flagged' ? '没有星标邮件' : '这个文件夹是空的'}</div>`;
   } else if (S.more && !S.search) {
-    html += `<div class="list-foot" id="load-more">正在加载更多…</div>`;
+    // A button, not just a note: a page that failed or was skipped can always be asked for again.
+    const shown = `已显示 ${S.rows.length} 封` + (S.total != null ? ` / 共 ${S.total} 封` : '');
+    html += `<div class="list-foot" id="load-more">${S.loading ? '正在加载更多…' : `${shown} · <button class="btn ghost sm" id="list-more">${S.moreFailed ? '加载失败，重试' : '加载更多'}</button>`}</div>`;
   } else {
     html += `<div class="list-foot">${S.search && S.searchMore ? `已显示 ${rows.length} 封 · <button class="btn ghost sm" id="search-more">加载更多结果</button>` : S.search ? `共 ${rows.length} 封` : '已全部加载'}</div>`;
   }
@@ -567,12 +575,14 @@ function renderList() {
   void unread;
 }
 
-$('#mail-list').addEventListener('scroll', () => {
+function loadMoreIfNear() {
   const l = $('#mail-list');
-  if (S.more && !S.loading && !S.search && l.scrollTop + l.clientHeight > l.scrollHeight - 400) loadList(false);
-});
+  if (S.more && !S.loading && !S.search && !S.local && !S.moreFailed && l.scrollTop + l.clientHeight > l.scrollHeight - 400) loadList(false);
+}
+$('#mail-list').addEventListener('scroll', loadMoreIfNear);
 $('#mail-list').addEventListener('click', (e) => {
   if (e.target.closest('#search-more')) { moreSearch(); return; }
+  if (e.target.closest('#list-more')) { S.moreFailed = false; loadList(false); return; }
   const twisty = e.target.closest('[data-twisty]');
   if (twisty) { toggleThread(twisty.dataset.twisty); return; }
   const row = e.target.closest('.row'); if (!row) return;
@@ -657,12 +667,13 @@ async function runSearch(q) {
   renderList();
   $('#list-sub').textContent = '本机结果 · 正在搜索服务器…';
   try {
-    const remote = await api('searchServer', { query: q, filters });
+    const [remote, archived] = await Promise.all([api('searchServer', { query: q, filters }),
+      api('searchArchive', { query: q, filters }).catch(() => ({ rows: [], total: 0 }))]);
     if (token !== searchToken) return;
-    S.rows = dedupe(S.rows.concat(remote.rows)).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    S.rows = dedupe(S.rows.concat(remote.rows, archived.rows)).sort((a, b) => (b.ts || 0) - (a.ts || 0));
     S.searchMore = remote.more ? { query: q, filters, offset: 50, token } : null;
     renderList();
-    $('#list-sub').textContent = `服务器 ${remote.total} 封匹配` + (remote.local.length ? ' · 部分条件仅筛选已取回的邮件' : '');
+    $('#list-sub').textContent = `服务器 ${remote.total} 封匹配` + (archived.total ? ` · 本地存档 ${archived.total} 封` : '') + (remote.local.length ? ' · 部分条件仅筛选已取回的邮件' : '');
     SF.renderChips(remote.local);
   } catch (err) {
     if (token === searchToken) $('#list-sub').textContent = '服务器搜索不可用，显示本机结果';
@@ -712,6 +723,7 @@ async function selectMessage(id, opts = {}) {
   if (S.multi.size >= 2) return;  // The selection toolbar stays; J/K only move the cursor.
   const token = ++openToken;
   const summary = rowOf(id);
+  $('#reader').classList.remove('asking');  // 问邮箱 (ai.js) gives the pane back to the mail.
   $('#reader-empty').classList.add('hidden'); $('#reader-body').classList.remove('hidden');
   if (summary) {
     $('#r-subject').textContent = summary.subject || '（无主题）';
@@ -780,7 +792,8 @@ function renderMessage(m) {
   const banners = [];
   if (box) banners.push(`<div class="banner info"><i data-icon="shared"></i><span>共享邮箱「${esc(box.name || box.email)}」${box.rw ? '' : ' · 只读'} · 回复${box.send ? '将以该邮箱身份发出' : '将以你自己的地址发出'}。</span></div>`);
   if (m.scheduled) banners.push(`<div class="banner info"><i data-icon="clock"></i><span>这是一封定时邮件${m.scheduleAt ? `，将于 <b>${esc(scheduleText(m.scheduleAt))}</b> 由服务器发出` : '，到时间由服务器发出'}。</span><span class="spacer"></span><button class="btn ghost" data-act="unschedule">取消定时</button></div>`);
-  if (m.imported) banners.push('<div class="banner info"><i data-icon="open"></i><span>这是从本机 .eml 文件打开的邮件（只读，不在服务器上）。可以回复或转发。</span></div>');
+  if (m.imported) banners.push(m.archived ? '<div class="banner info"><i data-icon="archive"></i><span>这是官方客户端「本地存档」中的邮件（只读，只在这台电脑上，不在服务器上）。可以回复或转发。</span></div>'
+    : '<div class="banner info"><i data-icon="open"></i><span>这是从本机 .eml 文件打开的邮件（只读，不在服务器上）。可以回复或转发。</span></div>');
   if (m.serverDraft) banners.push('<div class="banner info"><i data-icon="draft"></i><span>这是服务器草稿箱中的草稿（网页版、手机或其他客户端保存）。</span><span class="spacer"></span><button class="btn primary" id="b-edit-draft">继续编辑</button></div>');
   if (m.encryption === 'locked') banners.push(`<div class="banner"><i data-icon="lock"></i><span>这是一封证书加密邮件，解锁个人证书后即可阅读。</span><span class="spacer"></span><button class="btn primary" id="b-unlock">解锁证书</button></div>`);
   if (m.encryption === 'decrypted') banners.push(`<div class="banner info"><i data-icon="lock"></i><span>此邮件已使用你的证书在本机解密。</span></div>`);
@@ -1068,6 +1081,7 @@ function renderSelection() {
   $$('#mail-list .row').forEach((el) => el.classList.toggle('msel', S.multi.size > 0 && (el.dataset.child ? [el.dataset.id] : itemOf(el.dataset.id).ids).every((m) => S.multi.has(m))));
   const n = S.multi.size, many = n >= 2;
   $('#reader-multi').classList.toggle('hidden', !many);
+  if (many) $('#reader').classList.remove('asking');
   $('#reader-body').classList.toggle('hidden', many || !S.selected);
   $('#reader-empty').classList.toggle('hidden', many || !!S.selected);
   if (!many) return;

@@ -125,12 +125,14 @@ class DesktopSession(CoremailSession):
         value=self._decode_response(raw).get('var')
         if not isinstance(value,list) or any(not isinstance(item,dict) or not isinstance(item.get('addr'),str) for item in value): raise AppError('INVALID_RESPONSE')
         return set(normalize_recipients(tuple(item['addr'] for item in value)))
-    def search_messages(self,pattern,offset,limit,fields=None):
-        """fields: extra advanced-search form fields (see CoremailAdapter.search_fields)."""
+    def search_messages(self,pattern,offset,limit,fields=None,summary=0):
+        """fields: extra advanced-search form fields (see CoremailAdapter.search_fields).
+        summary: characters of body text per row; 100 verified 2026-10-17
+        (analysis/search-capability2-2026-10-17.json, B.form.summary100)."""
         if not self.sid: raise AppError('NOT_AUTHENTICATED')
         url=urljoin(self.base_url,'XT/jsp/mail.jsp')+'?'+urlencode({'func':'searchMessages','sid':self.sid})
         form={'pattern':pattern} if pattern else {}
-        data=urlencode({**form,**(fields or {}),'start':offset,'limit':limit,'summaryWindowSize':0}).encode('utf-8')
+        data=urlencode({**form,**(fields or {}),'start':offset,'limit':limit,'summaryWindowSize':summary}).encode('utf-8')
         raw,_=self._fetch(Request(url,data=data,headers={'Content-Type':'application/x-www-form-urlencoded','Accept':'text/x-json'}))
         return self._decode_response(raw)
     def upload_attachment(self,compose_id,attachment,inlined=False):
@@ -349,14 +351,16 @@ class CoremailAdapter:
         if filters.get('flagged'): fields['flagType']='flagged'
         if filters.get('unread'): fields['read']='false'
         return pattern,fields
-    def search_messages(self,pattern,offset,limit=50,filters=None):
+    def search_messages(self,pattern,offset,limit=50,filters=None,snippet=False):
+        """snippet: each row's preview carries the first 100 characters of the body."""
         filters=dict(filters or {})
         if not isinstance(pattern,str) or len(pattern)>1000 or set(filters)-self.SEARCH_FILTERS: raise AppError('INVALID_SEARCH')
         pattern,fields=self.search_fields(pattern.strip(),filters)
         if not pattern and not fields: raise AppError('INVALID_SEARCH')
         if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=100: raise AppError('INVALID_PAGE')
         if self._session is None: raise AppError('NOT_AUTHENTICATED')
-        response=self._session.search_messages(pattern,offset,limit,fields) if fields else self._session.search_messages(pattern,offset,limit)
+        extra={'summary':100} if snippet else {}
+        response=self._session.search_messages(pattern,offset,limit,fields,**extra) if fields else self._session.search_messages(pattern,offset,limit,**extra)
         rows=response.get('var'); total=response.get('total')
         if not isinstance(rows,list) or type(total) is not int or total<0: raise AppError('INVALID_RESPONSE')
         messages=[]

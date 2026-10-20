@@ -68,15 +68,20 @@ BACKEND_METHODS = {
     'previewAttachment': 'attachment_preview', 'openAttachment': 'open_attachment',
     'threadCounts': 'thread_counts', 'thread': 'thread',
     'aiSettings': 'ai_settings', 'setAiSettings': 'set_ai_settings', 'aiTest': 'ai_test', 'summarize': 'summarize',
+    'askMailbox': 'ask_mailbox', 'cancelAsk': 'cancel_ask',
+    'archiveStatus': 'archive_status', 'setArchiveFolder': 'set_archive_folder', 'archiveScan': 'archive_scan',
+    'archiveView': 'archive_view', 'searchArchive': 'search_archive',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
                 'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
-                'recipientGroups', 'aiSettings',
+                'recipientGroups', 'aiSettings', 'cancelAsk', 'archiveStatus', 'archiveView', 'searchArchive',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
-AI_METHODS = {'summarize', 'aiTest'}
+AI_METHODS = {'summarize', 'aiTest', 'askMailbox'}
+# Scanning the local archive takes minutes the first time: a thread of its own.
+ARCHIVE_METHODS = {'archiveScan'}
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}
 # Events a pop-out reader may pass on to the main window.
@@ -235,8 +240,10 @@ class Bridge(QObject):
             self._fast = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-fast')
             self._background = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-prefetch')
             self._ai = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-ai')
+            self._archive = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-archive')
         else:
             self._serial, self._fast, self._background, self._ai = share._serial, share._fast, share._background, share._ai
+            self._archive = share._archive
         self._done.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
 
     def emit_event(self, name, value=None):
@@ -250,6 +257,11 @@ class Bridge(QObject):
             self.reply.emit(request_id, ok, payload)
 
     def run(self, request_id, name, params):
+        if name == 'askMailbox':  # Each search and read shows on the page as it happens.
+            params = {**params, 'progress': lambda step: self.emit_event('askProgress', step)}
+        elif name == 'archiveScan':
+            params = {**params, 'progress': lambda step: self.emit_event('archiveProgress', step)}
+
         def work():
             try:
                 result = getattr(self.backend, BACKEND_METHODS.get(name) or INTERNAL_METHODS[name])(**params)
@@ -267,7 +279,7 @@ class Bridge(QObject):
                     self.emit_event('authRequired')
                 self._done.emit(request_id, False, json.dumps({'code': code, 'message': text}, ensure_ascii=False))
         pool = (self._background if name in BACKGROUND_METHODS else self._fast if name in FAST_METHODS
-                else self._ai if name in AI_METHODS else self._serial)
+                else self._ai if name in AI_METHODS else self._archive if name in ARCHIVE_METHODS else self._serial)
         try:
             pool.submit(work)
         except RuntimeError:
@@ -305,6 +317,7 @@ class Bridge(QObject):
         self._fast.shutdown(wait=False, cancel_futures=True)
         self._background.shutdown(wait=False, cancel_futures=True)
         self._ai.shutdown(wait=False, cancel_futures=True)
+        self._archive.shutdown(wait=False, cancel_futures=True)
 
 
 class _PrintHost:
@@ -800,6 +813,10 @@ class AppShell(_PrintHost, QMainWindow):
     def _parent(self):
         """Dialogs open over the window the user is in: the main window or a pop-out."""
         return QApplication.activeWindow() or self
+
+    def native_pickFolder(self, title=''):
+        """A folder chosen by the user ('' when cancelled); only its path goes back."""
+        return QFileDialog.getExistingDirectory(self._parent(), str(title)[:60] or '选择文件夹') or ''
 
     def native_pickFiles(self, images=False):
         if images:

@@ -70,7 +70,7 @@ function renderAiSettings() {
     $('#ai-base').value = a.baseUrl; $('#ai-model').value = a.model; $('#ai-key').value = '';
     $('#ai-key').placeholder = a.hasKey ? '已保存（不可查看），输入新 Key 可替换' : '未设置';
     $('#ai-clear').classList.toggle('hidden', !a.hasKey);
-    status.textContent = (a.demo ? '演示模式：摘要由本机生成，不联网。' : a.hasKey ? '已设置 API Key。' : '未设置 API Key，「总结」暂不可用。') +
+    status.textContent = (a.demo ? '演示模式：摘要由本机生成，不联网。' : a.hasKey ? '已设置 API Key。' : '未设置 API Key，「总结」和「问邮箱」暂不可用。') +
       ` 本月已调用 ${a.usage.calls} 次，共 ${a.usage.tokens} tokens。`;
   }).catch(fail);
 }
@@ -95,3 +95,87 @@ $('#ai-clear').onclick = async () => {
   if (!(await confirmDialog('清除 API Key', '清除后「总结」将不可用，需要重新填写 Key。', '清除'))) return;
   try { await api('setAiSettings', { clear_key: true }); toast('已清除 API Key'); renderAiSettings(); } catch (err) { fail(err); }
 };
+
+// ---------------------------------------------------------------- 问邮箱
+// The answer and its sources are plain text (esc); [M3] citations become links to
+// the source cards, which open the mail in a pop-out reader.
+S.ask = null;  // {question, allow, loading, steps, result | error}
+
+function showAsk(question) {
+  $('#reader').classList.add('asking');
+  if (question && question.trim()) { $('#ask-input').value = question.trim(); askMailbox(); }
+  else { renderAsk(); $('#ask-input').focus(); }
+}
+function hideAsk() { $('#reader').classList.remove('asking'); }
+
+async function askMailbox(allow = []) {
+  const question = $('#ask-input').value.trim();
+  if (!question || (S.ask && S.ask.loading)) return;
+  const state = S.ask = { question, allow, loading: true, steps: [] };
+  renderAsk();
+  try { state.result = await api('askMailbox', { question, allow }); } catch (err) { state.error = err; }
+  state.loading = false;
+  if (S.ask === state) renderAsk();
+}
+
+function renderAsk() {
+  const out = $('#ask-out'), a = S.ask;
+  $('#ask-run').disabled = !!(a && a.loading);
+  if (!a) { out.innerHTML = ''; return; }
+  const stepList = (steps) => steps.length ? `<ol class="ask-steps">${steps.map((step) => `<li>${esc(step)}</li>`).join('')}</ol>` : '';
+  if (a.loading) {
+    out.innerHTML = '<div class="ask-card"><div class="ai-head"><i data-icon="spark"></i><b>正在查找</b><span class="muted small">搜索和阅读的内容会发送到 AI 服务</span>' +
+      `<button class="btn ghost" data-ask="cancel">取消</button></div><div class="ai-body"><div class="ai-wait"><span></span><span></span><span></span></div>${stepList(a.steps)}</div></div>`;
+  } else if (a.error) {
+    const setup = a.error.code === 'AI_NOT_CONFIGURED' || a.error.code === 'AI_AUTH_FAILED';
+    out.innerHTML = `<div class="ask-card"><div class="ai-body"><p class="${a.error.code === 'AI_CANCELLED' ? 'muted' : 'ai-error'}">${esc(a.error.message)}</p>` +
+      (setup ? '<button class="btn primary" data-ask="setup">打开 AI 设置</button>' : '') + stepList(a.steps) + '</div></div>';
+  } else {
+    const r = a.result;
+    const answer = esc(r.answer).replace(/\[(M\d+(?:, M\d+)*)\]/g, (_, refs) =>
+      refs.split(', ').map((ref) => `<a class="ask-ref" data-ref="${ref}" title="打开出处 ${ref.slice(1)}">${ref.slice(1)}</a>`).join(''));
+    const card = (s) => `<div class="ask-src" data-mid="${esc(s.mid)}" title="在新窗口中打开这封邮件"><span class="ask-num">${esc(s.ref.slice(1))}</span>` +
+      `<div class="ask-src-main"><div class="ask-src-top"><b>${esc(s.subject)}</b><span class="muted small">${esc(s.fromName)} · ${esc(String(s.date).slice(0, 16))}</span></div>` +
+      (s.snippet ? `<div class="muted small ask-snip">${esc(s.snippet)}</div>` : '') +
+      (s.encrypted ? `<div class="ask-enc"><i data-icon="lock"></i>加密邮件，AI 没有读取正文<button class="btn ghost sm" data-allow="${esc(s.mid)}">允许读取这封并重新回答</button></div>` : '') +
+      '</div></div>';
+    const cited = r.sources.filter((s) => s.cited), other = r.sources.filter((s) => !s.cited);
+    out.innerHTML = `<div class="ask-card"><div class="ai-head"><i data-icon="spark"></i><b>答案</b><span class="muted small">由 ${esc(r.model || 'AI')} 根据邮件生成，仅供参考</span>` +
+      `<button class="btn ghost" data-ask="again" title="重新发送给 AI 服务查找">重新回答</button></div><div class="ai-body"><p class="ask-answer">${answer}</p>` +
+      (r.limited ? '<p class="ask-limited">已达到查找次数或时间的上限，答案可能不完整。</p>' : '') + '</div></div>' +
+      (cited.length ? `<div class="ask-sources"><h4>出处</h4>${cited.map(card).join('')}</div>` : '') +
+      (other.length ? `<div class="ask-sources"><h4>也查阅过</h4>${other.map(card).join('')}</div>` : '') +
+      (r.steps.length ? `<details class="ask-process"><summary>查找过程（${r.steps.length} 步）</summary>${stepList(r.steps)}</details>` : '');
+  }
+  renderIcons(out);
+}
+
+function openSource(mid) { if (mid) api('openReader', { mid }).catch(fail); }
+$('#ask-out').addEventListener('click', async (e) => {
+  const a = S.ask, t = e.target;
+  const ref = t.closest('[data-ref]'), allow = t.closest('[data-allow]'), act = t.closest('[data-ask]');
+  if (act) {
+    ({ cancel: () => api('cancelAsk').catch(() => {}),
+       again: () => { $('#ask-input').value = a.question; askMailbox(a.allow); },
+       setup: () => { openSettings(); setTimeout(() => $('#ai-section').scrollIntoView({ block: 'start' }), 50); },
+    })[act.dataset.ask]();
+  } else if (allow) {
+    if (!(await confirmDialog('把这封加密邮件发送给 AI 服务？',
+      '回答这个问题需要把这封邮件解密后的正文发送到外部 AI 服务，邮件将不再只在你和收件人之间保密。仅这一次提问有效。', '发送并重新回答'))) return;
+    $('#ask-input').value = a.question;
+    askMailbox([...a.allow, allow.dataset.allow]);
+  } else if (ref) {
+    const source = a.result.sources.find((s) => s.ref === ref.dataset.ref);
+    openSource(source && source.mid);
+  } else if (t.closest('.ask-src')) {
+    openSource(t.closest('.ask-src').dataset.mid);
+  }
+});
+on('askProgress', (p) => { if (S.ask && S.ask.loading && p) { S.ask.steps.push(p.step); renderAsk(); } });
+$('#btn-ask').onclick = () => showAsk($('#search').value);
+$('#ask-close').onclick = hideAsk;
+$('#ask-form').onsubmit = (e) => { e.preventDefault(); askMailbox(); };
+$('#ask-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); askMailbox(); }
+  if (e.key === 'Escape') { e.stopPropagation(); hideAsk(); }
+});

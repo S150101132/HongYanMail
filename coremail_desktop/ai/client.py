@@ -78,9 +78,19 @@ class ChatClient:
 
     def chat(self, messages, max_tokens=800, json_mode=False):
         """-> (reply text, total tokens). Retries 429 and 5xx with backoff."""
+        message, tokens = self.complete(messages, max_tokens=max_tokens, json_mode=json_mode)
+        if not message['content'].strip():
+            raise AppError('AI_BAD_RESPONSE')
+        return message['content'], tokens
+
+    def complete(self, messages, tools=None, max_tokens=800, json_mode=False):
+        """-> ({content, tool_calls: [{id, name, arguments}]}, total tokens). tools: function
+        definitions the model may call instead of answering."""
         body = {'model': self.model, 'messages': messages, 'max_tokens': max_tokens, 'temperature': 0.3, 'stream': False}
         if json_mode:
             body['response_format'] = {'type': 'json_object'}
+        if tools:
+            body['tools'] = tools
         data = json.dumps(body, ensure_ascii=False).encode('utf-8')
         for attempt in range(self.retries + 1):
             try:
@@ -115,10 +125,15 @@ class ChatClient:
             raise AppError('AI_BAD_RESPONSE')
         try:
             value = json.loads(raw.decode('utf-8'))
-            content = value['choices'][0]['message']['content']
+            message = value['choices'][0]['message']
+            content = message.get('content') or ''
+            calls = [{'id': c['id'], 'name': c['function']['name'], 'arguments': c['function']['arguments'] or '{}'}
+                     for c in message.get('tool_calls') or ()]
             tokens = int((value.get('usage') or {}).get('total_tokens') or 0)
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise AppError('AI_BAD_RESPONSE') from None
-        if not isinstance(content, str) or not content.strip():
+        if not isinstance(content, str) or not all(isinstance(c[k], str) and c[k] for c in calls for k in c):
             raise AppError('AI_BAD_RESPONSE')
-        return content, tokens
+        if not content.strip() and not calls:
+            raise AppError('AI_BAD_RESPONSE')
+        return {'content': content, 'tool_calls': calls}, tokens

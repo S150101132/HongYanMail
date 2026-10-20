@@ -264,7 +264,7 @@ class DemoAdapter:
     # Mirrors the deployment: every advanced-search filter is applied by the server.
     SEARCH_FILTERS = frozenset({'from', 'to', 'with', 'scope', 'since', 'until', 'folder', 'attachment', 'unread', 'flagged'})
 
-    def search_messages(self, pattern, offset, limit=50, filters=None):
+    def search_messages(self, pattern, offset, limit=50, filters=None, snippet=False):
         from coremail_desktop.app.backend import filter_match
         from coremail_desktop.app.cache import date_ts
         filters = dict(filters or {})
@@ -610,6 +610,32 @@ class DemoAiClient:
                  'points': [l[:60] for l in lines] or ['邮件正文很短。'],
                  'actions': ['按邮件要求回复发件人。'] if re.search(r'请|麻烦|务必|回复', body) else []}
         return json.dumps(value, ensure_ascii=False), 0
+
+    def complete(self, messages, tools=None, max_tokens=800, json_mode=False):
+        """问邮箱 in demo mode: search with the question's first words, read the top
+        hit, answer citing it. Scripted, no network."""
+        import json
+        import re
+        import time
+        time.sleep(0.5)
+        results = [json.loads(m['content']) for m in messages if m['role'] == 'tool']
+        call = lambda name, args: ({'content': '', 'tool_calls': [{'id': f'call{len(results)}', 'name': name,
+                                                                    'arguments': json.dumps(args, ensure_ascii=False)}]}, 0)
+        if tools and not results:
+            words = re.findall(r'[A-Za-z0-9]+|[一-龥]{2}', messages[1]['content'])
+            return call('search_mail', {'keywords': words[0] if words else messages[1]['content'][:2]})
+        rows = (results[0].get('rows') or []) if results else []
+        if tools and rows and len(results) == 1:
+            return call('read_mail', {'ref': rows[0]['ref']})
+        if not rows:
+            return {'content': '演示模式：没有找到相关的邮件。（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
+        read = results[-1] if len(results) > 1 else {}
+        text = f'演示模式：找到 {results[0]["total"]} 封相关邮件，最相关的是「{rows[0]["subject"]}」，由 {rows[0]["from"]} 发出 [{rows[0]["ref"]}]。'
+        if read.get('encrypted'):
+            text += '\n这封是加密邮件，没有阅读正文。'
+        elif read.get('text'):
+            text += '\n正文开头：' + read['text'][:60].replace('\n', ' ') + f' [{rows[0]["ref"]}]'
+        return {'content': text + '\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
 
 
 def _demo_chart(width=480, height=300):

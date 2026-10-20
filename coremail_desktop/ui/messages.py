@@ -146,6 +146,12 @@ MESSAGES = {
     'AI_BAD_RESPONSE': 'AI 服务没有返回可用的结果，请重试。',
     'AI_ENCRYPTED_CONFIRM': '这是一封加密邮件，需要你确认后才会发送给 AI 服务。',
     'AI_MAIL_UNAVAILABLE': '这封邮件的正文还没有下载到本机，请先打开邮件再总结。',
+    'INVALID_QUESTION': '请输入要问的问题（不超过 500 字）。',
+    'AI_CANCELLED': '已取消。',
+    'ARCHIVE_NOT_FOUND': '找不到本地存档：请在「设置 → 本地存档」中选择官方客户端的邮箱文件夹（其中应有 archmails 文件夹）。',
+    'ARCHIVE_UNSUPPORTED': '本地存档的格式无法识别，已跳过。',
+    'ARCHIVE_CHANGED': '本地存档已被官方客户端修改，请在「设置 → 本地存档」中重新扫描。',
+    'ARCHIVE_SCANNING': '正在扫描本地存档，请稍候。',
 }
 
 GENERIC = '操作未完成。请检查连接或稍后重试，本应用不会自动重发邮件。'
