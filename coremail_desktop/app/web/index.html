@@ -44,6 +44,7 @@
     <div id="shared-section" class="hidden"><div class="side-section">共享邮箱</div><nav id="shared-list" class="folders" aria-label="共享邮箱"></nav></div>
     <div class="side-section">本机</div>
     <nav class="folders">
+      <a id="nav-tasks" class="folder" data-local="tasks" title="任务中心：Saudi-NG 任务清单"><i data-icon="tasks"></i><span class="fname">任务</span><span id="tasks-count" class="count"></span></a>
       <a id="nav-outbox" class="folder" data-local="outbox" title="网络不通时发送的邮件在这里等待，恢复连接后自动发出；发送结果待确认的邮件也在这里"><i data-icon="send"></i><span class="fname">发件箱</span><span id="outbox-count" class="count"></span></a>
       <a id="nav-drafts" class="folder" data-local="drafts"><i data-icon="draft"></i><span class="fname">本机草稿</span><span id="draft-count" class="count"></span></a>
       <a id="nav-archive" class="folder hidden" data-local="archive" title="官方客户端移到这台电脑上的邮件（只读）"><i data-icon="archive"></i><span class="fname">本地存档</span><span id="archive-count" class="count"></span></a>
@@ -115,6 +116,27 @@
       <div id="split-ct-list" class="splitter" title="拖动调整宽度，双击恢复默认"></div>
     </section>
     <section id="ct-card" class="ct-card-pane"></section>
+  </section>
+
+  <section id="tasks-view" class="tasks-view" aria-label="任务">
+    <section class="tk-list-pane">
+      <div class="list-head tk-list-head">
+        <div class="list-title-row tk-title-row"><h2>任务</h2><span id="tk-sub" class="muted small"></span><span class="spacer"></span>
+          <button id="tk-new" class="btn ghost sm" title="不用 AI，手动填写新建任务"><i data-icon="pen"></i>新建</button></div>
+        <div class="tk-ask" id="tk-ask"><i data-icon="spark"></i>
+          <textarea id="tk-cmd" rows="1" spellcheck="false" placeholder="问问鸿雁，或让它更新任务…"
+            title="例如：哪些任务受阻？ / 302 客户回复周四开通端口 / 333 今天完成了。只输入编号直接打开。Enter 发送，Shift+Enter 换行"></textarea>
+          <button id="tk-cmd-go" class="tk-ask-go" title="发送（Enter）"><i data-icon="send"></i></button></div>
+        <div class="tk-ask-hint muted small" id="tk-ask-hint">例如：哪些任务受阻？ · 333 今天完成了 · 生成周报 · 输入编号直接打开</div>
+        <div id="tk-cmd-state" class="tk-cmd-state hidden"></div>
+        <div class="seg tk-tabs" id="tk-tabs"><button data-view="open" class="on">未完成</button><button data-view="done">已完成</button><button data-view="canceled">已取消</button><button data-view="all">全部</button></div>
+      </div>
+      <div id="tk-banner" class="tk-banner hidden"></div>
+      <div id="tk-list" class="mail-list tk-list" role="listbox" aria-label="任务列表"></div>
+      <div id="tk-foot" class="tk-foot"></div>
+      <div id="split-tk-list" class="splitter" title="拖动调整宽度，双击恢复默认"></div>
+    </section>
+    <section id="tk-detail" class="tk-detail-pane"></section>
   </section>
 
   <section class="reader-pane" id="reader">
@@ -265,70 +287,111 @@
 
 <!-- Settings -->
 <div id="settings" class="modal hidden" role="dialog" aria-label="设置">
-  <div class="modal-card wide">
+  <div class="modal-card st-card">
     <div class="modal-head"><b>设置</b><span class="spacer"></span><button class="icon-btn" data-close><i data-icon="close"></i></button></div>
-    <div class="modal-body settings-grid">
-      <section>
-        <h3>外观</h3>
-        <div class="seg" id="theme-seg"><button data-theme="system">跟随系统</button><button data-theme="light">浅色</button><button data-theme="dark">深色</button></div>
-        <h3>列表密度</h3>
-        <div class="seg" id="density-seg"><button data-density="comfortable">舒适</button><button data-density="compact">紧凑</button></div>
-        <h3>收信与提醒</h3>
-        <label class="pref-row">自动收信间隔
-          <select id="pref-poll"><option value="30">30 秒</option><option value="60">1 分钟</option><option value="120">2 分钟</option><option value="300">5 分钟</option><option value="900">15 分钟</option></select></label>
-        <label class="check"><input type="checkbox" id="pref-notify"> 新邮件桌面通知</label>
-        <label class="check"><input type="checkbox" id="pref-markread"> 打开邮件时自动标为已读</label>
-        <label class="check"><input type="checkbox" id="pref-autostart"> 开机自动启动（最小化到托盘）</label>
-        <label class="pref-row">点击关闭按钮时
-          <select id="pref-close"><option value="">每次询问</option><option value="tray">最小化，继续在后台收信</option><option value="quit">退出鸿雁</option></select></label>
-        <h3>发送</h3>
-        <label class="pref-row">撤销发送
-          <select id="pref-undo"><option value="0">关闭</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="20">20 秒</option><option value="30">30 秒</option></select></label>
-        <p class="muted small">点击发送后先在本机等待几秒，期间可以撤销（服务器不支持撤回已发出的邮件）。关到托盘时照常发出；等待期间退出鸿雁则不发送，邮件保留在本机草稿。</p>
-        <h3>加密与签名</h3>
-        <p class="muted small">发给同事的邮件默认加密（使用公司通讯录中的证书），含外部收件人时默认不加密。加密的邮件默认同时用个人证书数字签名。阅读加密邮件和签名发送需要解锁个人证书（.pfx）。</p>
-        <p class="small" id="cert-status"></p>
-        <div class="row-gap"><button class="btn ghost" id="btn-cert">解锁个人证书…</button><button class="btn ghost hidden" id="btn-cert-forget">忘记证书</button></div>
-        <h3 id="ai-section">AI 助手</h3>
-        <p class="muted small">阅读邮件时点「总结」，由 AI 生成摘要；点搜索框旁的 ✦「问邮箱」，用一句话提问，由 AI 搜索并阅读邮件后回答。邮件内容会发送到下面的 AI 服务（默认 DeepSeek）；加密邮件每次都会先征求你的同意。API Key 由 Windows 加密保存在本机，界面上无法查看。</p>
-        <label class="pref-row">接口地址<input id="ai-base" type="text" spellcheck="false"></label>
-        <label class="pref-row">模型<input id="ai-model" type="text" spellcheck="false"></label>
-        <label class="pref-row">API Key<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
-        <p class="muted small" id="ai-status"></p>
-        <div class="row-gap"><button class="btn ghost" id="ai-save">保存 AI 设置</button><button class="btn ghost" id="ai-test">测试连接</button>
-          <button class="btn ghost danger hidden" id="ai-clear">清除 Key</button></div>
-        <h3 id="archive-section">本地存档</h3>
-        <p class="muted small">官方 Coremail 客户端「本地存档」里的邮件已不在服务器上。选择它的邮箱文件夹（其中有 archmails 文件夹，例如 D:\work\email\你的邮箱地址）后，鸿雁只读地扫描这些邮件，可以在左侧「本地存档」中浏览，搜索和「问邮箱」也会包含它们。不会修改官方客户端的任何文件；扫描结果加密保存在本机。</p>
-        <label class="pref-row">文件夹<input id="archive-folder" type="text" spellcheck="false" placeholder="未设置"></label>
-        <p class="muted small" id="archive-status"></p>
-        <div class="row-gap"><button class="btn ghost" id="archive-pick">选择文件夹…</button><button class="btn ghost" id="archive-save">保存并扫描</button>
-          <button class="btn ghost" id="archive-rescan">重新扫描</button><button class="btn ghost danger" id="archive-off">停用</button></div>
-        <h3>账号</h3>
-        <p class="muted small" id="settings-account"></p>
-        <p class="muted small" id="data-dir"></p>
-        <p class="muted small hidden" id="runtime-note">本机安全软件阻止了浏览器内核沙箱，鸿雁已自动以兼容模式运行。邮件正文仍在禁止脚本、禁止联网的隔离框架中显示。</p>
-        <div class="row-gap"><button class="btn ghost" id="btn-quit" title="完全退出鸿雁，不再在后台收信 (Ctrl+Q)">退出鸿雁</button>
-          <button class="btn ghost danger" id="btn-logout">退出登录</button></div>
-      </section>
-      <section>
-        <h3>邮件签名</h3>
-        <p class="muted small">自动添加到新邮件、回复和转发中。可以放图片（如公司 LOGO），点击图片调整大小；图片随邮件内嵌发出，收件人不必联网加载，加密和签名邮件中同样有效。</p>
-        <div class="cmp-toolbar mini" id="sig-toolbar">
-          <button data-cmd="bold"><b>B</b></button><button data-cmd="italic"><i>I</i></button>
-          <label class="color-btn" title="文字颜色">A<input type="color" id="sig-color" value="#1d4ed8"></label>
-          <button id="sig-image" title="插入图片（如公司 LOGO；也可以直接粘贴或拖入）。点击图片可调整大小"><i data-icon="image"></i></button>
+    <div class="st-layout">
+      <nav class="st-nav" id="st-nav" role="tablist" aria-label="设置分类">
+        <div class="st-group">通用</div>
+        <button data-tab="general"><i data-icon="settings"></i>常规</button>
+        <button data-tab="compose"><i data-icon="pen"></i>写信</button>
+        <button data-tab="security"><i data-icon="lock"></i>加密与签名</button>
+        <button data-tab="account"><i data-icon="user"></i>账号</button>
+        <div class="st-group">功能</div>
+        <button data-tab="ai"><i data-icon="spark"></i>AI 助手</button>
+        <button data-tab="archive"><i data-icon="archive"></i>本地存档</button>
+        <button data-tab="tasks"><i data-icon="tasks"></i>任务中心</button>
+        <div class="st-group" id="st-server-group">邮箱规则（服务器）</div>
+      </nav>
+      <div class="st-main" id="st-main">
+        <div class="modal-body st-pane st-page" data-pane="general">
+          <h3>外观</h3>
+          <div class="seg" id="theme-seg"><button data-theme="system">跟随系统</button><button data-theme="light">浅色</button><button data-theme="dark">深色</button></div>
+          <h3>列表密度</h3>
+          <div class="seg" id="density-seg"><button data-density="comfortable">舒适</button><button data-density="compact">紧凑</button></div>
+          <h3>收信与提醒</h3>
+          <label class="pref-row">自动收信间隔
+            <select id="pref-poll"><option value="30">30 秒</option><option value="60">1 分钟</option><option value="120">2 分钟</option><option value="300">5 分钟</option><option value="900">15 分钟</option></select></label>
+          <label class="check"><input type="checkbox" id="pref-notify"> 新邮件桌面通知</label>
+          <label class="check"><input type="checkbox" id="pref-markread"> 打开邮件时自动标为已读</label>
+          <h3 id="side-section">左侧栏显示</h3>
+          <p class="muted small">取消勾选的项目不在左侧栏显示（例如病毒邮件、垃圾邮件）。文件夹本身和其中的邮件不受影响，移动邮件和搜索时仍然可以选择；收件箱始终显示。</p>
+          <div id="pref-side" class="side-picks"></div>
+          <h3>启动与关闭</h3>
+          <label class="check"><input type="checkbox" id="pref-autostart"> 开机自动启动（最小化到托盘）</label>
+          <label class="pref-row">点击关闭按钮时
+            <select id="pref-close"><option value="">每次询问</option><option value="tray">最小化，继续在后台收信</option><option value="quit">退出鸿雁</option></select></label>
         </div>
-        <div id="pref-signature" class="sig-editor" contenteditable="true"></div>
-        <div class="row-end"><button class="btn primary" id="btn-save-settings">保存设置</button></div>
-        <h3 id="tpl-section">邮件模板</h3>
-        <p class="muted small">在写信窗口点「模板」可把当前邮件存为模板；点「写邮件」旁的箭头从模板新建。模板只保存在这台电脑，已加密。以下修改立即生效。</p>
-        <div id="tpl-list" class="tpl-list"></div>
-        <h3 id="grp-section">收件人组</h3>
-        <p class="muted small">把常一起写信的人存为一个组，每人可设为主送或抄送；写信时点收件人旁的「收件人组」一键添加，重复的人自动去掉。组只保存在这台电脑，已加密。</p>
-        <div id="grp-list" class="tpl-list"></div>
-        <div class="row-gap"><button class="btn ghost sm" id="grp-new">新建收件人组…</button></div>
-      </section>
+        <div class="modal-body st-pane st-page hidden" data-pane="compose">
+          <h3>撤销发送</h3>
+          <label class="pref-row">发送前等待
+            <select id="pref-undo"><option value="0">关闭</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="20">20 秒</option><option value="30">30 秒</option></select></label>
+          <p class="muted small">点击发送后先在本机等待几秒，期间可以撤销（服务器不支持撤回已发出的邮件）。关到托盘时照常发出；等待期间退出鸿雁则不发送，邮件保留在本机草稿。</p>
+          <h3>邮件签名</h3>
+          <p class="muted small">自动添加到新邮件、回复和转发中。可以放图片（如公司 LOGO），点击图片调整大小；图片随邮件内嵌发出，收件人不必联网加载，加密和签名邮件中同样有效。</p>
+          <div class="cmp-toolbar mini" id="sig-toolbar">
+            <button data-cmd="bold"><b>B</b></button><button data-cmd="italic"><i>I</i></button>
+            <label class="color-btn" title="文字颜色">A<input type="color" id="sig-color" value="#1d4ed8"></label>
+            <button id="sig-image" title="插入图片（如公司 LOGO；也可以直接粘贴或拖入）。点击图片可调整大小"><i data-icon="image"></i></button>
+          </div>
+          <div id="pref-signature" class="sig-editor" contenteditable="true"></div>
+          <h3 id="tpl-section">邮件模板</h3>
+          <p class="muted small">在写信窗口点「模板」可把当前邮件存为模板；点「写邮件」旁的箭头从模板新建。模板只保存在这台电脑，已加密。模板和收件人组的修改立即生效。</p>
+          <div id="tpl-list" class="tpl-list"></div>
+          <h3 id="grp-section">收件人组</h3>
+          <p class="muted small">把常一起写信的人存为一个组，每人可设为主送或抄送；写信时点收件人旁的「收件人组」一键添加，重复的人自动去掉。组只保存在这台电脑，已加密。</p>
+          <div id="grp-list" class="tpl-list"></div>
+          <div class="row-gap"><button class="btn ghost sm" id="grp-new">新建收件人组…</button></div>
+        </div>
+        <div class="modal-body st-pane st-page hidden" data-pane="security">
+          <h3>加密与签名</h3>
+          <p class="muted small">发给同事的邮件默认加密（使用公司通讯录中的证书），含外部收件人时默认不加密。加密的邮件默认同时用个人证书数字签名。阅读加密邮件和签名发送需要解锁个人证书（.pfx）。</p>
+          <p class="small" id="cert-status"></p>
+          <div class="row-gap"><button class="btn ghost" id="btn-cert">解锁个人证书…</button><button class="btn ghost hidden" id="btn-cert-forget">忘记证书</button></div>
+        </div>
+        <div class="modal-body st-pane st-page hidden" data-pane="account">
+          <h3>账号</h3>
+          <p class="muted small" id="settings-account"></p>
+          <p class="muted small" id="data-dir"></p>
+          <p class="muted small hidden" id="runtime-note">本机安全软件阻止了浏览器内核沙箱，鸿雁已自动以兼容模式运行。邮件正文仍在禁止脚本、禁止联网的隔离框架中显示。</p>
+          <div class="row-gap"><button class="btn ghost" id="btn-quit" title="完全退出鸿雁，不再在后台收信 (Ctrl+Q)">退出鸿雁</button>
+            <button class="btn ghost danger" id="btn-logout">退出登录</button></div>
+        </div>
+        <div class="modal-body st-pane st-page hidden" data-pane="ai">
+          <h3 id="ai-section">AI 助手</h3>
+          <p class="muted small">阅读邮件时点「总结」，由 AI 生成摘要；点搜索框旁的 ✦「问邮箱」，用一句话提问，由 AI 搜索并阅读邮件后回答。邮件内容会发送到下面的 AI 服务（默认 DeepSeek）；加密邮件每次都会先征求你的同意。API Key 由 Windows 加密保存在本机，界面上无法查看。</p>
+          <label class="pref-row">接口地址<input id="ai-base" type="text" spellcheck="false"></label>
+          <label class="pref-row">模型<input id="ai-model" type="text" spellcheck="false"></label>
+          <label class="pref-row">API Key<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
+          <p class="muted small" id="ai-status"></p>
+          <div class="row-gap"><button class="btn ghost" id="ai-save">保存 AI 设置</button><button class="btn ghost" id="ai-test">测试连接</button>
+            <button class="btn ghost danger hidden" id="ai-clear">清除 Key</button></div>
+        </div>
+        <div class="modal-body st-pane st-page hidden" data-pane="archive">
+          <h3 id="archive-section">本地存档</h3>
+          <p class="muted small">官方 Coremail 客户端「本地存档」里的邮件已不在服务器上。选择它的邮箱文件夹（其中有 archmails 文件夹，例如 D:\work\email\你的邮箱地址）后，鸿雁只读地扫描这些邮件，可以在左侧「本地存档」中浏览，搜索和「问邮箱」也会包含它们。不会修改官方客户端的任何文件；扫描结果加密保存在本机。</p>
+          <label class="pref-row">文件夹<input id="archive-folder" type="text" spellcheck="false" placeholder="未设置"></label>
+          <p class="muted small" id="archive-status"></p>
+          <div class="row-gap"><button class="btn ghost" id="archive-pick">选择文件夹…</button><button class="btn ghost" id="archive-save">保存并扫描</button>
+            <button class="btn ghost" id="archive-rescan">重新扫描</button><button class="btn ghost danger" id="archive-off">停用</button></div>
+        </div>
+        <div class="modal-body st-pane st-page hidden" data-pane="tasks">
+          <h3 id="tasks-section">任务中心</h3>
+          <p class="muted small">任务保存在本机加密库中。正式使用时，每次修改后自动导出 未完成任务.xlsx、已完成任务.xlsx 和 任务数据.json 到任务文件夹，由你自己 git 提交。</p>
+          <label class="pref-row">任务文件夹<input id="tasks-folder" type="text" spellcheck="false" placeholder="未设置"></label>
+          <p class="muted small" id="tasks-status"></p>
+          <div class="row-gap"><button class="btn ghost" id="tasks-pick">选择文件夹…</button></div>
+          <div id="tasks-import"><h3>导入与切换</h3>
+          <p class="muted small">先「检查并导入」作为演练（任务文件夹不会被修改），确认无误后「切换为正式」。</p>
+          <div class="row-gap"><button class="btn ghost" id="tasks-check">检查并导入…</button><button class="btn ghost" id="tasks-live">切换为正式…</button>
+            <button class="btn ghost" id="tasks-compare">对照 Excel</button></div></div>
+          <h3>导出与恢复</h3>
+          <div class="row-gap"><button class="btn ghost" id="tasks-export-now">立即导出</button><button class="btn ghost" id="tasks-restore">从 任务数据.json 恢复…</button>
+            <button class="btn ghost danger" id="tasks-stop">停用正式模式…</button></div>
+        </div>
+      </div>
     </div>
+    <div class="modal-foot st-foot" id="st-foot"><span class="muted small">本页修改点「保存」后生效</span><span class="spacer"></span>
+      <button class="btn ghost" data-close>取消</button><button class="btn primary" id="btn-save-settings">保存</button></div>
   </div>
 </div>
 
@@ -357,5 +420,6 @@
 <script src="mention.js"></script>
 <script src="ai.js"></script>
 <script src="archive.js"></script>
+<script src="tasks.js"></script>
 </body>
 </html>

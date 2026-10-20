@@ -603,6 +603,26 @@ class DemoAiClient:
         import time
         time.sleep(0.6)  # Long enough to see the progress state.
         text = messages[-1]['content']
+        if '为工作任务的演进图命名每个环节' in messages[0]['content']:  # 事件演进图 titles, from each step's own words.
+            steps = json.loads(text)['环节']
+            items = [{'id': s['id'], 'title': re.split(r'[，。；：:,\s]', s['text'])[0][:8] or '进展', 'summary': s['text'][:40],
+                      'kind': 'done' if '完成' in s['text'] else 'wait' if '等待' in s['text'] else 'contact' if '邮件' in s['text'] else 'progress'}
+                     for s in steps]
+            return json.dumps({'items': items}, ensure_ascii=False), 0
+        if '鸿雁工作周报' in messages[0]['content']:
+            data = json.loads(text.partition('\n')[2])
+            done = [f'#{t["id"]} {t["system"]} {t["content"][:30]}' for t in data['active'] if t['end']]
+            moving = [f'#{t["id"]} {t["system"]} {t["records"][-1]["text"][:40]}' for t in data['active'] if t['records'] and not t['end']]
+            plan = [f'#{t["id"]} {t["system"]} {t["next"][:40]}' for t in data['unfinished'] if t['next']]
+            blocked = [f'#{t["id"]} {t["system"]} {t["blockers"][:40] or "受阻"}' for t in data['unfinished'] if t['status'] == '受阻']
+            return json.dumps({'subject': f'工作周报（演示，{data["from"]} 至 {data["to"]}）', 'summary': '演示模式：由本机根据任务记录生成，没有联网。',
+                               'sections': [{'title': '本周完成', 'items': done}, {'title': '本周进展', 'items': moving},
+                                            {'title': '受阻与风险', 'items': blocked}, {'title': '下周计划', 'items': plan}]}, ensure_ascii=False), 0
+        if '鸿雁任务助手' in messages[0]['content']:
+            mail = next((m['content'] for m in messages if m['role'] == 'user' and '请根据下面的邮件' in m['content']), '')
+            if mail:
+                return json.dumps(self._mail_plan(messages[1]['content'], mail), ensure_ascii=False), 0
+            return json.dumps(self._task_plan(text), ensure_ascii=False), 0
         subject = (re.search(r'主题：(.*)', text) or [None, ''])[1].strip() or '（无主题）'
         body = text.partition('正文：\n')[2].rsplit('\n', 1)[0]
         lines = [l.strip() for l in body.splitlines() if len(l.strip()) > 6][:3]
@@ -610,6 +630,42 @@ class DemoAiClient:
                  'points': [l[:60] for l in lines] or ['邮件正文很短。'],
                  'actions': ['按邮件要求回复发件人。'] if re.search(r'请|麻烦|务必|回复', body) else []}
         return json.dumps(value, ensure_ascii=False), 0
+
+    @staticmethod
+    def _mail_plan(rules, mail):
+        """转为任务 in demo mode: update the task the user named, else a new task from the subject."""
+        import re
+        subject = (re.search(r'主题：(.*)', mail) or [None, '（无主题）'])[1].strip()
+        named = re.search(r'用这些邮件更新任务 #(\d+)', rules)
+        note = '（演示模式：本机生成，没有联网。）'
+        if named:
+            return {'reply': f'演示模式：用这封邮件更新 #{named.group(1)}。{note}', 'questions': [], 'candidates': [],
+                    'actions': [{'op': 'progress', 'id': int(named.group(1)), 'text': f'收到邮件「{subject}」。', 'date': '', 'latest': True, 'fields': {}}]}
+        return {'reply': f'演示模式：根据邮件新建任务。{note}', 'questions': [], 'candidates': [],
+                'actions': [{'op': 'create', 'fields': {'content': subject, 'status': '未开始'}}]}
+
+    @staticmethod
+    def _task_plan(text):
+        """自然语言操作 in demo mode: the first task number and a few keywords, scripted."""
+        import re
+        found = re.search(r'(?<![\d.])(\d{1,4})(?![\d.])', text)
+        status = next((s for s in ('受阻', '进行中', '未开始', '待处理', '待验收') if s in text), '')
+        if re.search(r'周报|总结|汇报', text):
+            return {'reply': '演示模式：生成本周周报。', 'questions': [], 'actions': [], 'report': {'from': '', 'to': ''}}
+        if not found and re.search(r'哪些|查|找|列出|看看', text):
+            return {'reply': f'演示模式：按「{status or text}」筛选任务（本机生成，没有联网）。', 'questions': [], 'actions': [],
+                    'show': {'view': 'open' if status else 'all', 'query': status, 'ids': []}}
+        if not found:
+            return {'reply': '演示模式：没有找到任务编号。', 'questions': ['请说明是哪一条任务（编号）？'], 'actions': []}
+        task_id = int(found.group(1))
+        words = text.replace(found.group(1), '', 1).strip(' ：:，,。')
+        if re.search(r'完成|搞定|关闭', text):
+            action = {'op': 'complete', 'id': task_id, 'date': '', 'note': ''}
+        elif re.search(r'取消|不做了', text):
+            action = {'op': 'cancel', 'id': task_id, 'reason': words or '用户取消', 'date': ''}
+        else:
+            action = {'op': 'progress', 'id': task_id, 'text': words, 'date': '', 'latest': True, 'fields': {}}
+        return {'reply': f'演示模式：对 #{task_id} 执行「{action["op"]}」（本机生成，没有联网）。', 'questions': [], 'actions': [action]}
 
     def complete(self, messages, tools=None, max_tokens=800, json_mode=False):
         """问邮箱 in demo mode: search with the question's first words, read the top

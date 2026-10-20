@@ -28,14 +28,15 @@ from coremail_desktop.mime.parser import parse_mime
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
                  'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'threads': False,
                  'autostart': False, 'sidebarWidth': 232, 'listWidth': 400, 'undoSeconds': 10,
-                 'ctTreeWidth': 250, 'ctListWidth': 340, 'tagsOpen': False,
-                 'closeAction': ''}  # ✕ of the main window: '' asks, 'tray' keeps running, 'quit' exits.
+                 'ctTreeWidth': 250, 'ctListWidth': 340, 'tkListWidth': 460, 'tagsOpen': False,
+                 'closeAction': '',  # ✕ of the main window: '' asks, 'tray' keeps running, 'quit' exits.
+                 'hiddenFolders': []}  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
 CLOSE_ACTIONS = ('', 'tray', 'quit')
 UNDO_CHOICES = (0, 5, 10, 20, 30)  # 撤销发送 delay in seconds; 0 sends at once.
 NETWORK_CODES = ('NETWORK_ERROR', 'TLS_ERROR')
 MAX_EML_BYTES = 40 * 1024 * 1024
 # Column widths the page may store (px); the page enforces the same bounds while dragging.
-WIDTH_LIMITS = {'sidebarWidth': (180, 400), 'listWidth': (280, 900), 'ctTreeWidth': (160, 480), 'ctListWidth': (240, 720)}
+WIDTH_LIMITS = {'sidebarWidth': (180, 400), 'listWidth': (280, 900), 'ctTreeWidth': (160, 480), 'ctListWidth': (240, 720), 'tkListWidth': (320, 900)}
 TEMPLATE_LIMIT = 100
 # 邮件签名: pictures (a company logo) live in the HTML as data: URIs and go out as
 # inline cid: parts like any body image (compose/inline.py).
@@ -351,6 +352,7 @@ class MailBackend:
         self.archive = None  # 本地存档: the catalog of the official client's archmails (archive/catalog.py).
         self._archive_scan = None  # {'done', 'total'} while a scan runs.
         self._archive_key = ''
+        self.tasks = None  # 任务中心 (tasks/center.py), opened on first use.
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
         self._ai_lock = threading.Lock()
         self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
@@ -494,6 +496,8 @@ class MailBackend:
             prefs['undoSeconds'] = DEFAULT_PREFS['undoSeconds']
         for key, (low, high) in WIDTH_LIMITS.items():
             prefs[key] = max(low, min(int(prefs[key]), high))
+        hidden = [v for v in prefs['hiddenFolders'] if isinstance(v, str) and 0 < len(v) <= 200]
+        prefs['hiddenFolders'] = list(dict.fromkeys(hidden))[:300]
         if self.autostart is not None and type(values.get('autostart')) is bool:
             prefs['autostart'] = self.autostart.set_enabled(values['autostart'])
         self.cache.set('prefs', prefs)
@@ -2504,6 +2508,302 @@ class MailBackend:
         if filters.get('attachment'):
             rows = [r for r in rows if r['flags'].get('attached')]
         return {'rows': rows, 'total': total}
+
+    # 任务中心 (tasks/center.py): not tied to the mail account, usable signed out.
+    def _tasks(self):
+        if self.tasks is None:
+            from coremail_desktop.tasks.center import TaskCenter
+            self.tasks = TaskCenter(self.data_dir / 'tasks', self.protector)
+        return self.tasks
+
+    def tasks_status(self):
+        return self._tasks().status()
+
+    def tasks_set_folder(self, folder=''):
+        return self._tasks().set_folder(folder)
+
+    def tasks_overview(self, view='open', query=''):
+        result = self._tasks().overview(view, query)
+        fresh = self._task_new_mail()
+        for row in result['rows']:
+            row['newMail'] = len(fresh.get(row['id'], ()))
+        return result
+
+    def task_get(self, id):
+        result = self._tasks().get(id)
+        result['newMails'] = self._task_new_mail().get(result['task']['id'], [])
+        return result
+
+    def task_undo(self, seq):
+        return self._tasks().undo(seq)
+
+    def task_story(self, id):
+        return self._tasks().story(id)
+
+    def task_story_titles(self, id):
+        """Name the steps of a task's story that have no AI title yet (AI thread); the story back."""
+        from coremail_desktop.tasks import story
+        center = self._tasks()
+        result = center.story(id)
+        steps = [s for s in result['steps'] if s['key'] in set(result['missing'])]
+        if not steps:
+            return result
+        task = center.store.tasks[result['id']]
+        for start in range(0, min(len(steps), story.BATCH * 3), story.BATCH):
+            batch = steps[start:start + story.BATCH]
+            content, _ = self._ai_call(story.title_messages(task, batch), max_tokens=story.TITLE_TOKENS, json_mode=True)
+            center.keep_titles(story.parse_titles(content, {s['key'] for s in batch}))
+        return center.story(id)
+
+    def tasks_mail_index(self):
+        """{mail id: [task numbers]}: the #编号 chips beside linked mail."""
+        index = {}
+        for link in self._tasks().store.links():
+            index.setdefault(link['mid'], []).append(link['task'])
+        return index
+
+    def _task_new_mail(self):
+        """{task: [mail]}: newer mail in the conversation of a task's linked mail (same subject
+        once Re:/Fwd: are gone) that is not linked yet. Only a hint; nothing is changed."""
+        if self.cache is None:
+            return {}
+        threads = {}
+        for link in self._tasks().store.links():
+            key = thread_key(link.get('subject') or '')
+            if len(key) < 6:
+                continue  # A very short subject would match unrelated mail.
+            entry = threads.setdefault(link['task'], {'keys': set(), 'mids': set(), 'after': 0.0})
+            entry['keys'].add(key)
+            entry['mids'].add(link['mid'])
+            entry['after'] = max(entry['after'], date_ts(link.get('date') or ''))
+        if not threads:
+            return {}
+        keys = set().union(*(t['keys'] for t in threads.values()))
+        skip = {f['id'] for f in self._folders if f.get('role') in ('trash', 'spam', 'virus', 'drafts')}
+        rows = self.cache.matching(lambda r: not r.get('mailbox') and r.get('fid') not in skip and thread_key(r.get('subject') or '') in keys)
+        found = {}
+        for task_id, entry in threads.items():
+            new = [r for r in rows if thread_key(r['subject']) in entry['keys'] and r['id'] not in entry['mids'] and r['ts'] > entry['after']]
+            if new:
+                new.sort(key=lambda r: r['ts'])
+                found[task_id] = [{'id': r['id'], 'subject': r['subject'], 'from': r.get('fromName') or r['from'], 'date': r['date']} for r in new[-10:]]
+        return found
+
+    def _task_mail(self, mid, allow):
+        """One selected mail for 转为任务: the envelope, the Riyadh date, attachment names and
+        the body text. Encrypted mail only when the user agreed for it (allow)."""
+        from email.utils import getaddresses, parsedate_to_datetime
+        from coremail_desktop.ai.summary import _who, mail_text
+        from coremail_desktop.tasks.rules import RIYADH
+        if not self._local_only(mid) and mid not in self._docs and (self.cache is None or self.cache.get_body(mid) is None):
+            raise AppError('AI_MAIL_UNAVAILABLE')
+        document = self._document(mid)
+        if document.encryption_state == 'locked':
+            raise AppError('CERT_LOCKED')
+        if document.encryption_state == 'decrypted' and mid not in allow:
+            raise AppError('AI_ENCRYPTED_CONFIRM')
+        header = lambda key: ', '.join(document.headers.get(key, ()))
+        summary = (self.cache.summary(mid) if self.cache else None) or self._archive_summary(mid) or {}
+        try:
+            when = parsedate_to_datetime(header('date')).astimezone(RIYADH)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            ts = summary.get('ts') or date_ts(summary.get('date') or '')
+            when = (datetime.fromtimestamp(ts) if ts else datetime.now()).astimezone(RIYADH)  # No usable date: now.
+        sender = getaddresses([header('from')])
+        text, _ = mail_text(document)
+        return {'mid': mid, 'messageId': header('message-id').strip('<> '), 'subject': header('subject') or summary.get('subject', ''),
+                'from': (sender[0][0] or sender[0][1]) if sender else '', 'fromText': _who(header('from'), 1), 'toText': _who(header('to')),
+                'date': when.strftime('%Y-%m-%d %H:%M'), 'day': when.strftime('%Y-%m-%d'), 'time': when.strftime('%H:%M'),
+                'source': 'archive' if mid.startswith('arc:') else 'eml' if mid.startswith('eml:') else 'server',
+                'attachments': [a.name for a in document.attachments][:20], 'text': text}
+
+    def tasks_report(self, start='', end=''):
+        """周报 for start..end (Riyadh dates; default this week, Sunday to today): the subject,
+        mail HTML and plain text, written by the AI from the task records of that time."""
+        from coremail_desktop.tasks import report
+        center = self._tasks()
+        if center.status()['mode'] == 'off':
+            raise AppError('TASK_NOT_IMPORTED')
+        if not start and not end:
+            start, end = report.week_of(center.today())[0]
+        start, end = report.check_range(str(start or ''), str(end or ''))
+        material = report.gather(list(center.store.tasks.values()), center.store.events(), start, end)
+        content, _ = self._ai_call(report.messages(material), max_tokens=report.REPORT_TOKENS, json_mode=True)
+        return {**report.render(report.parse(content), material), 'from': start, 'to': end, 'active': len(material['active'])}
+
+    def tasks_new_mail(self):
+        """New mail in the conversations of unfinished tasks not yet looked at by 自动更新:
+        [{task, mid, subject}] (the page downloads each one, then calls tasks_auto_mail)."""
+        from coremail_desktop.tasks.rules import OPEN_STATUSES
+        center = self._tasks()
+        if center.status()['mode'] == 'off':
+            return []
+        seen = center.store.get('autoMail') or {}
+        return [{'task': task_id, 'mid': m['id'], 'subject': m['subject']}
+                for task_id, mails in self._task_new_mail().items()
+                if task_id in center.store.tasks and center.store.tasks[task_id]['status'] in OPEN_STATUSES
+                for m in mails if m['id'] not in seen][:10]
+
+    def tasks_auto_mail(self, task, mid):
+        """自动更新 from one new mail of a task's conversation: progress that changes no status is
+        written at once (marked AI, can be undone); a status change, completion or cancel is
+        kept as a suggestion to accept. Encrypted mail, questions and doubt leave only the hint."""
+        center = self._tasks()
+        seen = center.store.get('autoMail') or {}
+        if mid in seen:
+            return {'applied': [], 'suggested': [], 'skipped': 'seen'}
+        outcome = {'applied': [], 'suggested': [], 'skipped': ''}
+        try:
+            plan = self.tasks_from_mail([mid], target=int(task))
+        except AppError as error:
+            if error.code not in ('AI_ENCRYPTED_CONFIRM', 'CERT_LOCKED', 'AI_MAIL_UNAVAILABLE', 'TASK_NOT_FOUND'):
+                raise  # AI unavailable: try again with the next new mail.
+            outcome['skipped'] = error.code
+            plan = None
+        if plan is not None:
+            subject = plan['mails'][0]['subject'] if plan['mails'] else ''
+            basis = f'自动更新：新邮件「{subject}」'
+            ready = [(a, p) for a, p in zip(plan['actions'], plan['preview']) if not p.get('error') and p.get('changes') and a.get('id') == int(task)]
+            if plan['questions'] or not ready:
+                outcome['skipped'] = 'unsure'
+            auto = [a for a, _ in ready if a['op'] == 'progress' and 'status' not in a.get('fields', {})]
+            if auto and not plan['questions']:
+                result = center.run_plan(auto, basis)
+                outcome['applied'] = [d['id'] for d in result['done']]
+            for action, item in ready:
+                if action not in auto and not plan['questions']:
+                    center.suggest(action, item, basis, plan['reply'])
+                    outcome['suggested'].append(action['id'])
+        seen[mid] = int(task)
+        center.store.set('autoMail', dict(list(seen.items())[-3000:]))
+        return outcome
+
+    def tasks_from_mail(self, mids, target='auto', text='', history=None, allow=()):
+        """转为任务（AI）: a plan from one to five selected mails, previewed like a sentence's.
+        target: 'auto' (the AI decides), 'new', or a task number to update."""
+        from coremail_desktop.tasks import assistant
+        from coremail_desktop.ui.messages import user_message
+        if not isinstance(mids, list) or not 1 <= len(mids) <= assistant.MAX_MAILS or not all(isinstance(m, str) and m for m in mids):
+            raise AppError('TASK_MAIL_LIMIT')
+        if target not in ('auto', 'new'):
+            try:
+                target = int(target)
+            except (TypeError, ValueError):
+                raise AppError('TASK_INVALID') from None
+        text = text.strip() if isinstance(text, str) else ''
+        if len(text) > assistant.MAX_TEXT or not isinstance(allow, (list, tuple)):
+            raise AppError('INVALID_TASK_COMMAND')
+        history = assistant.check_history(history or [])
+        center = self._tasks()
+        if center.status()['mode'] == 'off':
+            raise AppError('TASK_NOT_IMPORTED')
+        if isinstance(target, int):
+            center.get(target)  # TASK_NOT_FOUND before any mail goes out.
+        self._ai()  # Not configured: say so before reading the mail.
+        mails = [self._task_mail(mid, {str(a) for a in allow}) for mid in dict.fromkeys(mids)]
+        messages = assistant.build_mail_messages(mails, target, text, history, list(center.store.tasks.values()), center.today())
+        content, _ = self._ai_call(messages, max_tokens=assistant.PLAN_TOKENS, json_mode=True)
+        plan = assistant.parse_plan(content)
+        refs = [{k: m[k] for k in assistant.MAIL_KEYS} for m in mails]
+        for action in plan['actions']:
+            action['mails'] = refs
+            if action['op'] == 'progress' and not action['date']:
+                action['date'] = mails[0]['day']  # The mail's date is the event's date.
+        preview = center.preview(plan['actions'])
+        for item in preview:
+            if item.get('error'):
+                item['message'] = user_message(item['error'])
+        known = center.store.tasks
+        candidates = [{'id': c, 'system': known[c]['system'], 'content': known[c]['content'], 'status': known[c]['status']}
+                      for c in plan['candidates'] if c in known]
+        return {**plan, 'candidates': candidates, 'preview': preview, 'raw': content, 'target': target,
+                'mails': [{k: m[k] for k in ('mid', 'subject', 'from', 'date')} for m in mails]}
+
+    def task_create(self, fields, date=''):
+        return self._tasks().create(fields, date)
+
+    def task_update(self, id, rev, fields, note='', date=''):
+        return self._tasks().update(id, rev, fields, note, date)
+
+    def task_progress(self, id, rev, text, date='', latest=True, fields=None):
+        return self._tasks().progress(id, rev, text, date, bool(latest), fields)
+
+    def task_complete(self, id, rev, date='', note=''):
+        return self._tasks().complete(id, rev, date, note)
+
+    def task_cancel(self, id, rev, reason='', date=''):
+        return self._tasks().cancel(id, rev, reason, date)
+
+    def task_reopen(self, id, rev, status='进行中', reason=''):
+        return self._tasks().reopen(id, rev, status, reason)
+
+    def task_review(self, seq, accept):
+        return self._tasks().review(seq, bool(accept))
+
+    def tasks_pending(self):
+        return self._tasks().pending()
+
+    def tasks_verify(self):
+        return self._tasks().verify()
+
+    def tasks_import_preview(self):
+        return self._tasks().import_preview()
+
+    def tasks_import(self, mode='trial'):
+        return self._tasks().import_books(mode)
+
+    def tasks_export(self):
+        return self._tasks().export(message='重新导出任务清单（鸿雁）')
+
+    def tasks_resolve(self, action):
+        return self._tasks().resolve_external(action)
+
+    def tasks_stop_live(self):
+        return self._tasks().stop_live()
+
+    def tasks_restore(self, mode='live'):
+        return self._tasks().restore(mode)
+
+    def tasks_compare(self):
+        return self._tasks().compare()
+
+    def task_link(self, id, mid):
+        """关联到任务: the open mail's ids, subject and date as they are now."""
+        mid = str(mid or '')
+        summary = (self.cache.summary(mid) if self.cache else None) or self._archive_summary(mid) or {}
+        document = self._docs.get(mid)
+        header = lambda key: ', '.join(document.headers.get(key, ())) if document else ''
+        source = 'archive' if mid.startswith('arc:') else 'eml' if mid.startswith('eml:') else 'server'
+        return self._tasks().link(id, {'mid': mid, 'messageId': header('message-id').strip('<> '), 'source': source,
+                                       'subject': summary.get('subject') or header('subject'), 'date': summary.get('date') or header('date')})
+
+    def task_unlink(self, id, link):
+        return self._tasks().unlink(id, link)
+
+    def tasks_command(self, text, history=None):
+        """自然语言操作: the sentence (and the turns before it, when the assistant asked back)
+        -> a plan with each operation previewed. Nothing is written here."""
+        from coremail_desktop.tasks import assistant
+        from coremail_desktop.ui.messages import user_message
+        text = text.strip() if isinstance(text, str) else ''
+        if not text or len(text) > assistant.MAX_TEXT:
+            raise AppError('INVALID_TASK_COMMAND')
+        history = assistant.check_history(history or [])
+        center = self._tasks()
+        if center.status()['mode'] == 'off':
+            raise AppError('TASK_NOT_IMPORTED')
+        messages = assistant.build_messages(text, history, list(center.store.tasks.values()), center.today())
+        content, _ = self._ai_call(messages, max_tokens=assistant.PLAN_TOKENS, json_mode=True)
+        plan = assistant.parse_plan(content)
+        preview = center.preview(plan['actions'])
+        for item in preview:
+            if item.get('error'):
+                item['message'] = user_message(item['error'])
+        return {**plan, 'preview': preview, 'raw': content}
+
+    def tasks_command_run(self, actions, text=''):
+        from coremail_desktop.tasks import assistant
+        return self._tasks().run_plan(assistant.check_actions(actions), text)
 
     # Background sync -------------------------------------------------------
     def poll(self):

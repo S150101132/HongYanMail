@@ -283,7 +283,8 @@ on('mailChanged', (v) => {
 const SPLITS = { sidebarWidth: { el: '#split-side', prop: '--side-w', min: 180, max: 400, def: 232, others: ['.list-pane'], rest: 420 },
   listWidth: { el: '#split-list', prop: '--list-w', min: 280, max: 900, def: 400, others: ['.sidebar'], rest: 420 },
   ctTreeWidth: { el: '#split-ct-tree', prop: '--ct-tree-w', min: 160, max: 480, def: 250, others: ['.sidebar', '.ct-list-pane'], rest: 320 },
-  ctListWidth: { el: '#split-ct-list', prop: '--ct-list-w', min: 240, max: 720, def: 340, others: ['.sidebar', '.ct-tree-pane'], rest: 320 } };
+  ctListWidth: { el: '#split-ct-list', prop: '--ct-list-w', min: 240, max: 720, def: 340, others: ['.sidebar', '.ct-tree-pane'], rest: 320 },
+  tkListWidth: { el: '#split-tk-list', prop: '--tk-list-w', min: 320, max: 900, def: 460, others: ['.sidebar'], rest: 420 } };
 function applyWidths() {
   for (const [key, sp] of Object.entries(SPLITS)) $('#app').style.setProperty(sp.prop, (S.prefs[key] || sp.def) + 'px');
 }
@@ -315,9 +316,19 @@ for (const [key, sp] of Object.entries(SPLITS)) {
 }
 
 const ROLE_ICON = { inbox: 'inbox', drafts: 'drafts', sent: 'sent', trash: 'trash', spam: 'spam', virus: 'virus' };
+// 设置 › 左侧栏显示: hidden folders (and their subfolders) stay out of the sidebar unless open.
+const LOCAL_NAV = [['scheduled', '定时发送', '#nav-scheduled'], ['outbox', '发件箱', '#nav-outbox'], ['drafts', '本机草稿', '#nav-drafts'],
+  ['archive', '本地存档', '#nav-archive'], ['tasks', '任务', '#nav-tasks'], ['contacts', '通讯录', '#nav-contacts']];
+function folderShown(f) {
+  const hidden = S.prefs.hiddenFolders || [];
+  if (f.role === 'inbox' || f.id === S.folderId && !S.local) return true;
+  for (let x = f; x; x = x.parent ? folderById(x.parent) : null) if (hidden.includes(x.id)) return false;
+  return true;
+}
 function renderFolders() {
   const nav = $('#folder-list');
-  nav.innerHTML = S.folders.map((f) => `<a class="folder${f.id === S.folderId && !S.local ? ' on' : ''}" data-id="${esc(f.id)}" title="${esc(f.name)}">
+  for (const [key, , sel] of LOCAL_NAV) { const el = $(sel); if (el) el.classList.toggle('user-hidden', (S.prefs.hiddenFolders || []).includes('local:' + key) && S.local !== key); }
+  nav.innerHTML = S.folders.filter(folderShown).map((f) => `<a class="folder${f.id === S.folderId && !S.local ? ' on' : ''}" data-id="${esc(f.id)}" title="${esc(f.name)}">
       <i data-icon="${ROLE_ICON[f.role] || 'folder'}"></i><span class="fname">${esc(f.name)}</span>
       <span class="count">${f.unread && f.role !== 'sent' && f.role !== 'trash' ? f.unread : ''}</span></a>`).join('');
   renderIcons(nav);
@@ -624,6 +635,7 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
       { label: '添加星标', icon: 'star', run: () => batchFlags({ flagged: true }), write: true },
       { label: '取消星标', icon: 'star', run: () => batchFlags({ flagged: false }), write: true },
       { label: '移动到…', icon: 'folder', run: () => pickBatchFolder(), write: true },
+      ...(typeof mailTaskItems === 'function' ? mailTaskItems([...S.multi]) : []),
       '-',
       { label: '删除', icon: 'trash', run: () => batchMove(null, { delete: true }), write: true },
     ]);
@@ -640,6 +652,7 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
     { label: r.flags.read ? '标为未读' : '标为已读', icon: 'mail', run: () => setFlags(r.id, { read: !r.flags.read }), write: true },
     { label: r.flags.flagged ? '取消星标' : '添加星标', icon: 'star', run: () => setFlags(r.id, { flagged: !r.flags.flagged }), write: true },
     { label: '移动到…', icon: 'folder', run: () => pickFolder(r.id), write: true },
+    ...(typeof mailTaskItems === 'function' ? mailTaskItems([r.id], r) : []),
     '-',
     { label: '删除', icon: 'trash', run: () => deleteMessage(r.id), write: true },
   ]));
@@ -980,6 +993,7 @@ function moreMenu(button, m) {
   showMenu(r.left, r.bottom + 4, [
     { label: '作为附件转发', icon: 'clip', run: () => startCompose('forward_attach', m.id) },
     ...(m.imported ? [] : [{ label: '将收件人存为收件人组…', icon: 'contacts', run: () => groupFromMessage(m) }]),
+    ...(typeof mailTaskItems === 'function' ? mailTaskItems([m.id], m).slice(1) : []),
     '-',
     { label: '打印…', icon: 'print', run: () => printMessage(m) },
     { label: '导出为 PDF…', icon: 'file', run: () => exportPdf(m) },
@@ -1697,7 +1711,7 @@ async function templateMenu(button) {
   const used = S.templates.slice(0, 12).map((t) => ({ label: t.name, icon: 'template', run: () => applyTemplate(t) }));
   showMenu(r.left, r.top, [...used, ...(used.length ? ['-'] : []),
     { label: '将当前邮件存为模板…', icon: 'draft', run: saveAsTemplate },
-    ...(S.templates.length ? [{ label: '管理模板…', icon: 'settings', run: () => { openSettings(); $('#tpl-section').scrollIntoView(); } }] : [])]);
+    ...(S.templates.length ? [{ label: '管理模板…', icon: 'settings', run: () => openSettings('compose', '#tpl-section') }] : [])]);
   const m = $('#menu'), h = m.getBoundingClientRect().height;
   m.style.top = Math.max(8, r.top - h - 4) + 'px';  // Opens upwards from the composer foot.
 }
@@ -1747,6 +1761,7 @@ function openSettings() {
   api('prefs').then((fresh) => { S.prefs.closeAction = fresh.closeAction; $('#pref-close').value = fresh.closeAction || ''; }).catch(() => {});
   $('#pref-undo').value = String(p.undoSeconds ?? 10);
   $('#pref-signature').innerHTML = p.signature || '';
+  renderSidePicks();
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
   renderCertStatus();
   renderTemplates(); loadTemplates().then(renderTemplates);
@@ -1754,6 +1769,12 @@ function openSettings() {
   renderAiSettings();  // ai.js: settings open only on a click, after every file has loaded.
   api('runtimeStatus').then((r) => { $('#runtime-note').classList.toggle('hidden', r.sandboxed); $('#data-dir').textContent = '本机数据（已加密）：' + r.dataDir; }).catch(() => {});
   api('certificateStatus').then((c) => { S.profile.certificate = c; renderCertStatus(); }).catch(() => {});
+}
+function renderSidePicks() {
+  const hidden = S.prefs.hiddenFolders || [];
+  const pick = (id, name, depth, locked) => `<label class="check" style="padding-left:${depth * 18}px"><input type="checkbox" data-side="${esc(id)}"${hidden.includes(id) ? '' : ' checked'}${locked ? ' checked disabled' : ''}> ${esc(name)}</label>`;
+  $('#pref-side').innerHTML = '<div class="side-col"><b>邮件文件夹</b>' + S.folders.map((f) => pick(f.id, f.name, f.depth || 0, f.role === 'inbox')).join('')
+    + '</div><div class="side-col"><b>本机</b>' + LOCAL_NAV.map(([key, name]) => pick('local:' + key, name, 0, false)).join('') + '</div>';
 }
 function renderCertStatus() {
   const c = S.profile.certificate || {};
@@ -1763,15 +1784,16 @@ function renderCertStatus() {
 $('#btn-cert-forget').onclick = async () => { S.profile.certificate = await api('forgetCertificate').catch(() => S.profile.certificate); renderCertStatus(); toast('已忘记证书'); };
 $$('#theme-seg button').forEach((b) => (b.onclick = () => { $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); applyTheme(b.dataset.theme); }));
 $$('#density-seg button').forEach((b) => (b.onclick = () => { $$('#density-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.dataset.density = b.dataset.density; }));
-$('#btn-account').onclick = openSettings;
+$('#btn-account').onclick = () => openSettings();  // Through the wrappers the other files add.
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, pollSeconds: +$('#pref-poll').value,
     notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, signature: signatureHtml(),
-    closeAction: $('#pref-close').value };
+    closeAction: $('#pref-close').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
   try {
     S.prefs = await api('setPrefs', { values });
     applyTheme(S.prefs.theme, S.prefs.density);
+    renderFolders();
     api('startSync', { seconds: S.prefs.pollSeconds });
     $('#settings').classList.add('hidden'); toast(S.prefs.autostart === values.autostart ? '设置已保存' : '设置已保存，但本机不允许修改开机启动项');
   } catch (err) { fail(err); }
@@ -1806,8 +1828,10 @@ function handleKey(e) {
       && !$('#app').classList.contains('hidden') && !S.local) { e.preventDefault(); selectAll(); return; }
   if (e.ctrlKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); startCompose('new'); return; }
   if (e.key === 'F5') { e.preventDefault(); $('#btn-refresh').click(); return; }
-  if ((e.ctrlKey && (e.key === 'f' || e.key === 'F')) || (e.key === '/' && !isTyping(t))) { e.preventDefault(); $('#search').focus(); $('#search').select(); return; }
-  if (isTyping(t) || e.ctrlKey || e.altKey || $('#app').classList.contains('hidden')) return;
+  if ((e.ctrlKey && (e.key === 'f' || e.key === 'F')) || (e.key === '/' && !isTyping(t))) {
+    e.preventDefault(); const box = $(S.local === 'tasks' ? '#tk-cmd' : '#search'); box.focus(); box.select(); return;
+  }
+  if (isTyping(t) || e.ctrlKey || e.altKey || $('#app').classList.contains('hidden') || S.local === 'tasks') return;
   const m = S.message;
   // J/K walk the lines as shown: list rows, and the messages of expanded conversations.
   const lines = $$('#mail-list .row').filter((el) => !el.classList.contains('open'));

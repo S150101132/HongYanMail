@@ -144,4 +144,4 @@ $('#grp-list').addEventListener('click', async (e) => {
   try { S.groups = await api('deleteRecipientGroup', { group_id: g.id }); renderGroups(); } catch (err) { fail(err); }
 });
 $('#grp-new').onclick = () => editGroup(null);
-function manageGroups() { openSettings(); $('#grp-section').scrollIntoView(); }
+function manageGroups() { openSettings('compose', '#grp-section'); }

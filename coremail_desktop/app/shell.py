@@ -71,6 +71,16 @@ BACKEND_METHODS = {
     'askMailbox': 'ask_mailbox', 'cancelAsk': 'cancel_ask',
     'archiveStatus': 'archive_status', 'setArchiveFolder': 'set_archive_folder', 'archiveScan': 'archive_scan',
     'archiveView': 'archive_view', 'searchArchive': 'search_archive',
+    'tasksStatus': 'tasks_status', 'tasksSetFolder': 'tasks_set_folder', 'tasksOverview': 'tasks_overview', 'taskGet': 'task_get',
+    'taskCreate': 'task_create', 'taskUpdate': 'task_update', 'taskProgress': 'task_progress', 'taskComplete': 'task_complete',
+    'taskCancel': 'task_cancel', 'taskReopen': 'task_reopen', 'taskReview': 'task_review', 'tasksPending': 'tasks_pending',
+    'tasksVerify': 'tasks_verify', 'tasksImportPreview': 'tasks_import_preview', 'tasksImport': 'tasks_import',
+    'tasksExport': 'tasks_export', 'tasksResolve': 'tasks_resolve', 'tasksStopLive': 'tasks_stop_live', 'tasksRestore': 'tasks_restore',
+    'tasksCompare': 'tasks_compare', 'taskLink': 'task_link', 'taskUnlink': 'task_unlink',
+    'tasksCommand': 'tasks_command', 'tasksCommandRun': 'tasks_command_run',
+    'tasksFromMail': 'tasks_from_mail', 'taskUndo': 'task_undo', 'tasksMailIndex': 'tasks_mail_index',
+    'taskStory': 'task_story', 'taskStoryTitles': 'task_story_titles',
+    'tasksNewMail': 'tasks_new_mail', 'tasksAutoMail': 'tasks_auto_mail', 'tasksReport': 'tasks_report',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
@@ -79,9 +89,11 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
                 'recipientGroups', 'aiSettings', 'cancelAsk', 'archiveStatus', 'archiveView', 'searchArchive',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
-AI_METHODS = {'summarize', 'aiTest', 'askMailbox'}
+AI_METHODS = {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
 ARCHIVE_METHODS = {'archiveScan'}
+# 任务中心: one thread, so every task change and its export run one after another.
+TASK_METHODS = {name for name in BACKEND_METHODS if name.startswith('task')}
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}
 # Events a pop-out reader may pass on to the main window.
@@ -241,9 +253,10 @@ class Bridge(QObject):
             self._background = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-prefetch')
             self._ai = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-ai')
             self._archive = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-archive')
+            self._tasks = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-tasks')
         else:
             self._serial, self._fast, self._background, self._ai = share._serial, share._fast, share._background, share._ai
-            self._archive = share._archive
+            self._archive, self._tasks = share._archive, share._tasks
         self._done.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
 
     def emit_event(self, name, value=None):
@@ -279,7 +292,8 @@ class Bridge(QObject):
                     self.emit_event('authRequired')
                 self._done.emit(request_id, False, json.dumps({'code': code, 'message': text}, ensure_ascii=False))
         pool = (self._background if name in BACKGROUND_METHODS else self._fast if name in FAST_METHODS
-                else self._ai if name in AI_METHODS else self._archive if name in ARCHIVE_METHODS else self._serial)
+                else self._ai if name in AI_METHODS else self._archive if name in ARCHIVE_METHODS
+                else self._tasks if name in TASK_METHODS else self._serial)
         try:
             pool.submit(work)
         except RuntimeError:
@@ -318,6 +332,7 @@ class Bridge(QObject):
         self._background.shutdown(wait=False, cancel_futures=True)
         self._ai.shutdown(wait=False, cancel_futures=True)
         self._archive.shutdown(wait=False, cancel_futures=True)
+        self._tasks.shutdown(wait=False)  # Task changes already asked for still run (and export).
 
 
 class _PrintHost:

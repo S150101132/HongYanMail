@@ -47,5 +47,6 @@ powershell -File packaging\build.ps1                            # package + chec
 
 - Python cannot write the user profile (AppData, Documents, TEMP) → data falls back to `HongyanData/` beside the program; tests/tools must keep temp files inside the repo and clean them up.
 - Chromium sandbox fails → app relaunches in compatibility mode automatically.
+- Sangfor endpoint protection refuses writes under `D:\work` from `.venv\Scripts\python(w).exe` (the installed Python312 is allowed) → `run_desktop.cmd` runs the installed `pythonw.exe` with `PYTHONPATH=.venv\Lib\site-packages`; the 任务中心 exports to the task folder there. Export failures are logged in `HongyanData\tasks\export-errors.log`.
 - Processes started from Claude are further restricted: let the user launch the app from Explorer for real checks. Qt runs from tools need `QTWEBENGINE_DISABLE_SANDBOX=1` in the driver only.
 - Inline shell heredocs mangle backslashes — write edit scripts to files.

@@ -392,25 +392,32 @@ const TS = {
   },
 };
 
-// Settings tabs: the existing settings are the first tab; the server-backed pages load when opened.
+// Settings pages: the left list picks one page. Local pages are in index.html; the
+// server-backed ones (rules, auto-reply, tags; manage.js adds 黑白名单) load when opened.
+// Only 常规 and 写信 hold preferences saved by the 保存 button at the foot.
+const SAVED_PAGES = ['general', 'compose'];
+function addSettingsPage(name, label, icon) {
+  $('#st-nav').insertAdjacentHTML('beforeend', `<button data-tab="${name}"><i data-icon="${icon}"></i>${label}</button>`);
+  const pane = document.createElement('div');
+  pane.className = 'modal-body st-pane hidden'; pane.dataset.pane = name; pane.id = 'st-' + name;
+  $('#st-main').appendChild(pane);
+  renderIcons($('#st-nav'));
+}
 (function settingsTabs() {
-  const card = $('#settings .modal-card');
-  const general = $('.settings-grid', card); general.dataset.pane = 'general';
-  $('#settings .modal-head b').insertAdjacentHTML('afterend', `<div class="st-tabs" role="tablist">
-    <button data-tab="general" class="on">常规</button><button data-tab="rules">收信规则</button><button data-tab="autoreply">休假自动回复</button><button data-tab="tags">标签</button></div>`);
-  for (const name of ['rules', 'autoreply', 'tags']) {
-    const pane = document.createElement('div');
-    pane.className = 'modal-body st-pane hidden'; pane.dataset.pane = name; pane.id = 'st-' + name;
-    card.appendChild(pane);
-  }
+  addSettingsPage('rules', '收信规则', 'route');
+  addSettingsPage('autoreply', '休假自动回复', 'clock');
+  addSettingsPage('tags', '标签', 'star');
   const show = (name) => {
-    $$('#settings .st-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+    if (!$(`#st-nav [data-tab="${name}"]`)) name = 'general';
+    $$('#st-nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('#settings [data-pane]').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== name));
+    $('#st-foot').classList.toggle('hidden', !SAVED_PAGES.includes(name));
+    $('#st-main').scrollTop = 0;
     if (name === 'rules') { if (!TG.list.length) TG.load(false); RL.load(); }
     if (name === 'autoreply') AR.load();
     if (name === 'tags') TG.load().then(() => TS.render());
   };
-  $$('#settings .st-tabs button').forEach((b) => (b.onclick = () => show(b.dataset.tab)));
+  $('#st-nav').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) RL.show(b.dataset.tab); });
   RL.show = show;
 })();
 
@@ -424,7 +431,12 @@ renderMessage = function (m) { _renderMessage(m); TG.renderReader(m); IV.render(
 const _selectMessage = selectMessage;
 selectMessage = function (id, opts) { const c = $('#iv-card'); if (c) c.remove(); const t = $('#r-tags'); if (t) t.innerHTML = ''; return _selectMessage(id, opts); };
 const _openSettings = openSettings;
-openSettings = function () { _openSettings(); RL.show('general'); };
+// openSettings(page, anchor): a page of the list ('ai', 'tasks', …) and a heading on it to scroll to.
+openSettings = function (page, anchor) {
+  _openSettings();
+  RL.show(typeof page === 'string' ? page : 'general');
+  if (anchor) setTimeout(() => { const el = $(anchor); if (el) el.scrollIntoView({ block: 'start' }); }, 30);
+};
 const _enterApp = enterApp;
 enterApp = async function (profile) { await _enterApp(profile); TG.started = true; TG.load(); };
 // Row context menu: a 标签… entry for the user's own mail.

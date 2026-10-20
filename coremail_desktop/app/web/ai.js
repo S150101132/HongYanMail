@@ -38,7 +38,7 @@ function renderAiPanel(m) {
   $$('[data-ai]', box).forEach((b) => (b.onclick = () => ({
     close: () => { S.ai.delete(m.id); renderAiPanel(m); },
     again: () => summarizeMessage(m, { refresh: true }),
-    setup: () => { openSettings(); setTimeout(() => $('#ai-section').scrollIntoView({ block: 'start' }), 50); },
+    setup: () => openSettings('ai'),
   }[b.dataset.ai])()));
 }
 
@@ -157,7 +157,7 @@ $('#ask-out').addEventListener('click', async (e) => {
   if (act) {
     ({ cancel: () => api('cancelAsk').catch(() => {}),
        again: () => { $('#ask-input').value = a.question; askMailbox(a.allow); },
-       setup: () => { openSettings(); setTimeout(() => $('#ai-section').scrollIntoView({ block: 'start' }), 50); },
+       setup: () => openSettings('ai'),
     })[act.dataset.ask]();
   } else if (allow) {
     if (!(await confirmDialog('把这封加密邮件发送给 AI 服务？',

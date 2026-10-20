@@ -112,7 +112,7 @@ STEPS = [
     (500, "$('#prompt').classList.add('hidden'); api('saveTemplate', { name: '周报', recipients: true, value: { subject: '本周工作周报', "
           "html: '<p>各位好，</p><p>本周完成：</p><ul><li>…</li></ul><p>下周计划：</p>', to: ['rd@example.invalid'] } })"
           ".then(() => api('saveTemplate', { name: '会议通知', value: { subject: '会议通知：', html: '<p>时间：</p><p>地点：</p><p>议程：</p>' } }))", None),
-    (700, "openSettings(); setTimeout(() => $('#tpl-section').scrollIntoView(), 100)", 'settings-templates'),
+    (700, "openSettings('compose', '#tpl-section')", 'settings-templates'),
     (600, "$('#settings').classList.add('hidden'); startCompose('new')", None),
     (900, "templateMenu($('#cmp-template'))", 'template-menu'),
     (700, "hideMenu(); applyTemplate(S.templates.find((t) => t.name === '周报'))", 'template-applied'),

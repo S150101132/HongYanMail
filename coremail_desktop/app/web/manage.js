@@ -536,14 +536,10 @@ readerAct = async function (act, m) {
   return _mgReaderAct(act, m);
 };
 
-// 设置 › 黑白名单, after the tabs rules.js adds.
+// 设置 › 黑白名单, after the pages rules.js adds.
 (function senderPane() {
-  const tabs = $('#settings .st-tabs'); if (!tabs || typeof RL === 'undefined') return;
-  tabs.insertAdjacentHTML('beforeend', '<button data-tab="senders">黑白名单</button>');
-  const pane = document.createElement('div');
-  pane.className = 'modal-body st-pane hidden'; pane.dataset.pane = 'senders'; pane.id = 'st-senders';
-  $('#settings .modal-card').appendChild(pane);
+  if (typeof addSettingsPage !== 'function') return;
+  addSettingsPage('senders', '黑白名单', 'filter');
   const show = RL.show;
   RL.show = (name) => { show(name); if (name === 'senders') SL.load(); };
-  $('[data-tab="senders"]', tabs).onclick = () => RL.show('senders');
 })();
