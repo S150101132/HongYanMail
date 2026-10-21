@@ -27,7 +27,7 @@ from coremail_desktop.mime.parser import parse_mime
 
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
                  'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'threads': False,
-                 'autostart': False, 'sidebarWidth': 232, 'listWidth': 400, 'undoSeconds': 10,
+                 'autostart': False, 'precheck': True, 'sidebarWidth': 232, 'listWidth': 400, 'undoSeconds': 10,
                  'ctTreeWidth': 250, 'ctListWidth': 340, 'tkListWidth': 460, 'tagsOpen': False,
                  'closeAction': '',  # ✕ of the main window: '' asks, 'tray' keeps running, 'quit' exits.
                  'hiddenFolders': []}  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
@@ -356,6 +356,7 @@ class MailBackend:
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
         self._ai_lock = threading.Lock()
         self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
+        self._ai_cancel = threading.Event()  # Streamed AI text: set by the page's 停止.
 
     # Accounts --------------------------------------------------------------
     def _accounts_path(self):
@@ -2354,14 +2355,7 @@ class MailBackend:
             raise AppError('NOT_AUTHENTICATED')
         client = self._ai()  # Not configured: say so before touching the mail.
         model = getattr(client, 'model', '')
-        if not self._local_only(mid) and mid not in self._docs and self.cache.get_body(mid) is None:
-            raise AppError('AI_MAIL_UNAVAILABLE')  # Opening the mail downloads it; this thread never does.
-        document = self._document(mid)
-        if document.encryption_state == 'locked':
-            raise AppError('CERT_LOCKED')
-        encrypted = document.encryption_state == 'decrypted'
-        if encrypted and not allow_encrypted:
-            raise AppError('AI_ENCRYPTED_CONFIRM')
+        document, encrypted = self._ai_document(mid, allow_encrypted)
         saved = self.cache.get('aiSummaries') or {}
         if not encrypted and not refresh and mid in saved:
             return {**saved[mid], 'cached': True}
@@ -2372,6 +2366,158 @@ class MailBackend:
             saved.pop(mid, None)
             saved[mid] = result
             self.cache.set('aiSummaries', dict(list(saved.items())[-300:]))
+        return result
+
+    def _ai_document(self, mid, allow_encrypted):
+        """The mail for an AI call -> (document, encrypted). Decrypted mail only when the
+        user agreed for this message; never downloads (the AI thread only reads)."""
+        if not self._local_only(mid) and mid not in self._docs and self.cache.get_body(mid) is None:
+            raise AppError('AI_MAIL_UNAVAILABLE')  # Opening the mail downloads it; this thread never does.
+        document = self._document(mid)
+        if document.encryption_state == 'locked':
+            raise AppError('CERT_LOCKED')
+        encrypted = document.encryption_state == 'decrypted'
+        if encrypted and not allow_encrypted:
+            raise AppError('AI_ENCRYPTED_CONFIRM')
+        return document, encrypted
+
+    def _ai_stream(self, messages, progress, req, max_tokens):
+        """A streamed call: text goes to progress({'req', 'delta'}) at most every 80 ms;
+        cancel_ai() stops it. -> the whole text. Counted like _ai_call."""
+        client, tokens, buffer, last = self._ai(), 0, [], [0.0]
+        self._ai_cancel.clear()
+
+        def flush():
+            if buffer and progress:
+                progress({'req': req, 'delta': ''.join(buffer)})
+            buffer.clear()
+            last[0] = time.monotonic()
+
+        def delta(text):
+            buffer.append(text)
+            if time.monotonic() - last[0] >= 0.08:
+                flush()
+        try:
+            if not hasattr(client, 'stream'):  # A stand-in without streaming: one piece.
+                text, tokens = client.chat(messages, max_tokens=max_tokens)
+                delta(text)
+            else:
+                text, tokens = client.stream(messages, delta, self._ai_cancel.is_set, max_tokens=max_tokens)
+            return text
+        finally:
+            flush()
+            self._count_ai(tokens)
+
+    def cancel_ai(self):
+        self._ai_cancel.set()
+        return True
+
+    # 写信助手 / 帮我起草回复 / 发送前检查 (ai/writing.py, ai/precheck.py) ----------
+    def rewrite(self, text, mode, instruction='', req='', progress=None):
+        """The user's own words rewritten (润色、改语气、翻译), streamed. Only what the page
+        sends: it leaves out the signature and the quoted original."""
+        from coremail_desktop.ai.writing import WRITE_TOKENS, rewrite_messages, tidy_draft
+        messages = rewrite_messages(text, mode, instruction)
+        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
+
+    def reply_ideas(self, mid, allow_encrypted=False):
+        """2–3 directions to answer this mail ({label, hint})."""
+        from coremail_desktop.ai.writing import IDEA_TOKENS, idea_messages, parse_ideas
+        mid = str(mid)
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        self._ai()
+        document, encrypted = self._ai_document(mid, allow_encrypted)
+        content, _ = self._ai_call(idea_messages(document, (self.cache.summary(mid) or {}).get('date') or ''),
+                                   max_tokens=IDEA_TOKENS, json_mode=True)
+        return {'ideas': parse_ideas(content), 'encrypted': encrypted}
+
+    def draft_reply(self, mid, idea='', note='', allow_encrypted=False, req='', progress=None):
+        """The body of a reply in the chosen direction, streamed. Recipients, subject and
+        encryption come from the ordinary reply; the AI only writes text."""
+        from coremail_desktop.ai.writing import WRITE_TOKENS, draft_messages, tidy_draft
+        mid = str(mid)
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        self._ai()
+        document, _ = self._ai_document(mid, allow_encrypted)
+        messages = draft_messages(document, idea, note, (self.cache.summary(mid) or {}).get('date') or '')
+        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
+
+    def precheck(self, text, to=(), recipients=()):
+        """本机发送前检查 (no network): past dates, a greeting naming nobody in 主送, outside
+        addresses in the body. to: [{'name','email'}]; recipients: every address."""
+        from coremail_desktop.ai.precheck import check
+        if not isinstance(text, str) or not isinstance(to, (list, tuple)) or not isinstance(recipients, (list, tuple)):
+            raise AppError('AI_INVALID_INPUT')
+        to = [{'name': str(p.get('name') or '')[:100], 'email': str(p.get('email') or '')[:320]}
+              for p in to[:200] if isinstance(p, dict)]
+        return {'issues': check(text[:50000], to, [str(r)[:320] for r in recipients[:500]], self.internal_domains(),
+                                datetime.now().date())}
+
+    def check_draft(self, subject='', to=(), cc=(), text='', attachments=()):
+        """AI 发送前检查: problems to look at, never changes. to/cc: display names and domains."""
+        from coremail_desktop.ai.writing import CHECK_TOKENS, check_messages, parse_issues
+        if not all(isinstance(v, (list, tuple)) for v in (to, cc, attachments)):
+            raise AppError('AI_INVALID_INPUT')
+        messages = check_messages(subject, list(to), list(cc), text, list(attachments), datetime.now().strftime('%Y-%m-%d'))
+        content, _ = self._ai_call(messages, max_tokens=CHECK_TOKENS, json_mode=True)
+        return {'issues': parse_issues(content, text)}
+
+    # 总结整个会话 (ai/thread.py) ---------------------------------------------------
+    def thread_ai_status(self, mid):
+        """What 总结整个会话 needs first: the mail ids (oldest first, as sent to the AI), the
+        ones not downloaded yet (the page opens them without marking read) and how many
+        are encrypted. Runs on the mail thread (it may search the server and decrypt)."""
+        from coremail_desktop.ai.thread import pick
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        rows = sorted(self.thread(str(mid))['rows'], key=lambda r: r.get('ts') or 0)
+        rows, left_out = pick(rows)
+        ids = [r['id'] for r in rows]
+        missing = [m for m in ids if not self._local_only(m) and m not in self._docs and self.cache.get_body(m) is None]
+        encrypted = sum(1 for m in ids if m not in missing and self._document(m).encryption_state in ('decrypted', 'locked'))
+        return {'ids': ids, 'missing': missing, 'encrypted': encrypted, 'leftOut': left_out}
+
+    def summarize_thread(self, mid, allow_encrypted=False, refresh=False):
+        """总结整个会话. Encrypted mail goes only with the user's consent (else it is named but
+        left out); a result with encrypted mail in it is never kept."""
+        from coremail_desktop.ai.thread import THREAD_TOKENS, build_messages, parse, pick, sender
+        mid = str(mid)
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        client = self._ai()
+        rows, left_out = pick(sorted(self.thread(mid)['rows'], key=lambda r: r.get('ts') or 0))
+        if len(rows) < 2:
+            raise AppError('AI_NOT_A_THREAD')
+        key = ':'.join(r['id'] for r in rows)
+        saved = self.cache.get('aiThreads') or {}
+        if not refresh and key in saved:
+            return {**saved[key], 'cached': True}
+        mails, skipped = [], 0
+        for row in rows:
+            try:
+                document, encrypted = self._ai_document(row['id'], allow_encrypted)
+            except AppError as error:
+                if error.code not in ('AI_ENCRYPTED_CONFIRM', 'CERT_LOCKED'):
+                    raise
+                mails.append({'id': row['id'], 'date': row.get('date') or '', 'document': None})
+                skipped += 1
+                continue
+            mails.append({'id': row['id'], 'date': row.get('date') or '', 'document': document, 'encrypted': encrypted})
+        content, _ = self._ai_call(build_messages(mails, left_out), max_tokens=THREAD_TOKENS, json_mode=True)
+        result = parse(content, len(mails))
+        for step in result['timeline']:
+            mail = mails[step['n'] - 1]
+            step.update(mid=mail['id'], date=str(mail['date'])[5:10], who=sender(mail['document']) if mail['document'] else '')
+            del step['n']
+        encrypted = any(m.get('encrypted') for m in mails)
+        result.update(count=len(mails), leftOut=left_out, skipped=skipped, encrypted=encrypted,
+                      model=getattr(client, 'model', ''), at=datetime.now().strftime('%Y-%m-%d %H:%M'))
+        if not encrypted:
+            saved.pop(key, None)
+            saved[key] = result
+            self.cache.set('aiThreads', dict(list(saved.items())[-100:]))
         return result
 
     # 问邮箱: the model searches the server and reads mail through read-only tools

@@ -959,7 +959,7 @@ $('#reader-body').addEventListener('click', async (e) => {
     delete: () => deleteMessage(m.id), move: () => pickFolder(m.id), unread: () => setFlags(m.id, { read: false }),
     flag: () => setFlags(m.id, { flagged: !m.flags.flagged }), find: openFind,
     recall: () => recallMessage(m), status: () => loadDeliveryStatus(m, true), unschedule: () => unscheduleMessage(m),
-    print: () => printMessage(m), popout: () => popOut(m.id), more: () => moreMenu(b, m), summarize: () => summarizeMessage(m),
+    print: () => printMessage(m), popout: () => popOut(m.id), more: () => moreMenu(b, m), summarize: () => aiMenu(b, m), aireply: () => replyAssist(m),
   }[b.dataset.act] || (() => {}))();
 });
 
@@ -1305,6 +1305,7 @@ function openComposer(draft) {
   renderSchedule();
   composerOpened(draft);
   mentionsReset();
+  if (typeof renderComposeAi === 'function') { C.ai = null; renderComposeAi(); }
   setTimeout(() => {
     if (!(draft.to || []).length) $('.chips[data-field="to"] input').focus();
     else { const ed = $('#cmp-editor'); ed.focus(); const r = document.createRange(); r.setStart(ed, 0); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
@@ -1595,6 +1596,7 @@ async function sendMail() {
   const text = $('#cmp-editor').innerText;
   if (/附件|attach/i.test(text.split('原始邮件')[0]) && !(value.attachments || []).length &&
       !(await confirmDialog('忘记添加附件？', '正文提到了“附件”，但还没有添加附件。仍要发送吗？', '仍然发送'))) return;
+  if (S.prefs.precheck !== false && !(await precheckBeforeSend(value))) return;
   const btn = $('#cmp-send'); btn.disabled = true; btn.innerHTML = value.scheduleAt ? '<i data-icon="clock"></i>提交中…' : '<i data-icon="send"></i>发送中…'; renderIcons(btn);
   $('#cmp-status').textContent = (value.attachments || []).length ? '正在上传附件并发送…' : '正在发送…';
   try {
@@ -1759,7 +1761,7 @@ function openSettings() {
   $('#pref-close').value = p.closeAction || '';
   // The first-close dialog may have remembered a choice since the page last read prefs.
   api('prefs').then((fresh) => { S.prefs.closeAction = fresh.closeAction; $('#pref-close').value = fresh.closeAction || ''; }).catch(() => {});
-  $('#pref-undo').value = String(p.undoSeconds ?? 10);
+  $('#pref-undo').value = String(p.undoSeconds ?? 10); $('#pref-precheck').checked = p.precheck !== false;
   $('#pref-signature').innerHTML = p.signature || '';
   renderSidePicks();
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
@@ -1788,7 +1790,7 @@ $('#btn-account').onclick = () => openSettings();  // Through the wrappers the o
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, pollSeconds: +$('#pref-poll').value,
-    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, signature: signatureHtml(),
+    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, precheck: $('#pref-precheck').checked, signature: signatureHtml(),
     closeAction: $('#pref-close').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
   try {
     S.prefs = await api('setPrefs', { values });

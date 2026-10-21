@@ -194,7 +194,8 @@
         <button class="tb sent-only hidden" data-act="status" title="查看每位收件人的投递和阅读状态"><i data-icon="route"></i><span>投递状态</span></button>
         <button class="tb sched-only hidden" data-act="unschedule" title="取消定时，邮件转为普通草稿"><i data-icon="clock"></i><span>取消定时</span></button>
         <span class="tb-sep"></span>
-        <button class="tb" data-act="summarize" title="AI 总结这封邮件（正文会发送到 AI 服务）"><i data-icon="spark"></i><span>总结</span></button>
+        <button class="tb" data-act="summarize" title="AI 总结这封邮件或整个会话（正文会发送到 AI 服务）"><i data-icon="spark"></i><span>总结</span></button>
+        <button class="tb" data-act="aireply" title="AI 给出回复方向并起草回复（正文会发送到 AI 服务）"><i data-icon="reply"></i><span>AI 回复</span></button>
         <span class="spacer"></span>
         <button class="tb" data-act="find" title="在正文中查找"><i data-icon="search"></i></button>
         <button class="tb" data-act="print" title="打印 (Ctrl+P)"><i data-icon="print"></i></button>
@@ -263,10 +264,13 @@
     <button id="cmp-image" title="插入图片（也可以直接粘贴截图或拖入图片）"><i data-icon="image"></i></button>
     <button id="cmp-table" title="表格：插入表格；光标在表格中时可增删行列、合并单元格、设置边框（Tab 跳到下一格）"><i data-icon="table"></i></button>
     <button data-cmd="removeFormat" title="清除格式"><i data-icon="eraser"></i></button>
+    <span class="tb-sep"></span>
+    <button id="cmp-ai" title="AI 写信助手：润色、改语气、翻译、发送前检查（文字会发送到 AI 服务）"><i data-icon="spark"></i><span>AI</span></button>
     <span class="spacer"></span>
     <button id="cmp-attach" title="添加附件"><i data-icon="clip"></i><span>附件</span></button>
   </div>
   <div id="cmp-editor" class="cmp-editor" contenteditable="true" spellcheck="false"></div>
+  <div id="cmp-ai-panel" class="cmp-ai-panel hidden"></div>
   <div id="cmp-atts" class="cmp-atts"></div>
   <div class="cmp-foot">
     <button id="cmp-send" class="btn primary" title="发送 (Ctrl+Enter)"><i data-icon="send"></i>发送</button>
@@ -326,6 +330,9 @@
           <label class="pref-row">发送前等待
             <select id="pref-undo"><option value="0">关闭</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="20">20 秒</option><option value="30">30 秒</option></select></label>
           <p class="muted small">点击发送后先在本机等待几秒，期间可以撤销（服务器不支持撤回已发出的邮件）。关到托盘时照常发出；等待期间退出鸿雁则不发送，邮件保留在本机草稿。</p>
+          <h3>发送前检查</h3>
+          <label class="check"><input type="checkbox" id="pref-precheck"> 发送时检查已经过去的日期、与主送人对不上的称呼、正文中的外部邮箱</label>
+          <p class="muted small">在本机检查，不联网，没有发现问题就不打扰。更仔细的检查可以在写信窗口点「AI → 发送前检查」（会把正文发送到 AI 服务）。</p>
           <h3>邮件签名</h3>
           <p class="muted small">自动添加到新邮件、回复和转发中。可以放图片（如公司 LOGO），点击图片调整大小；图片随邮件内嵌发出，收件人不必联网加载，加密和签名邮件中同样有效。</p>
           <div class="cmp-toolbar mini" id="sig-toolbar">

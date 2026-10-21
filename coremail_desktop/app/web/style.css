@@ -722,6 +722,26 @@ img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ai-wait span:nth-child(3) { animation-delay: .4s; }
 @keyframes ai-dot { 40% { opacity: 1; } }
 
+/* v1.0: 会话摘要, AI 回复, 写信助手, 发送前检查 (ai.js). */
+.ai-steps { margin: 0; padding-left: 20px; }
+.ai-steps li { cursor: pointer; border-radius: 6px; }
+.ai-steps li:hover { background: var(--hover); }
+.ai-ideas { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.ai-idea { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; max-width: 260px; padding: 7px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); cursor: pointer; }
+.ai-idea:hover { border-color: var(--accent); background: var(--accent-soft); }
+.ai-reply-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ai-reply-row input { flex: 1; min-width: 180px; }
+.ai-draft { white-space: pre-wrap; color: var(--text-2); border-left: 3px solid var(--accent); padding-left: 10px; margin: 4px 0 8px; }
+.cmp-ai-panel { flex: none; max-height: 45%; overflow-y: auto; border-top: 1px solid var(--line); font-size: 13.5px; }
+.cmp-ai-panel > .ai-error, .cmp-ai-panel > .muted, .cmp-ai-panel > .row-gap, .cmp-ai-panel > .ai-wait { margin: 6px 14px; }
+.cmp-ai-text { white-space: pre-wrap; padding: 8px 14px; line-height: 1.7; }
+.precheck-list { margin: 8px 0; padding-left: 0; list-style: none; }
+.precheck-list li { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer; line-height: 1.6; }
+.precheck-list li:hover { border-color: var(--accent); }
+.precheck-list b { margin-right: 8px; color: var(--accent); }
+.precheck-quote { background: var(--accent-soft); border-radius: 4px; padding: 0 4px; }
+
 /* 问邮箱 (ai.js): takes the reader pane while #reader has .asking. */
 #reader-ask { display: none; flex-direction: column; height: 100%; min-height: 0; }
 #reader.asking > :not(#reader-ask) { display: none !important; }

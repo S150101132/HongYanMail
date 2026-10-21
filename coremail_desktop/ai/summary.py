@@ -110,11 +110,23 @@ def _who(value, limit=10):
     return '、'.join(people[:limit]) + (f' 等 {len(people)} 人' if more > 0 else '')
 
 
+def marks():
+    """A random delimiter pair the mail cannot know."""
+    token = secrets.token_hex(6)
+    return f'<<<MAIL-{token}>>>', f'<<<END-{token}>>>'
+
+
 def build_messages(document, date=''):
+    open_mark, close_mark = marks()
+    material = mail_material(document, date).replace(open_mark, '').replace(close_mark, '')
+    return [{'role': 'system', 'content': SYSTEM_PROMPT.format(open=open_mark, close=close_mark)},
+            {'role': 'user', 'content': f'请总结下面这封邮件。\n{open_mark}\n{material}\n{close_mark}'}]
+
+
+def mail_material(document, date=''):
+    """Subject, people (names and domains only), date, attachment names and the body."""
     header = lambda key: ', '.join(document.headers.get(key, ()))
     text, _ = mail_text(document)
-    token = secrets.token_hex(6)
-    open_mark, close_mark = f'<<<MAIL-{token}>>>', f'<<<END-{token}>>>'
     lines = [f'主题：{header("subject")}', f'发件人：{_who(header("from"), 1)}']
     if header('to'):
         lines.append(f'收件人：{_who(header("to"))}')
@@ -125,10 +137,7 @@ def build_messages(document, date=''):
     names = [a.name for a in document.attachments][:20]
     if names:
         lines.append('附件：' + '、'.join(names))
-    material = '\n'.join(lines) + '\n\n正文：\n' + (text or '（没有正文）')
-    material = material.replace(open_mark, '').replace(close_mark, '')
-    return [{'role': 'system', 'content': SYSTEM_PROMPT.format(open=open_mark, close=close_mark)},
-            {'role': 'user', 'content': f'请总结下面这封邮件。\n{open_mark}\n{material}\n{close_mark}'}]
+    return '\n'.join(lines) + '\n\n正文：\n' + (text or '（没有正文）')
 
 
 def _item(value):

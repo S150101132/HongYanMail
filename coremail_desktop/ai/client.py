@@ -68,6 +68,22 @@ def _http_code(error):
     return 'AI_NOT_FOUND'  # 3xx, 404, 405: the address or model is not an API endpoint.
 
 
+def _failure(error):
+    """The fixed code for a failure while connecting or reading."""
+    if isinstance(error, HTTPError):
+        code = _http_code(error)
+        error.close()
+        return code
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, TimeoutError):
+        return 'AI_TIMEOUT'
+    if isinstance(reason, ssl.SSLError):
+        return 'TLS_ERROR'
+    if isinstance(error, (URLError, OSError)):
+        return 'NETWORK_ERROR'
+    raise error  # A programming error, not the network: let it surface as INTERNAL_ERROR.
+
+
 class ChatClient:
     def __init__(self, base_url, model, key, opener=None, timeout=60, retries=2, sleep=time.sleep):
         self.base_url = check_base_url(base_url)
@@ -100,27 +116,80 @@ class ChatClient:
                     raise
             self.sleep(2 ** attempt)
 
-    def _post(self, data):
+    def stream(self, messages, on_delta, cancelled=lambda: False, max_tokens=800):
+        """Streamed reply: each piece of text goes to on_delta as it arrives. -> (text, total
+        tokens). Retries 429 and 5xx only before any text arrived; cancelled() is checked
+        between pieces and ends the call with AI_CANCELLED."""
+        body = {'model': self.model, 'messages': messages, 'max_tokens': max_tokens, 'temperature': 0.3,
+                'stream': True, 'stream_options': {'include_usage': True}}
+        data, parts = json.dumps(body, ensure_ascii=False).encode('utf-8'), []
+        for attempt in range(self.retries + 1):
+            try:
+                return self._stream(data, on_delta, cancelled, parts)
+            except AppError as error:
+                if parts or error.code not in RETRY_CODES or attempt == self.retries:
+                    raise
+            self.sleep(2 ** attempt)
+
+    def _stream(self, data, on_delta, cancelled, parts):
+        if cancelled():
+            raise AppError('AI_CANCELLED')
+        tokens, size = 0, 0
+        try:
+            with self._open(data, 'text/event-stream') as response:
+                while True:
+                    line = response.readline(MAX_RESPONSE + 1)
+                    if not line:
+                        raise AppError('AI_UNAVAILABLE' if parts else 'AI_BAD_RESPONSE')  # Ended without [DONE].
+                    size += len(line)
+                    if size > MAX_RESPONSE:
+                        raise AppError('AI_BAD_RESPONSE')
+                    line = line.strip()
+                    if not line.startswith(b'data:'):
+                        continue  # Blank lines, ': keep-alive' comments, other fields.
+                    payload = line[5:].strip()
+                    if payload == b'[DONE]':
+                        break
+                    try:
+                        value = json.loads(payload.decode('utf-8'))
+                        choices = value.get('choices') or []
+                        delta = (choices[0].get('delta') or {}).get('content') or '' if choices else ''
+                        tokens = int((value.get('usage') or {}).get('total_tokens') or tokens)
+                    except (ValueError, AttributeError, TypeError):
+                        raise AppError('AI_BAD_RESPONSE') from None
+                    if not isinstance(delta, str):
+                        raise AppError('AI_BAD_RESPONSE')
+                    if delta:
+                        parts.append(delta)
+                        on_delta(delta)
+                    if cancelled():
+                        raise AppError('AI_CANCELLED')
+        except AppError:
+            raise
+        except Exception as error:
+            raise AppError(_failure(error)) from None
+        text = ''.join(parts)
+        if not text.strip():
+            raise AppError('AI_BAD_RESPONSE')
+        return text, tokens
+
+    def _open(self, data, accept):
         request = Request(self.base_url + '/chat/completions', data=data, method='POST',
-                          headers={'Content-Type': 'application/json', 'Accept': 'application/json',
+                          headers={'Content-Type': 'application/json', 'Accept': accept,
                                    'Authorization': 'Bearer ' + self._key})
         try:
-            with self.opener.open(request, timeout=self.timeout) as response:
+            return self.opener.open(request, timeout=self.timeout)
+        except Exception as error:
+            raise AppError(_failure(error)) from None
+
+    def _post(self, data):
+        try:
+            with self._open(data, 'application/json') as response:
                 raw = response.read(MAX_RESPONSE + 1)
-        except HTTPError as error:
-            code = _http_code(error)
-            error.close()
-            raise AppError(code) from None
-        except URLError as error:
-            if isinstance(error.reason, TimeoutError):
-                raise AppError('AI_TIMEOUT') from None
-            raise AppError('TLS_ERROR' if isinstance(error.reason, ssl.SSLError) else 'NETWORK_ERROR') from None
-        except TimeoutError:
-            raise AppError('AI_TIMEOUT') from None
-        except ssl.SSLError:
-            raise AppError('TLS_ERROR') from None
-        except OSError:
-            raise AppError('NETWORK_ERROR') from None
+        except AppError:
+            raise
+        except Exception as error:
+            raise AppError(_failure(error)) from None
         if len(raw) > MAX_RESPONSE:
             raise AppError('AI_BAD_RESPONSE')
         try:

@@ -618,6 +618,18 @@ class DemoAiClient:
             return json.dumps({'subject': f'工作周报（演示，{data["from"]} 至 {data["to"]}）', 'summary': '演示模式：由本机根据任务记录生成，没有联网。',
                                'sections': [{'title': '本周完成', 'items': done}, {'title': '本周进展', 'items': moving},
                                             {'title': '受阻与风险', 'items': blocked}, {'title': '下周计划', 'items': plan}]}, ensure_ascii=False), 0
+        if '鸿雁写信助手' in messages[0]['content'] and '回复方向' in messages[0]['content'] and 'ideas' in messages[0]['content']:
+            return json.dumps({'ideas': [{'label': '同意并确认', 'hint': '答应对方的要求，确认时间（演示）'},
+                                         {'label': '先问清楚', 'hint': '请对方补充缺少的信息（演示）'},
+                                         {'label': '婉拒或改期', 'hint': '说明原因，提出别的时间（演示）'}]}, ensure_ascii=False), 0
+        if '鸿雁发送前检查' in messages[0]['content']:
+            return json.dumps({'issues': [] if '附件' not in text or '（没有附件）' not in text else
+                               [{'kind': 'attachment', 'quote': '附件', 'advice': '正文提到附件，但没有添加附件（演示）。'}]}, ensure_ascii=False), 0
+        if '会话（同一主题的多封往来邮件' in messages[0]['content']:
+            count = len(re.findall(r'^邮件 \d+$', text, re.M))
+            return json.dumps({'conclusion': f'这个会话共 {count} 封邮件（演示模式：由本机生成，没有联网）。',
+                               'timeline': [{'n': n, 'text': f'第 {n} 封邮件。'} for n in range(1, count + 1)][:8],
+                               'open': [], 'actions': []}, ensure_ascii=False), 0
         if '鸿雁任务助手' in messages[0]['content']:
             mail = next((m['content'] for m in messages if m['role'] == 'user' and '请根据下面的邮件' in m['content']), '')
             if mail:
@@ -666,6 +678,23 @@ class DemoAiClient:
         else:
             action = {'op': 'progress', 'id': task_id, 'text': words, 'date': '', 'latest': True, 'fields': {}}
         return {'reply': f'演示模式：对 #{task_id} 执行「{action["op"]}」（本机生成，没有联网）。', 'questions': [], 'actions': [action]}
+
+    def stream(self, messages, on_delta, cancelled=lambda: False, max_tokens=800):
+        """写信助手 and 起草回复 in demo mode: a scripted text, a few characters at a time."""
+        import time
+        from coremail_desktop.errors import AppError
+        system, text = messages[0]['content'], messages[-1]['content']
+        if '起草一封工作邮件的回复' in system:
+            out = '您好：\n\n邮件已收到，谢谢。我们会按邮件中的要求尽快处理，【待补充：具体时间】前给您答复。\n\n（演示模式：由本机生成，没有联网。）'
+        else:
+            body = text.split('\n', 2)[2].rsplit('\n', 1)[0] if text.count('\n') >= 3 else text
+            out = body.strip() + '\n\n（演示模式：这是本机生成的改写示例，没有联网。）'
+        for i in range(0, len(out), 6):
+            if cancelled():
+                raise AppError('AI_CANCELLED')
+            time.sleep(0.04)
+            on_delta(out[i:i + 6])
+        return out, 0
 
     def complete(self, messages, tools=None, max_tokens=800, json_mode=False):
         """问邮箱 in demo mode: search with the question's first words, read the top

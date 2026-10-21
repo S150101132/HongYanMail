@@ -26,3 +26,8 @@ PASSWD.txt
 runtime/.pfx-pass
 outbox-verify-*/
 HongyanData/
+pip-build-tracker-*/
+pip-ephem-wheel-cache-*/
+pip-install-*/
+.claude/
+新文件*.md

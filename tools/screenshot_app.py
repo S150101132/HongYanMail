@@ -212,6 +212,36 @@ STEPS += [
     (1000, "document.body.offsetWidth", 'group-editor'),
     (500, "hideSuggest(); $('#prompt').classList.add('hidden'); $('#settings').classList.add('hidden')", None),
 ]
+# v1.0 AI: 会话摘要, AI 回复, 写信助手, 发送前检查 (HONGYAN_WALK_V10=1 runs only these; demo AI, no network).
+V10 = len(STEPS)
+FIND_THREAD = "selectMessage(S.rows.find((r) => r.subject.includes('接口联调')).id)"
+STEPS += [
+    (900, lambda: (setattr(backend, 'ai_client', __import__('coremail_desktop.app.demo', fromlist=['DemoAiClient']).DemoAiClient()),
+                   backend.set_prefs({'undoSeconds': 0})), None),
+    (600, "api('closeReaders'); selectFolder('1')", None),
+    (1200, FIND_THREAD, None),
+    (700, "aiMenu($('#reader-body [data-act=summarize]'), S.message)", 'ai-menu'),
+    (500, "hideMenu(); summarizeThread(S.message)", None),
+    (3500, "document.body.offsetWidth", 'ai-thread'),
+    (500, "replyAssist(S.message)", None),
+    (1500, "document.body.offsetWidth", 'ai-reply-ideas'),
+    (500, "$('.ai-idea').click()", None),
+    (1200, "document.body.offsetWidth", 'ai-reply-streaming'),
+    (2500, "document.body.offsetWidth", 'ai-reply-draft'),
+    (600, "closeComposer(true); startCompose('new', null, { to: ['李华 <lihua@example.invalid>'], subject: '接口联调安排' })", None),
+    (900, "$('#cmp-editor').focus(); const s = getSelection(); s.selectAllChildren($('#cmp-editor').firstChild); s.collapseToStart();"
+          " document.execCommand('insertText', false, '张总，你好：'); document.execCommand('insertParagraph');"
+          " document.execCommand('insertText', false, '接口联调请在10月15日前完成，有问题可以联系 vendor@partner.example 。')", None),
+    (600, "localStorage.setItem('hy-ai-write', '1'); rewriteOwn('polish', '润色')", None),
+    (2500, "document.body.offsetWidth", 'ai-rewrite'),
+    (500, "$('[data-cai=replace]').click()", None),
+    (700, "document.body.offsetWidth", 'ai-rewrite-replaced'),
+    (500, "C.encrypt = false; C.sign = false; renderEncrypt(); sendMail()", None),
+    (1200, "document.body.offsetWidth", 'precheck'),
+    (500, "$('#prompt [data-close]').click(); aiCheckDraft()", None),
+    (1500, "document.body.offsetWidth", 'ai-check'),
+    (500, "$('#prompt').classList.add('hidden'); closeComposer(true)", None),
+]
 
 
 def render_pdf(mid):
@@ -249,6 +279,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

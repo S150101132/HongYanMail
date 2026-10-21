@@ -69,6 +69,8 @@ BACKEND_METHODS = {
     'threadCounts': 'thread_counts', 'thread': 'thread',
     'aiSettings': 'ai_settings', 'setAiSettings': 'set_ai_settings', 'aiTest': 'ai_test', 'summarize': 'summarize',
     'askMailbox': 'ask_mailbox', 'cancelAsk': 'cancel_ask',
+    'rewrite': 'rewrite', 'replyIdeas': 'reply_ideas', 'draftReply': 'draft_reply', 'cancelAi': 'cancel_ai',
+    'precheck': 'precheck', 'checkDraft': 'check_draft', 'threadAiStatus': 'thread_ai_status', 'summarizeThread': 'summarize_thread',
     'archiveStatus': 'archive_status', 'setArchiveFolder': 'set_archive_folder', 'archiveScan': 'archive_scan',
     'archiveView': 'archive_view', 'searchArchive': 'search_archive',
     'tasksStatus': 'tasks_status', 'tasksSetFolder': 'tasks_set_folder', 'tasksOverview': 'tasks_overview', 'taskGet': 'task_get',
@@ -86,10 +88,13 @@ BACKEND_METHODS = {
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
                 'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
-                'recipientGroups', 'aiSettings', 'cancelAsk', 'archiveStatus', 'archiveView', 'searchArchive',
+                'recipientGroups', 'aiSettings', 'cancelAsk', 'cancelAi', 'precheck', 'archiveStatus', 'archiveView', 'searchArchive',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
-AI_METHODS = {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport'}
+AI_METHODS = {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
+              'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread'}
+# Streamed AI text: each piece reaches the page as an aiStream event.
+STREAM_METHODS = {'rewrite', 'draftReply'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
 ARCHIVE_METHODS = {'archiveScan'}
 # 任务中心: one thread, so every task change and its export run one after another.
@@ -272,6 +277,8 @@ class Bridge(QObject):
     def run(self, request_id, name, params):
         if name == 'askMailbox':  # Each search and read shows on the page as it happens.
             params = {**params, 'progress': lambda step: self.emit_event('askProgress', step)}
+        elif name in STREAM_METHODS:
+            params = {**params, 'progress': lambda piece: self.emit_event('aiStream', piece)}
         elif name == 'archiveScan':
             params = {**params, 'progress': lambda step: self.emit_event('archiveProgress', step)}
 
