@@ -107,7 +107,9 @@ i[data-icon] svg { width: 100%; height: 100%; }
 .form-error { color: var(--danger); min-height: 1em; font-size: 13px; }
 
 /* App layout */
-.app { display: grid; grid-template-columns: var(--side-w, 232px) clamp(280px, var(--list-w, 400px), calc(100vw - var(--side-w, 232px) - 420px)) minmax(0, 1fr); height: 100vh; }
+.app { display: grid; grid-template-columns: var(--side-w, 232px) clamp(280px, var(--list-w, 400px), calc(100vw - var(--side-w, 232px) - 420px - var(--chat-col, 0px))) minmax(0, 1fr) var(--chat-col, 0px); height: 100vh; }
+/* 问邮箱 (ai.js): a fourth column on the right while .chatting. */
+.app.chatting { --chat-col: clamp(320px, 28vw, 440px); }
 .sidebar { background: var(--side); display: flex; flex-direction: column; padding: 14px 10px 10px; min-height: 0; min-width: 0; border-right: 1px solid var(--line); position: relative; }
 .side-head { flex: none; display: flex; align-items: center; gap: 9px; padding: 2px 8px 14px; }
 .compose-row { flex: none; display: flex; gap: 1px; margin: 0 4px 12px; }
@@ -371,7 +373,7 @@ button.side-section[aria-expanded="true"] i { transform: rotate(90deg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 @media (max-width: 1180px) {
-  .app { grid-template-columns: 64px clamp(280px, var(--list-w, 400px), calc(100vw - 64px - 420px)) minmax(0, 1fr); }
+  .app { grid-template-columns: 64px clamp(280px, var(--list-w, 400px), calc(100vw - 64px - 420px - var(--chat-col, 0px))) minmax(0, 1fr) var(--chat-col, 0px); }
   .sidebar .brand-name, .sidebar .fname, .sidebar .count, .side-section, .account-text, .compose-btn span, .account-btn > i, .compose-more, #split-side { display: none; }
   .compose-row { margin: 0 auto 12px; }
   .compose-btn { padding: 0; width: 44px; flex: none; border-radius: 10px; }
@@ -742,17 +744,30 @@ img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 .precheck-list b { margin-right: 8px; color: var(--accent); }
 .precheck-quote { background: var(--accent-soft); border-radius: 4px; padding: 0 4px; }
 
-/* 问邮箱 (ai.js): takes the reader pane while #reader has .asking. */
-#reader-ask { display: none; flex-direction: column; height: 100%; min-height: 0; }
-#reader.asking > :not(#reader-ask) { display: none !important; }
-#reader.asking #reader-ask { display: flex; }
+/* 问邮箱 (ai.js): a conversation in the right column; answers are cards, questions bubbles. */
+.chat-pane { display: none; grid-column: 4; flex-direction: column; min-height: 0; min-width: 0; border-left: 1px solid var(--line); background: var(--panel); }
+.app.chatting .chat-pane { display: flex; }
+.chat-head { flex: none; display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--line-2); }
 .ask-title { display: inline-flex; align-items: center; gap: 6px; }
 .ask-title i { width: 16px; height: 16px; color: var(--accent); }
-.ask-form { display: flex; gap: 8px; align-items: flex-end; }
-.ask-form textarea { flex: 1; min-width: 0; min-height: 46px; max-height: 200px; resize: vertical; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px;
-  background: var(--panel); color: var(--text); font: inherit; line-height: 1.5; outline: none; }
-.ask-form textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.ask-note { margin: 8px 0 14px; }
+.chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.chat-scroll > * { flex: none; }
+.chat-empty { margin: auto 0; text-align: center; color: var(--text-2); font-size: 13px; line-height: 1.8; }
+.chat-empty b { display: block; font-size: 15px; color: var(--text); margin-bottom: 6px; }
+.chat-try { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.chat-try button { text-align: left; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); cursor: pointer; font: inherit; font-size: 12.5px; }
+.chat-try button:hover { border-color: var(--accent); }
+.chat-q { align-self: flex-end; max-width: 88%; padding: 8px 12px; border-radius: 12px 12px 3px 12px; background: var(--accent-soft); color: var(--text); white-space: pre-wrap; font-size: 13.5px; line-height: 1.6; }
+.chat-q .chat-here-tag { display: block; margin-top: 2px; font-size: 11.5px; color: var(--text-2); }
+.chat-sep { text-align: center; font-size: 12px; color: var(--muted); }
+.chat-foot { flex: none; padding: 8px 12px 10px; border-top: 1px solid var(--line-2); }
+.chat-foot .tk-ask textarea { max-height: 160px; }
+.chat-here { display: flex; align-items: center; gap: 6px; margin: 0 2px 6px; font-size: 12px; color: var(--text-2); min-width: 0; }
+.chat-here span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.chat-here button { flex: none; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 2px; font: inherit; }
+.chat-here button:hover { color: var(--accent); }
+.chat-note { margin: 6px 2px 0; line-height: 1.5; }
+.chat-pane .ask-card .ai-head .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ask-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13.5px; }
 .ask-card .ai-head .muted { flex: 1; }
 .ask-answer { white-space: pre-wrap; line-height: 1.75; font-size: 14px; margin: 0; }

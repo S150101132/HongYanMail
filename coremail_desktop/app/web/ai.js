@@ -382,84 +382,154 @@ $('#ai-clear').onclick = async () => {
 };
 
 // ---------------------------------------------------------------- 问邮箱
-// The answer and its sources are plain text (esc); [M3] citations become links to
-// the source cards, which open the mail in a pop-out reader.
-S.ask = null;  // {question, allow, loading, steps, result | error}
+// A conversation in the right column (Ctrl+J). The backend keeps its refs and earlier
+// answers by id, so a follow-up can say "第二封"; the page only shows the turns. Answers
+// and sources are plain text (esc); [M3] citations become links to the source cards.
+const CHAT_TURNS = 6;  // ai/agent.py: earlier turns sent with each question.
+S.chat = { id: '', turns: [], skip: '' };  // turn: {question, allow, here, loading, steps, result | error}
 
+function chatOpen() { return $('#app').classList.contains('chatting'); }
 function showAsk(question) {
-  $('#reader').classList.add('asking');
-  if (question && question.trim()) { $('#ask-input').value = question.trim(); askMailbox(); }
-  else { renderAsk(); $('#ask-input').focus(); }
-}
-function hideAsk() { $('#reader').classList.remove('asking'); }
-
-async function askMailbox(allow = []) {
-  const question = $('#ask-input').value.trim();
-  if (!question || (S.ask && S.ask.loading)) return;
-  const state = S.ask = { question, allow, loading: true, steps: [] };
+  $('#app').classList.add('chatting');
   renderAsk();
-  try { state.result = await api('askMailbox', { question, allow }); } catch (err) { state.error = err; }
-  state.loading = false;
-  if (S.ask === state) renderAsk();
+  if (question && question.trim()) { $('#ask-input').value = question.trim(); askMailbox(); }
+  else $('#ask-input').focus();
+}
+function hideAsk() { $('#app').classList.remove('chatting'); }
+function toggleChat() { if (chatOpen()) hideAsk(); else showAsk(); }
+function newChat() {
+  if (S.chat.turns.some((t) => t.loading)) api('cancelAsk').catch(() => {});
+  S.chat = { id: '', turns: [], skip: '' };
+  renderAsk(); $('#ask-input').focus();
+}
+
+// The mail open in the reader goes along with the question ("这封说的截止日期是哪天")
+// unless the user took it off; it comes back when another mail opens.
+function chatHere() {
+  const m = S.message;
+  if (!m || READER_MID || S.multi.size >= 2 || S.selected !== m.id || $('#reader-body').classList.contains('hidden') || S.chat.skip === m.id) return null;
+  return { mid: m.id, subject: m.subject || '（无主题）' };
+}
+function chatMailChanged() { if (chatOpen()) renderHere(); }
+function renderHere() {
+  const box = $('#chat-here'), here = chatHere();
+  box.classList.toggle('hidden', !here);
+  if (!here) { box.innerHTML = ''; return; }
+  box.innerHTML = `<i data-icon="mail"></i><span>附带当前邮件：${esc(here.subject)}</span><button type="button" title="这次不附带">×</button>`;
+  box.querySelector('button').onclick = () => { S.chat.skip = here.mid; renderHere(); };
+  renderIcons(box);
+}
+
+async function askMailbox(allow = [], again = null) {
+  const turns = S.chat.turns, last = turns[turns.length - 1];
+  if (last && last.loading) return;
+  const question = again ? again.question : $('#ask-input').value.trim();
+  if (!question) return;
+  const here = again ? again.here : chatHere();
+  // Answering the last question again replaces that turn; only a turn the backend kept is redone there.
+  const redo = !!(again && again.result);
+  const turn = { question, allow, here, loading: true, steps: [] };
+  if (again) turns[turns.length - 1] = turn; else turns.push(turn);
+  if (!again) { $('#ask-input').value = ''; fitAsk(); }
+  const chat = S.chat;
+  renderAsk();
+  try {
+    turn.result = await api('askMailbox', { question, allow, chat: chat.id, current: here ? here.mid : '', redo });
+    chat.id = turn.result.chat;
+  } catch (err) { turn.error = err; }
+  turn.loading = false;
+  if (S.chat === chat) renderAsk();
 }
 
 function renderAsk() {
-  const out = $('#ask-out'), a = S.ask;
-  $('#ask-run').disabled = !!(a && a.loading);
-  if (!a) { out.innerHTML = ''; return; }
+  const out = $('#ask-out'), turns = S.chat.turns, last = turns[turns.length - 1];
+  $('#ask-run').disabled = !!(last && last.loading);
+  renderHere();
+  if (!turns.length) {
+    const tries = ['上周有哪些邮件需要我回复？', '最近谁给我发过报价？', '这封邮件说的截止日期是哪天？'];
+    out.innerHTML = '<div class="chat-empty"><b>问问你的邮箱</b>AI 会搜索服务器和本地存档里的邮件，阅读最相关的几封后回答，并标出出处。<br>可以接着追问，例如「第二封是谁发的」。' +
+      `<div class="chat-try">${tries.map((q) => `<button type="button" data-try="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`;
+    return;
+  }
+  out.innerHTML = turns.map((t, i) => `<div class="chat-q">${esc(t.question)}${t.here ? `<span class="chat-here-tag">附带：${esc(t.here.subject)}</span>` : ''}</div>` +
+    turnCard(t, i, i === turns.length - 1) +
+    (t.result && t.result.restarted ? '<div class="chat-sep">之前的对话已失效（例如重新登录过），这次作为新对话回答。</div>' : '') +
+    (t.result && t.result.turn === CHAT_TURNS + 1 ? '<div class="chat-sep">更早的问答不再带给 AI。换个话题可以点「新对话」。</div>' : '')).join('');
+  renderIcons(out);
+  out.scrollTop = out.scrollHeight;
+}
+
+function turnCard(a, index, latest) {
   const stepList = (steps) => steps.length ? `<ol class="ask-steps">${steps.map((step) => `<li>${esc(step)}</li>`).join('')}</ol>` : '';
   if (a.loading) {
-    out.innerHTML = '<div class="ask-card"><div class="ai-head"><i data-icon="spark"></i><b>正在查找</b><span class="muted small">搜索和阅读的内容会发送到 AI 服务</span>' +
+    return '<div class="ask-card"><div class="ai-head"><i data-icon="spark"></i><b>正在查找</b><span class="muted small">搜索和阅读的内容会发送到 AI 服务</span>' +
       `<button class="btn ghost" data-ask="cancel">取消</button></div><div class="ai-body"><div class="ai-wait"><span></span><span></span><span></span></div>${stepList(a.steps)}</div></div>`;
-  } else if (a.error) {
-    const setup = a.error.code === 'AI_NOT_CONFIGURED' || a.error.code === 'AI_AUTH_FAILED';
-    out.innerHTML = `<div class="ask-card"><div class="ai-body"><p class="${a.error.code === 'AI_CANCELLED' ? 'muted' : 'ai-error'}">${esc(a.error.message)}</p>` +
-      (setup ? '<button class="btn primary" data-ask="setup">打开 AI 设置</button>' : '') + stepList(a.steps) + '</div></div>';
-  } else {
-    const r = a.result;
-    const answer = esc(r.answer).replace(/\[(M\d+(?:, M\d+)*)\]/g, (_, refs) =>
-      refs.split(', ').map((ref) => `<a class="ask-ref" data-ref="${ref}" title="打开出处 ${ref.slice(1)}">${ref.slice(1)}</a>`).join(''));
-    const card = (s) => `<div class="ask-src" data-mid="${esc(s.mid)}" title="在新窗口中打开这封邮件"><span class="ask-num">${esc(s.ref.slice(1))}</span>` +
-      `<div class="ask-src-main"><div class="ask-src-top"><b>${esc(s.subject)}</b><span class="muted small">${esc(s.fromName)} · ${esc(String(s.date).slice(0, 16))}</span></div>` +
-      (s.snippet ? `<div class="muted small ask-snip">${esc(s.snippet)}</div>` : '') +
-      (s.encrypted ? `<div class="ask-enc"><i data-icon="lock"></i>加密邮件，AI 没有读取正文<button class="btn ghost sm" data-allow="${esc(s.mid)}">允许读取这封并重新回答</button></div>` : '') +
-      '</div></div>';
-    const cited = r.sources.filter((s) => s.cited), other = r.sources.filter((s) => !s.cited);
-    out.innerHTML = `<div class="ask-card"><div class="ai-head"><i data-icon="spark"></i><b>答案</b><span class="muted small">由 ${esc(r.model || 'AI')} 根据邮件生成，仅供参考</span>` +
-      `<button class="btn ghost" data-ask="again" title="重新发送给 AI 服务查找">重新回答</button></div><div class="ai-body"><p class="ask-answer">${answer}</p>` +
-      (r.limited ? '<p class="ask-limited">已达到查找次数或时间的上限，答案可能不完整。</p>' : '') + '</div></div>' +
-      (cited.length ? `<div class="ask-sources"><h4>出处</h4>${cited.map(card).join('')}</div>` : '') +
-      (other.length ? `<div class="ask-sources"><h4>也查阅过</h4>${other.map(card).join('')}</div>` : '') +
-      (r.steps.length ? `<details class="ask-process"><summary>查找过程（${r.steps.length} 步）</summary>${stepList(r.steps)}</details>` : '');
   }
-  renderIcons(out);
+  if (a.error) {
+    const code = a.error.code, setup = code === 'AI_NOT_CONFIGURED' || code === 'AI_AUTH_FAILED';
+    return `<div class="ask-card" data-turn="${index}"><div class="ai-body"><p class="${code === 'AI_CANCELLED' ? 'muted' : 'ai-error'}">${esc(a.error.message)}</p>` +
+      (setup ? '<button class="btn primary" data-ask="setup">打开 AI 设置</button>' : '') +
+      (code === 'AI_CONTEXT_TOO_LONG' ? '<button class="btn primary" data-ask="new">开始新对话</button>' : '') +
+      (latest && !setup ? ' <button class="btn ghost" data-ask="again">重试</button>' : '') + stepList(a.steps) + '</div></div>';
+  }
+  const r = a.result;
+  const answer = esc(r.answer).replace(/\[(M\d+(?:, M\d+)*)\]/g, (_, refs) =>
+    refs.split(', ').map((ref) => `<a class="ask-ref" data-ref="${ref}" title="打开出处 ${ref.slice(1)}">${ref.slice(1)}</a>`).join(''));
+  const card = (s) => `<div class="ask-src" data-mid="${esc(s.mid)}" title="在新窗口中打开这封邮件"><span class="ask-num">${esc(s.ref.slice(1))}</span>` +
+    `<div class="ask-src-main"><div class="ask-src-top"><b>${esc(s.subject)}</b><span class="muted small">${esc(s.fromName)} · ${esc(String(s.date).slice(5, 16))}</span></div>` +
+    (s.snippet ? `<div class="muted small ask-snip">${esc(s.snippet)}</div>` : '') +
+    (s.encrypted ? '<div class="ask-enc"><i data-icon="lock"></i>加密邮件，AI 没有读取正文' +
+      (latest ? `<button class="btn ghost sm" data-allow="${esc(s.mid)}">允许读取这封并重新回答</button>` : '') + '</div>' : '') +
+    '</div></div>';
+  const cited = r.sources.filter((s) => s.cited), other = r.sources.filter((s) => !s.cited);
+  return `<div class="ask-card" data-turn="${index}"><div class="ai-head"><i data-icon="spark"></i><b>答案</b><span class="muted small">由 ${esc(r.model || 'AI')} 根据邮件生成，仅供参考</span>` +
+    (latest ? '<button class="btn ghost" data-ask="again" title="重新发送给 AI 服务查找">重新回答</button>' : '') +
+    `</div><div class="ai-body"><p class="ask-answer">${answer}</p>` +
+    (r.limited ? '<p class="ask-limited">已达到查找次数或时间的上限，答案可能不完整。</p>' : '') +
+    (cited.length ? `<div class="ask-sources"><h4>出处</h4>${cited.map(card).join('')}</div>` : '') +
+    (other.length ? `<details class="ask-process"><summary>也查阅过 ${other.length} 封</summary>${other.map(card).join('')}</details>` : '') +
+    (r.steps.length ? `<details class="ask-process"><summary>查找过程（${r.steps.length} 步）</summary>${stepList(r.steps)}</details>` : '') +
+    '</div></div>';
 }
 
 function openSource(mid) { if (mid) api('openReader', { mid }).catch(fail); }
 $('#ask-out').addEventListener('click', async (e) => {
-  const a = S.ask, t = e.target;
-  const ref = t.closest('[data-ref]'), allow = t.closest('[data-allow]'), act = t.closest('[data-ask]');
-  if (act) {
+  const t = e.target, turns = S.chat.turns, last = turns[turns.length - 1];
+  const ref = t.closest('[data-ref]'), allow = t.closest('[data-allow]'), act = t.closest('[data-ask]'), tried = t.closest('[data-try]');
+  const turn = turns[+((t.closest('[data-turn]') || {}).dataset || {}).turn] || last;
+  if (tried) { $('#ask-input').value = tried.dataset.try; askMailbox(); }
+  else if (act) {
     ({ cancel: () => api('cancelAsk').catch(() => {}),
-       again: () => { $('#ask-input').value = a.question; askMailbox(a.allow); },
+       again: () => askMailbox(last.allow, last),
        setup: () => openSettings('ai'),
+       new: newChat,
     })[act.dataset.ask]();
   } else if (allow) {
     if (!(await confirmDialog('把这封加密邮件发送给 AI 服务？',
       '回答这个问题需要把这封邮件解密后的正文发送到外部 AI 服务，邮件将不再只在你和收件人之间保密。仅这一次提问有效。', '发送并重新回答'))) return;
-    $('#ask-input').value = a.question;
-    askMailbox([...a.allow, allow.dataset.allow]);
+    askMailbox([...last.allow, allow.dataset.allow], last);
   } else if (ref) {
-    const source = a.result.sources.find((s) => s.ref === ref.dataset.ref);
+    const source = turn && turn.result && turn.result.sources.find((s) => s.ref === ref.dataset.ref);
     openSource(source && source.mid);
   } else if (t.closest('.ask-src')) {
     openSource(t.closest('.ask-src').dataset.mid);
   }
 });
-on('askProgress', (p) => { if (S.ask && S.ask.loading && p) { S.ask.steps.push(p.step); renderAsk(); } });
+on('askProgress', (p) => {
+  const last = S.chat.turns[S.chat.turns.length - 1];
+  if (last && last.loading && p) { last.steps.push(p.step); renderAsk(); }
+});
+function fitAsk() {
+  const box = $('#ask-input');
+  box.style.height = 'auto';
+  box.style.height = Math.min(box.scrollHeight, 6 * 21 + 8) + 'px';
+  box.style.overflowY = box.scrollHeight > 6 * 21 + 8 ? 'auto' : 'hidden';
+}
 $('#btn-ask').onclick = () => showAsk($('#search').value);
 $('#ask-close').onclick = hideAsk;
+$('#chat-new').onclick = newChat;
 $('#ask-form').onsubmit = (e) => { e.preventDefault(); askMailbox(); };
+$('#ask-input').addEventListener('input', fitAsk);
 $('#ask-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); askMailbox(); }
   if (e.key === 'Escape') { e.stopPropagation(); hideAsk(); }

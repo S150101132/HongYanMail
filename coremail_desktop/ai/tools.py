@@ -61,6 +61,20 @@ class MailboxTools:
         self.people = {}  # ref -> address
         self.read_refs, self.encrypted = [], []
 
+    def begin(self, allowed=()):
+        """The next question of a conversation: refs stay, while reads, the encrypted
+        list and the user's agreements start over."""
+        self.allowed, self.read_refs, self.encrypted = set(allowed), [], []
+
+    def add(self, row):
+        """A mail the user brought in (the one open in the reader) -> its ref."""
+        return self._ref(row)
+
+    def note(self, ref):
+        """One line naming a known mail, for the conversation's context."""
+        r = self.mails[ref]
+        return f'{ref}｜{_clip(r.get("subject"), 80) or "（无主题）"}｜{_who(r.get("from"), 1)}｜{str(r.get("date") or "")[:16]}'
+
     def run(self, name, arguments):
         """-> (result for the model, a progress line for the user)."""
         try:

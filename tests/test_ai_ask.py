@@ -244,6 +244,41 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(result['encrypted'], 1)
         self.assertEqual([(s['ref'], s['encrypted'], s['cited']) for s in result['sources']], [('M1', True, False)])
 
+    def test_follow_up_gets_history_known_refs_and_current_mail(self):
+        box = FakeMailbox()
+        tools = box.tools()
+        ask('预算多少', Script(('tools', [('search_mail', {'keywords': '预算'})]), ('answer', '50 万 [M1]，另见 [M2]')), tools)
+        tools.begin()
+        model = Script(('tools', [('read_mail', {'ref': 'M2'})]), ('answer', '第二封是张三发的 [M2]'))
+        result = ask('第二封是谁发的', model, tools, history=[('预算多少', '50 万 [M1]，另见 [M2]')], known=['M1', 'M2'])
+        messages = model.seen[0][0]
+        self.assertIn('M2｜主题2｜张三', messages[1]['content'])
+        self.assertIn('连续对话', messages[1]['content'])
+        self.assertEqual([(m['role'], m['content']) for m in messages[2:]],
+                         [('user', '预算多少'), ('assistant', '50 万 [M1]，另见 [M2]'), ('user', '第二封是谁发的')])
+        self.assertEqual(box.reads, ['mid2'])  # No new search: the ref from the first question still works.
+        self.assertEqual([(s['ref'], s['cited'], s['read']) for s in result['sources']], [('M2', True, True)])
+        current = tools.add(row(7))
+        model = Script(('answer', '答'))
+        ask('这封说了什么', model, tools, history=[('a', 'b')] * 9, known=['M1'], current=current)
+        messages = model.seen[0][0]
+        self.assertIn('用户正在看的邮件是 M3｜主题7', messages[2]['content'])
+        self.assertEqual(len([m for m in messages if m['role'] == 'assistant']), agent.CHAT_TURNS)
+        model = Script(('answer', '答'))
+        ask('新问题', model, tools)  # No history: no conversation note, as before.
+        self.assertEqual([m['role'] for m in model.seen[0][0]], ['system', 'user'])
+
+    def test_begin_resets_reads_and_agreements(self):
+        box = FakeMailbox(docs={'mid1': document('机密', 'decrypted')})
+        tools = box.tools(allowed={'mid1'})
+        tools.run('search_mail', '{"keywords": "a"}')
+        self.assertEqual(tools.run('read_mail', '{"ref": "M1"}')[0]['text'], '机密')
+        tools.begin()
+        self.assertTrue(tools.run('read_mail', '{"ref": "M1"}')[0]['encrypted'])  # The agreement was for one question.
+        self.assertEqual(tools.encrypted, ['M1'])
+        tools.begin({'mid1'})
+        self.assertEqual(tools.run('read_mail', '{"ref": "M1"}')[0]['text'], '机密')
+
 
 class BackendTest(unittest.TestCase):
     def setUp(self):
@@ -297,6 +332,43 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(self.backend._ask_cancel.is_set())
         self.backend.ask_mailbox('周报')  # A new question starts uncancelled.
 
+    def test_conversation_continues_redoes_and_expires(self):
+        model = Script(('tools', [('search_mail', {'keywords': '周报'})]), ('answer', '有 [M1]'),
+                       ('answer', '是张三 [M1]'), ('answer', '重新回答 [M1]'), ('answer', '新的'))
+        self.backend.ai_client = SimpleNamespace(model='m', complete=lambda messages, tools=None, max_tokens=0: (model(messages, tools), 1))
+        first = self.backend.ask_mailbox('周报')
+        self.assertEqual((first['turn'], first['restarted']), (1, False))
+        second = self.backend.ask_mailbox('谁发的', chat=first['chat'])
+        self.assertEqual((second['chat'], second['turn']), (first['chat'], 2))
+        sent = model.seen[2][0]
+        self.assertEqual([m['content'] for m in sent if m['role'] in ('user', 'assistant')], ['周报', '有 [M1]', '谁发的'])
+        self.assertIn('M1｜', sent[1]['content'])
+        again = self.backend.ask_mailbox('谁发的', chat=first['chat'], redo=True)
+        self.assertEqual(again['turn'], 2)  # Replaced, not added.
+        self.assertEqual([m['content'] for m in model.seen[3][0] if m['role'] in ('user', 'assistant')], ['周报', '有 [M1]', '谁发的'])
+        gone = self.backend.ask_mailbox('还在吗', chat='feedfeedfeedfeed')
+        self.assertTrue(gone['restarted'])
+        self.assertNotEqual(gone['chat'], first['chat'])
+        self.assertEqual([m['role'] for m in model.seen[4][0]], ['system', 'user'])
+        for _ in range(MailBackend.CHATS):
+            model.steps.append(('answer', '答'))
+            self.backend.ask_mailbox('问')
+        self.assertNotIn(first['chat'], self.backend._chats)  # Only the latest few are kept.
+        self.backend.logout()
+        self.assertEqual(self.backend._chats, {})
+
+    def test_current_mail_and_invalid_chat(self):
+        self.backend.ai_client = DemoAiClient()
+        inbox = next(f['id'] for f in self.backend.folders() if f['role'] == 'inbox')
+        mid = self.backend.messages(inbox)['rows'][0]['id']
+        result = self.backend.ask_mailbox('这封说了什么', current=mid)
+        self.assertTrue(result['answer'].startswith('演示模式：你正在看的'))
+        self.assertEqual(result['sources'][0]['mid'], mid)
+        for chat, current in ((5, ''), ('x' * 41, ''), ('', ['m'])):
+            with self.assertRaises(AppError) as raised:
+                self.backend.ask_mailbox('问', chat=chat, current=current)
+            self.assertEqual(raised.exception.code, 'INVALID_QUESTION')
+
 
 class WiringTest(unittest.TestCase):
     def test_bridge(self):
@@ -312,8 +384,12 @@ class WiringTest(unittest.TestCase):
 
     def test_page_renders_answer_escaped(self):
         source = (WEB / 'ai.js').read_text(encoding='utf-8')
-        self.assertIn('id="reader-ask"', (WEB / 'index.html').read_text(encoding='utf-8'))
-        for field in ('r.answer', 's.subject', 's.fromName', 's.snippet', 'step'):
+        page = (WEB / 'index.html').read_text(encoding='utf-8')
+        self.assertIn('id="chat"', page)
+        self.assertNotIn('reader-ask', page)
+        self.assertIn("chat: chat.id", source)  # The page sends only the conversation's id, not its text.
+        self.assertIn('toggleChat()', (WEB / 'app.js').read_text(encoding='utf-8'))  # Ctrl+J
+        for field in ('r.answer', 's.subject', 's.fromName', 's.snippet', 'step', 't.question', 'here.subject'):
             self.assertIn(f'esc({field}', source)
 
 

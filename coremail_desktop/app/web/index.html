@@ -164,21 +164,6 @@
         <p class="muted small">Ctrl+点击 增减 · Shift+点击 连选 · Ctrl+A 全选 · X 选择当前 · Esc 取消</p>
       </div>
     </div>
-    <div id="reader-ask" class="ask" aria-label="问邮箱">
-      <div class="reader-toolbar">
-        <b class="multi-title ask-title"><i data-icon="spark"></i>问邮箱</b>
-        <span class="spacer"></span>
-        <button class="tb" id="ask-close" title="关闭 (Esc)"><i data-icon="close"></i></button>
-      </div>
-      <div class="reader-scroll">
-        <form id="ask-form" class="ask-form">
-          <textarea id="ask-input" rows="2" maxlength="500" spellcheck="false" placeholder="用一句话提问，例如：CRM 的 LDAP 对接信息客户发过来了吗？"></textarea>
-          <button class="btn primary" id="ask-run" type="submit">提问</button>
-        </form>
-        <p class="muted small ask-note">AI 会在服务器上搜索你的邮件，并阅读其中最多 5 封。问题、搜索到的邮件摘要和被阅读邮件的正文会发送到 AI 服务；加密邮件默认不读取。设置了「本地存档」时也会搜索其中的邮件（在「设置 → 本地存档」中选择）。答案仅供参考，请点开出处核对。</p>
-        <div id="ask-out"></div>
-      </div>
-    </div>
     <article id="reader-body" class="hidden">
       <div class="reader-toolbar">
         <button class="tb" data-act="reply" title="回复 (R)"><i data-icon="reply"></i><span>回复</span></button>
@@ -225,6 +210,24 @@
       </div>
     </article>
   </section>
+  <aside id="chat" class="chat-pane" aria-label="问邮箱">
+    <div class="chat-head">
+      <b class="ask-title"><i data-icon="spark"></i>问邮箱</b>
+      <span class="spacer"></span>
+      <button class="tb" id="chat-new" title="新对话：之前的问答不再带给 AI"><i data-icon="pen"></i><span>新对话</span></button>
+      <button class="tb" id="ask-close" title="关闭 (Ctrl+J)"><i data-icon="close"></i></button>
+    </div>
+    <div class="chat-scroll" id="ask-out"></div>
+    <form id="ask-form" class="chat-foot">
+      <div id="chat-here" class="chat-here hidden"></div>
+      <div class="tk-ask">
+        <i data-icon="spark"></i>
+        <textarea id="ask-input" rows="1" maxlength="500" spellcheck="false" placeholder="问问你的邮箱，可以接着追问"></textarea>
+        <button class="tk-ask-go" id="ask-run" type="submit" title="提问（Enter）"><i data-icon="send"></i></button>
+      </div>
+      <p class="muted small chat-note">问题、搜到的邮件摘要和被阅读的正文会发送到 AI 服务。可以接着追问；对话只保存在本次运行中。答案仅供参考，请点开出处核对。</p>
+    </form>
+  </aside>
 </section>
 
 <!-- Composer -->

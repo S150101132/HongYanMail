@@ -1,7 +1,8 @@
 """Walk the demo build through 问邮箱 and save screenshots.
 
-Not configured (error with 打开 AI 设置), the empty view, a question in progress, the
-answer with source cards (demo client, no network), and a source opened from a card.
+The right-hand conversation: not configured (error with 打开 AI 设置), the empty view,
+a question in progress, the answer with source cards (demo client, no network), and a
+follow-up about the mail open in the reader.
 
 Usage: python tools/screenshot_ask.py OUTDIR [light|dark] [width]
 HONGYAN_WALK_TRACE=1 prints each step; HONGYAN_DEBUG=1 (set here) prints page errors.
@@ -49,11 +50,14 @@ STEPS = [
     (2500, None, None),
     (600, f"$('#search').value = {QUESTION}; $('#btn-ask').click()", 'ask-not-configured'),
     (300, demo_ai, None),
-    (300, "S.ask = null; $('#search').value = ''; $('#btn-ask').click()", 'ask-empty'),
+    (300, "$('#search').value = ''; newChat()", 'ask-empty'),
     (300, f"$('#ask-input').value = {QUESTION}; askMailbox()", None),
     (0, "document.body.offsetWidth", 'ask-loading'),
     (2200, "document.body.offsetWidth", 'ask-answer'),
-    (300, "$('.ask-process').open = true", 'ask-process'),
+    (300, "$('#mail-list .row').click()", None),
+    (1500, "$('#ask-input').value = '这封说了什么？'; askMailbox()", None),
+    (2200, "document.body.offsetWidth", 'ask-follow-up'),
+    (300, "$$('#ask-out .ask-process').forEach((d) => d.open = true)", 'ask-process'),
 ]
 
 

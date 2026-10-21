@@ -29,6 +29,11 @@ SYSTEM_PROMPT = '''你是用户工作邮箱的检索助手。今天是 {today}�
 8. 有加密邮件没能阅读时，在答案里说明。
 9. 用简体中文，先给结论再给依据，简洁；不用 Markdown 标题、表格和加粗。'''
 WRAP_UP = '搜索和阅读的次数已用完。请只根据上面已经得到的信息回答，并说明还有哪些没能查到。'
+CHAT_NOTE = ('这是连续对话。用户追问里的「第二封」「那封」「他」等指前面回答里提到的邮件和人；'
+             '下面这些邮件的编号仍然有效，可以直接用 read_mail 阅读，不必重新搜索：\n')
+CURRENT_NOTE = '用户正在看的邮件是 {line}。问题里的「这封」「这件事」指它；需要正文时用 read_mail 阅读。'
+CHAT_TURNS = 6  # Earlier questions and answers sent with each new one.
+CHAT_REFS = 30  # Known mails listed for the follow-ups, most recent first.
 
 
 def _cited(answer, known):
@@ -42,10 +47,21 @@ def _cited(answer, known):
     return CITE.sub(keep, answer), order
 
 
-def ask(question, call, tools, progress=lambda step: None, cancelled=lambda: False, today='', clock=time.monotonic):
-    """call(messages, specs) -> {content, tool_calls}. -> {answer, sources, steps, ...}"""
-    messages = [{'role': 'system', 'content': SYSTEM_PROMPT.format(today=today)},
-                {'role': 'user', 'content': question}]
+def ask(question, call, tools, progress=lambda step: None, cancelled=lambda: False, today='', clock=time.monotonic,
+        history=(), known=(), current=None):
+    """call(messages, specs) -> {content, tool_calls}. -> {answer, sources, steps, ...}
+    history: the conversation's earlier [(question, answer)]; known: refs shown in it;
+    current: the ref of the mail open in the reader. Only the answers' text goes back,
+    never mail bodies: a follow-up reads again by ref."""
+    messages = [{'role': 'system', 'content': SYSTEM_PROMPT.format(today=today)}]
+    known = [r for r in known if r in tools.mails and r != current][-CHAT_REFS:]
+    if history and known:
+        messages.append({'role': 'system', 'content': CHAT_NOTE + '\n'.join(tools.note(r) for r in reversed(known))})
+    if current in tools.mails:
+        messages.append({'role': 'system', 'content': CURRENT_NOTE.format(line=tools.note(current))})
+    for asked, answered in list(history)[-CHAT_TURNS:]:
+        messages += [{'role': 'user', 'content': asked}, {'role': 'assistant', 'content': answered}]
+    messages.append({'role': 'user', 'content': question})
     steps, start, rounds = [], clock(), 0
     while True:
         if cancelled():

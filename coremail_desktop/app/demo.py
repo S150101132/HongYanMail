@@ -706,9 +706,19 @@ class DemoAiClient:
         results = [json.loads(m['content']) for m in messages if m['role'] == 'tool']
         call = lambda name, args: ({'content': '', 'tool_calls': [{'id': f'call{len(results)}', 'name': name,
                                                                     'arguments': json.dumps(args, ensure_ascii=False)}]}, 0)
+        question = next(m['content'] for m in reversed(messages) if m['role'] == 'user')
+        here = next((re.match(r'用户正在看的邮件是 (M\d+)｜([^｜]*)', m['content']) for m in messages
+                     if m['role'] == 'system' and m['content'].startswith('用户正在看的邮件是')), None)
+        if here and re.search(r'这封|这件事|它', question):
+            if tools and not results:
+                return call('read_mail', {'ref': here.group(1)})
+            read = results[-1] if results else {}
+            gist = read.get('text', '')[:60].replace('\n', ' ') if not read.get('encrypted') else '（加密邮件，没有阅读正文）'
+            return {'content': f'演示模式：你正在看的「{here.group(2)}」开头写的是：{gist} [{here.group(1)}]\n（演示模式由本机生成，没有联网。）',
+                    'tool_calls': []}, 0
         if tools and not results:
-            words = re.findall(r'[A-Za-z0-9]+|[一-龥]{2}', messages[1]['content'])
-            return call('search_mail', {'keywords': words[0] if words else messages[1]['content'][:2]})
+            words = re.findall(r'[A-Za-z0-9]+|[一-龥]{2}', question)
+            return call('search_mail', {'keywords': words[0] if words else question[:2]})
         rows = (results[0].get('rows') or []) if results else []
         if tools and rows and len(results) == 1:
             return call('read_mail', {'ref': rows[0]['ref']})

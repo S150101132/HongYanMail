@@ -736,7 +736,6 @@ async function selectMessage(id, opts = {}) {
   if (S.multi.size >= 2) return;  // The selection toolbar stays; J/K only move the cursor.
   const token = ++openToken;
   const summary = rowOf(id);
-  $('#reader').classList.remove('asking');  // 问邮箱 (ai.js) gives the pane back to the mail.
   $('#reader-empty').classList.add('hidden'); $('#reader-body').classList.remove('hidden');
   if (summary) {
     $('#r-subject').textContent = summary.subject || '（无主题）';
@@ -752,6 +751,7 @@ async function selectMessage(id, opts = {}) {
     if (token !== openToken) return;
     S.message = m;
     renderMessage(m);
+    if (typeof chatMailChanged === 'function') chatMailChanged();
     if (READER_MID) { document.title = (m.subject || '（无主题）') + ' · 鸿雁'; if (m.markedRead) notifyMain({ kind: 'flags', id, flags: { read: true } }); }
     if (m.markedRead && summary) {
       summary.flags.read = true;
@@ -1095,7 +1095,7 @@ function renderSelection() {
   $$('#mail-list .row').forEach((el) => el.classList.toggle('msel', S.multi.size > 0 && (el.dataset.child ? [el.dataset.id] : itemOf(el.dataset.id).ids).every((m) => S.multi.has(m))));
   const n = S.multi.size, many = n >= 2;
   $('#reader-multi').classList.toggle('hidden', !many);
-  if (many) $('#reader').classList.remove('asking');
+  if (typeof chatMailChanged === 'function') chatMailChanged();  // 问邮箱 (ai.js) attaches only a single open mail.
   $('#reader-body').classList.toggle('hidden', many || !S.selected);
   $('#reader-empty').classList.toggle('hidden', many || !!S.selected);
   if (!many) return;
@@ -1829,6 +1829,7 @@ function handleKey(e) {
   if (e.ctrlKey && (e.key === 'a' || e.key === 'A') && !isTyping(t) && t.ownerDocument === document && !(t.closest && t.closest('.reader-scroll, #composer'))
       && !$('#app').classList.contains('hidden') && !S.local) { e.preventDefault(); selectAll(); return; }
   if (e.ctrlKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); startCompose('new'); return; }
+  if (e.ctrlKey && (e.key === 'j' || e.key === 'J') && !$('#app').classList.contains('hidden')) { e.preventDefault(); toggleChat(); return; }
   if (e.key === 'F5') { e.preventDefault(); $('#btn-refresh').click(); return; }
   if ((e.ctrlKey && (e.key === 'f' || e.key === 'F')) || (e.key === '/' && !isTyping(t))) {
     e.preventDefault(); const box = $(S.local === 'tasks' ? '#tk-cmd' : '#search'); box.focus(); box.select(); return;

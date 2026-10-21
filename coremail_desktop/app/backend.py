@@ -356,6 +356,7 @@ class MailBackend:
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
         self._ai_lock = threading.Lock()
         self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
+        self._chats = {}  # 问邮箱 conversations, in memory only: id -> {'tools', 'turns', 'shown'}.
         self._ai_cancel = threading.Event()  # Streamed AI text: set by the page's 停止.
 
     # Accounts --------------------------------------------------------------
@@ -419,6 +420,7 @@ class MailBackend:
             self.archive.close()
         self.cache = self.account = self.archive = None
         self._shared = {}
+        self._chats.clear()
         return True
 
     def _open_account(self, server, username, online=True):
@@ -2522,22 +2524,41 @@ class MailBackend:
 
     # 问邮箱: the model searches the server and reads mail through read-only tools
     # (ai/tools.py). Runs on the AI thread; like the fast thread it only reads.
-    def ask_mailbox(self, question, allow=(), progress=None):
-        """allow: ids of encrypted mail the user agreed, for this question, to send."""
+    # A conversation keeps its refs and earlier answers here, in memory, so a follow-up
+    # can say "第二封"; the page only holds its id. Closing the app forgets it.
+    CHATS = 3  # Conversations kept; the oldest goes first.
+
+    def ask_mailbox(self, question, allow=(), progress=None, chat='', current='', redo=False):
+        """allow: ids of encrypted mail the user agreed, for this question, to send.
+        chat: the conversation to continue ('' starts one); current: the mail open in
+        the reader; redo: answer the last question again (it replaces that turn)."""
         from coremail_desktop.ai.agent import ANSWER_TOKENS, ask
         from coremail_desktop.ai.tools import MailboxTools
         question = question.strip() if isinstance(question, str) else ''
-        if not question or len(question) > 500 or not isinstance(allow, (list, tuple)) or len(allow) > 20:
+        if not question or len(question) > 500 or not isinstance(allow, (list, tuple)) or len(allow) > 20 \
+                or not isinstance(chat, str) or len(chat) > 40 or not isinstance(current, str) or len(current) > 200:
             raise AppError('INVALID_QUESTION')
         if self.cache is None:
             raise AppError('NOT_AUTHENTICATED')
         client = self._ai()
         self._ask_cancel.clear()
-        known = self._folders or self.cache.get('folders') or []
-        roles = {f.get('role'): f['id'] for f in known if f.get('role') in ('inbox', 'sent')}
-        folders = {**roles, 'names': {f['id']: f['name'] for f in known}}
-        tools = MailboxTools(self._ask_search, self._document, self._ask_match, folders, {str(m) for m in allow},
-                             archive=self._ask_archive if self._archive_folder() else None)
+        state = self._chats.get(chat) if chat else None
+        restarted = bool(chat) and state is None
+        if state is None:
+            known = self._folders or self.cache.get('folders') or []
+            roles = {f.get('role'): f['id'] for f in known if f.get('role') in ('inbox', 'sent')}
+            folders = {**roles, 'names': {f['id']: f['name'] for f in known}}
+            tools = MailboxTools(self._ask_search, self._document, self._ask_match, folders,
+                                 archive=self._ask_archive if self._archive_folder() else None)
+            chat, state = uuid.uuid4().hex[:16], {'tools': tools, 'turns': [], 'shown': []}
+            while len(self._chats) >= self.CHATS:
+                self._chats.pop(next(iter(self._chats)))
+            self._chats[chat] = state
+        tools = state['tools']
+        tools.begin({str(m) for m in allow})
+        turns = state['turns'][:-1] if redo else state['turns']
+        row = self.cache.summary(current) if current else None
+        here = tools.add(row) if row else None
 
         def call(messages, specs):
             tokens = 0
@@ -2547,8 +2568,11 @@ class MailBackend:
             finally:
                 self._count_ai(tokens)
         result = ask(question, call, tools, progress or (lambda step: None), self._ask_cancel.is_set,
-                     today=datetime.now().strftime('%Y-%m-%d'))
-        return {**result, 'model': getattr(client, 'model', '')}
+                     today=datetime.now().strftime('%Y-%m-%d'), history=turns, known=state['shown'], current=here)
+        state['turns'] = turns + [(question, result['answer'])]
+        refs = [s['ref'] for s in result['sources']]
+        state['shown'] = ([r for r in state['shown'] if r not in refs] + refs)[-60:]
+        return {**result, 'model': getattr(client, 'model', ''), 'chat': chat, 'turn': len(state['turns']), 'restarted': restarted}
 
     def cancel_ask(self):
         self._ask_cancel.set()
