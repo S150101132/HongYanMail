@@ -65,7 +65,7 @@
     <header class="list-head">
       <div class="search">
         <i data-icon="search"></i>
-        <input id="search" type="search" placeholder="搜索邮件（Ctrl+F 或 /）" spellcheck="false">
+        <input id="search" type="search" placeholder="搜索邮件（Ctrl+F 或 /）· 命令 Ctrl+K" spellcheck="false">
         <button id="btn-search-filters" class="icon-btn sm" title="高级搜索：发件人、日期、附件等条件"><i data-icon="filter"></i></button>
         <button id="btn-ask" class="icon-btn sm" title="问邮箱：用一句话提问，AI 搜索并阅读邮件后回答"><i data-icon="spark"></i></button>
       </div>
@@ -142,8 +142,10 @@
   <section class="reader-pane" id="reader">
     <div id="reader-empty" class="empty">
       <div class="empty-art"></div>
-      <p>选择一封邮件开始阅读</p>
-      <p class="muted small">快捷键：J/K 上下切换 · Enter 新窗口打开 · R 回复 · A 全部回复 · F 转发 · Delete 删除</p>
+      <p class="list-only">选择一封邮件开始阅读</p>
+      <p class="muted small list-only">快捷键：J/K 上下切换 · Enter 新窗口打开 · R 回复 · A 全部回复 · F 转发 · Delete 删除</p>
+      <p class="chat-only">点答案里的出处，邮件会在这里打开</p>
+      <p class="muted small chat-only">关掉问邮箱（Ctrl+J）回到邮件列表</p>
     </div>
     <div id="reader-multi" class="multi hidden">
       <div class="reader-toolbar">
@@ -219,13 +221,13 @@
     </div>
     <div class="chat-scroll" id="ask-out"></div>
     <form id="ask-form" class="chat-foot">
-      <div id="chat-here" class="chat-here hidden"></div>
+      <button type="button" id="chat-here" class="chat-here hidden"></button>
       <div class="tk-ask">
         <i data-icon="spark"></i>
         <textarea id="ask-input" rows="1" maxlength="500" spellcheck="false" placeholder="问问你的邮箱，可以接着追问"></textarea>
         <button class="tk-ask-go" id="ask-run" type="submit" title="提问（Enter）"><i data-icon="send"></i></button>
       </div>
-      <p class="muted small chat-note">问题、搜到的邮件摘要和被阅读的正文会发送到 AI 服务。可以接着追问；对话只保存在本次运行中。答案仅供参考，请点开出处核对。</p>
+      <p class="muted small chat-note" title="问题、搜到的邮件摘要和被阅读的正文会发送到 AI 服务。可以接着追问；对话只保存在本次运行中。答案仅供参考，请点开出处核对。">内容会发送到 AI 服务 · 对话只保存在本次运行 · 答案请核对出处</p>
     </form>
   </aside>
 </section>
@@ -406,6 +408,13 @@
 </div>
 
 <!-- Generic prompt -->
+<div id="palette" class="modal palette hidden" role="dialog" aria-label="命令">
+  <div class="cp-card">
+    <div class="cp-box"><i data-icon="search"></i><input id="cp-input" type="text" spellcheck="false" autocomplete="off" placeholder="输入功能、文件夹、条件（如：张三发的 上周 带附件），或直接提问"></div>
+    <div id="cp-list" class="cp-list"></div>
+    <div class="cp-foot muted small">↑↓ 选择 · Enter 执行 · Esc 关闭 · 找不到的交给问邮箱</div>
+  </div>
+</div>
 <div id="prompt" class="modal hidden" role="dialog">
   <div class="modal-card">
     <div class="modal-head"><b id="prompt-title"></b><span class="spacer"></span><button class="icon-btn" data-close><i data-icon="close"></i></button></div>
@@ -431,5 +440,6 @@
 <script src="ai.js"></script>
 <script src="archive.js"></script>
 <script src="tasks.js"></script>
+<script src="commands.js"></script>
 </body>
 </html>

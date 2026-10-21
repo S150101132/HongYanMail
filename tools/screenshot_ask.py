@@ -1,8 +1,8 @@
 """Walk the demo build through 问邮箱 and save screenshots.
 
 The right-hand conversation: not configured (error with 打开 AI 设置), the empty view,
-a question in progress, the answer with source cards (demo client, no network), and a
-follow-up about the mail open in the reader.
+a question in progress, the answer with source cards (demo client, no network), and a source
+opened in the reader beside it, and a follow-up about the mail open in the reader.
 
 Usage: python tools/screenshot_ask.py OUTDIR [light|dark] [width]
 HONGYAN_WALK_TRACE=1 prints each step; HONGYAN_DEBUG=1 (set here) prints page errors.
@@ -54,6 +54,8 @@ STEPS = [
     (300, f"$('#ask-input').value = {QUESTION}; askMailbox()", None),
     (0, "document.body.offsetWidth", 'ask-loading'),
     (2200, "document.body.offsetWidth", 'ask-answer'),
+    (300, "$('#ask-out .ask-src').click()", None),
+    (1500, "document.body.offsetWidth", 'ask-source'),
     (300, "$('#mail-list .row').click()", None),
     (1500, "$('#ask-input').value = '这封说了什么？'; askMailbox()", None),
     (2200, "document.body.offsetWidth", 'ask-follow-up'),

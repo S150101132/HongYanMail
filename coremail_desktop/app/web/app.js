@@ -1830,6 +1830,7 @@ function handleKey(e) {
       && !$('#app').classList.contains('hidden') && !S.local) { e.preventDefault(); selectAll(); return; }
   if (e.ctrlKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); startCompose('new'); return; }
   if (e.ctrlKey && (e.key === 'j' || e.key === 'J') && !$('#app').classList.contains('hidden')) { e.preventDefault(); toggleChat(); return; }
+  if (e.ctrlKey && (e.key === 'k' || e.key === 'K') && !$('#app').classList.contains('hidden') && window.CP) { e.preventDefault(); CP.open(); return; }
   if (e.key === 'F5') { e.preventDefault(); $('#btn-refresh').click(); return; }
   if ((e.ctrlKey && (e.key === 'f' || e.key === 'F')) || (e.key === '/' && !isTyping(t))) {
     e.preventDefault(); const box = $(S.local === 'tasks' ? '#tk-cmd' : '#search'); box.focus(); box.select(); return;

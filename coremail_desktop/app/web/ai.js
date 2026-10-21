@@ -386,7 +386,7 @@ $('#ai-clear').onclick = async () => {
 // answers by id, so a follow-up can say "第二封"; the page only shows the turns. Answers
 // and sources are plain text (esc); [M3] citations become links to the source cards.
 const CHAT_TURNS = 6;  // ai/agent.py: earlier turns sent with each question.
-S.chat = { id: '', turns: [], skip: '' };  // turn: {question, allow, here, loading, steps, result | error}
+S.chat = { id: '', turns: [], attach: '' };  // turn: {question, allow, here, loading, steps, result | error}
 
 function chatOpen() { return $('#app').classList.contains('chatting'); }
 function showAsk(question) {
@@ -399,15 +399,16 @@ function hideAsk() { $('#app').classList.remove('chatting'); }
 function toggleChat() { if (chatOpen()) hideAsk(); else showAsk(); }
 function newChat() {
   if (S.chat.turns.some((t) => t.loading)) api('cancelAsk').catch(() => {});
-  S.chat = { id: '', turns: [], skip: '' };
+  S.chat = { id: '', turns: [], attach: '' };
   renderAsk(); $('#ask-input').focus();
 }
 
-// The mail open in the reader goes along with the question ("这封说的截止日期是哪天")
-// unless the user took it off; it comes back when another mail opens.
+// The mail open in the reader goes along with a question only when asked: the chip above the
+// box turns it on for that mail, and a question saying "这封" / "这件事" takes it by itself.
+const CHAT_THIS = /这封|这件事|这个邮件|本邮件|此邮件|这份|上面这/;
 function chatHere() {
   const m = S.message;
-  if (!m || READER_MID || S.multi.size >= 2 || S.selected !== m.id || $('#reader-body').classList.contains('hidden') || S.chat.skip === m.id) return null;
+  if (!m || READER_MID || S.multi.size >= 2 || S.selected !== m.id || $('#reader-body').classList.contains('hidden')) return null;
   return { mid: m.id, subject: m.subject || '（无主题）' };
 }
 function chatMailChanged() { if (chatOpen()) renderHere(); }
@@ -415,8 +416,10 @@ function renderHere() {
   const box = $('#chat-here'), here = chatHere();
   box.classList.toggle('hidden', !here);
   if (!here) { box.innerHTML = ''; return; }
-  box.innerHTML = `<i data-icon="mail"></i><span>附带当前邮件：${esc(here.subject)}</span><button type="button" title="这次不附带">×</button>`;
-  box.querySelector('button').onclick = () => { S.chat.skip = here.mid; renderHere(); };
+  const on = S.chat.attach === here.mid;
+  box.classList.toggle('on', on);
+  box.title = on ? `这封邮件会随问题一起发给 AI：${here.subject}（点击取消）` : `点击让下一个问题带上正在看的这封：${here.subject}。问题里说"这封"时会自动带上。`;
+  box.innerHTML = `<i data-icon="mail"></i><span>${on ? '已带上：' + esc(here.subject) : '带上正在看的邮件'}</span>`;
   renderIcons(box);
 }
 
@@ -425,7 +428,8 @@ async function askMailbox(allow = [], again = null) {
   if (last && last.loading) return;
   const question = again ? again.question : $('#ask-input').value.trim();
   if (!question) return;
-  const here = again ? again.here : chatHere();
+  const open = chatHere();
+  const here = again ? again.here : open && (S.chat.attach === open.mid || CHAT_THIS.test(question)) ? open : null;
   // Answering the last question again replaces that turn; only a turn the backend kept is redone there.
   const redo = !!(again && again.result);
   const turn = { question, allow, here, loading: true, steps: [] };
@@ -475,7 +479,7 @@ function turnCard(a, index, latest) {
   const r = a.result;
   const answer = esc(r.answer).replace(/\[(M\d+(?:, M\d+)*)\]/g, (_, refs) =>
     refs.split(', ').map((ref) => `<a class="ask-ref" data-ref="${ref}" title="打开出处 ${ref.slice(1)}">${ref.slice(1)}</a>`).join(''));
-  const card = (s) => `<div class="ask-src" data-mid="${esc(s.mid)}" title="在新窗口中打开这封邮件"><span class="ask-num">${esc(s.ref.slice(1))}</span>` +
+  const card = (s) => `<div class="ask-src" data-mid="${esc(s.mid)}" title="打开这封邮件"><span class="ask-num">${esc(s.ref.slice(1))}</span>` +
     `<div class="ask-src-main"><div class="ask-src-top"><b>${esc(s.subject)}</b><span class="muted small">${esc(s.fromName)} · ${esc(String(s.date).slice(5, 16))}</span></div>` +
     (s.snippet ? `<div class="muted small ask-snip">${esc(s.snippet)}</div>` : '') +
     (s.encrypted ? '<div class="ask-enc"><i data-icon="lock"></i>加密邮件，AI 没有读取正文' +
@@ -492,7 +496,14 @@ function turnCard(a, index, latest) {
     '</div></div>';
 }
 
-function openSource(mid) { if (mid) api('openReader', { mid }).catch(fail); }
+// A source opens in the reader beside the conversation; where the reader is not shown
+// (任务, 通讯录, a pop-out) it opens in its own window.
+function openSource(mid) {
+  if (!mid) return;
+  if (READER_MID || $('#reader').offsetParent === null) { api('openReader', { mid }).catch(fail); return; }
+  if (S.multi.size) clearSelection(false);
+  selectMessage(mid);
+}
 $('#ask-out').addEventListener('click', async (e) => {
   const t = e.target, turns = S.chat.turns, last = turns[turns.length - 1];
   const ref = t.closest('[data-ref]'), allow = t.closest('[data-allow]'), act = t.closest('[data-ask]'), tried = t.closest('[data-try]');
@@ -525,7 +536,14 @@ function fitAsk() {
   box.style.height = Math.min(box.scrollHeight, 6 * 21 + 8) + 'px';
   box.style.overflowY = box.scrollHeight > 6 * 21 + 8 ? 'auto' : 'hidden';
 }
-$('#btn-ask').onclick = () => showAsk($('#search').value);
+$('#btn-ask').onclick = () => {  // The words go to the conversation; the list goes back to the folder.
+  const q = $('#search').value;
+  if (q.trim()) { $('#search').value = ''; clearSearch(); }
+  showAsk(q);
+};
+// The mail list is folded away while chatting: going to a folder or view brings it back.
+$('#app .sidebar').addEventListener('click', (e) => { if (chatOpen() && e.target.closest('a.folder')) hideAsk(); }, true);
+$('#chat-here').onclick = () => { const here = chatHere(); if (here) { S.chat.attach = S.chat.attach === here.mid ? '' : here.mid; renderHere(); } };
 $('#ask-close').onclick = hideAsk;
 $('#chat-new').onclick = newChat;
 $('#ask-form').onsubmit = (e) => { e.preventDefault(); askMailbox(); };
