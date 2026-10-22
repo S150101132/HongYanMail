@@ -36,9 +36,7 @@
       <span class="spacer"></span><button id="btn-side-hide" class="icon-btn side-toggle" title="隐藏左侧栏 (Ctrl+B)"><i data-icon="sidebar"></i></button>
     </div>
     <div class="compose-row">
-      <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>
-      <button id="btn-compose-more" class="btn primary compose-more" title="从模板新建…"><i data-icon="chevron"></i></button>
-    </div>
+      <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>    </div>
     <div id="side-scroll" class="side-scroll">
     <nav class="folders"><a id="nav-today" class="folder" data-local="today" title="今天：现在该你做的事——要你做的邮件和快到期的任务"><i data-icon="check"></i><span class="fname">今天</span><span id="today-count" class="count"></span></a></nav>
     <nav id="folder-list" class="folders" aria-label="文件夹"></nav>
@@ -92,7 +90,7 @@
         <span id="list-sub" class="muted small"></span>
         <span class="spacer"></span>
         <div class="seg" id="filter-seg">
-          <button data-filter="all" class="on">全部</button><button data-filter="unread">未读</button><button data-filter="flagged">星标</button><button id="seg-u-act" class="hidden" data-uc-view="act" title="AI 读过新邮件后，认为需要你本人做事的邮件（最近 30 天），按截止日期排序">要我做<span class="seg-count"></span></button><button id="seg-u-know" class="hidden" data-uc-view="know" title="知会、周报、纪要等只需要知道的邮件（最近 30 天），按项目分组；数字是未读封数">知会<span class="seg-count"></span></button><button id="seg-u-wait" class="hidden" data-uc-view="wait" title="你发出、在主送里提了问、3 天以上没人回复的邮件（最近 30 天）">等回复<span class="seg-count"></span></button>
+          <button data-filter="all" class="on">全部</button><button data-filter="unread">未读</button><button data-filter="flagged">星标</button>
         </div>
         <button id="btn-threads" class="icon-btn" title="按会话分组"><i data-icon="thread"></i></button>
         <button id="btn-refresh" class="icon-btn" title="收信 (F5)"><i data-icon="refresh"></i></button>
@@ -127,7 +125,6 @@
     <section class="tk-list-pane">
       <div class="list-head tk-list-head">
         <div class="list-title-row tk-title-row"><h2>任务</h2><span id="tk-sub" class="muted small"></span><span class="spacer"></span>
-          <button id="tk-gantt" class="btn ghost sm" title="甘特图：列表中有日期的任务，显示上级 / 子任务、前置关系和逾期"><i data-icon="route"></i>甘特图</button>
           <button id="tk-report" class="btn ghost sm" title="按任务进展起草周报，写进一封新邮件（不会发出）"><i data-icon="mail"></i>周报</button>
           <button id="tk-new" class="btn ghost sm" title="不用 AI，手动填写新建任务"><i data-icon="pen"></i>新建</button></div>
         <div class="tk-filter-row"><label class="tk-filter"><i data-icon="search"></i><input id="tk-filter" type="search" spellcheck="false" placeholder="筛选：关键词；输入编号回车直接打开"></label>
@@ -146,7 +143,7 @@
     <div id="reader-empty" class="empty">
       <div class="empty-art"></div>
       <p class="list-only">选择一封邮件开始阅读</p>
-      <p class="muted small list-only">快捷键：J/K 上下切换 · Enter 新窗口打开 · R 回复 · A 全部回复 · F 转发 · Delete 删除</p>
+      <p class="muted small list-only">快捷键：J/K 上下切换 · Enter 新窗口打开 · Ctrl+C 复制邮件 · R 回复 · A 全部回复 · F 转发 · Delete 删除</p>
       <p class="chat-only">点答案里的出处，邮件会在这里打开</p>
       <p class="muted small chat-only">关掉问鸿雁（Ctrl+J）回到邮件列表</p>
     </div>
@@ -191,8 +188,7 @@
         <span class="spacer"></span>
         <button class="tb lean-hide" data-act="find" data-label="在正文中查找" data-menu-icon="search" title="在正文中查找"><i data-icon="search"></i></button>
         <button class="tb lean-hide" data-act="print" title="打印 (Ctrl+P)"><i data-icon="print"></i></button>
-        <button class="tb main-only lean-hide" data-act="popout" title="在新窗口中打开 (Enter / 双击)"><i data-icon="popout"></i></button>
-        <button class="tb" data-act="more" title="更多：移动、标为未读、查找、打印、导出等"><i data-icon="more"></i></button>
+        <button class="tb" data-act="more" title="更多：移动、标为未读、查找、打印、导出 PDF 等"><i data-icon="more"></i></button>
       </div>
       <div class="reader-scroll">
         <h1 id="r-subject"></h1>
@@ -359,7 +355,7 @@
           </div>
           <div id="pref-signature" class="sig-editor" contenteditable="true"></div>
           <h3 id="tpl-section">邮件模板</h3>
-          <p class="muted small">在写信窗口点「模板」可把当前邮件存为模板；点「写邮件」旁的箭头从模板新建。模板只保存在这台电脑，已加密。模板和收件人组的修改立即生效。</p>
+          <p class="muted small">在写信窗口点「模板」可把当前邮件存为模板，或套用已有模板。模板只保存在这台电脑，已加密。模板和收件人组的修改立即生效。</p>
           <div id="tpl-list" class="tpl-list"></div>
           <h3 id="grp-section">收件人组</h3>
           <p class="muted small">把常一起写信的人存为一个组，每人可设为主送或抄送；写信时点收件人旁的「收件人组」一键添加，重复的人自动去掉。组只保存在这台电脑，已加密。</p>
@@ -398,7 +394,7 @@
           <label class="pref-row">排除发件人<textarea id="uc-enc-senders" rows="2" spellcheck="false" placeholder="每行一个邮箱地址，或 @域名"></textarea></label>
           <div class="row-gap"><button class="btn ghost" id="uc-enc-save">保存加密邮件设置</button></div>
           <h3>理解新邮件</h3>
-          <p class="muted small">AI 在后台把最近 30 天收到的每封邮件读一遍（只读一次）：分成「要我做」「要我知道」「可以忽略」，写出一句话要点、要你做什么和截止日期。列表（收件箱的「要我做」「知会」筛选）和阅读窗格会用到这些结果。不会标为已读，不会移动、删除或回复邮件。每月约处理 150 封邮件。</p>
+          <p class="muted small">AI 在后台把最近 30 天收到的每封邮件读一遍（只读一次）：分成「要我做」「要我知道」「可以忽略」，写出一句话要点、要你做什么和截止日期。列表里的「要我做」「知会」小标识、要点和阅读窗格会用到这些结果。不会标为已读，不会移动、删除或回复邮件。每月约处理 150 封邮件。</p>
           <label class="check"><input id="uc-on" type="checkbox"> 理解新邮件</label>
           <label class="check"><input id="uc-gist" type="checkbox"> 列表第二行显示要点（不显示正文开头）</label>
           <p class="muted small" id="uc-status"></p>

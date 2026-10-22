@@ -1,9 +1,10 @@
 """One running Hongyan per user session.
 
 A named mutex decides ownership (no race between two quick launches); a local
-socket lets a second launch ask the owner to show its window. The socket only
-accepts the fixed message b'activate' and carries no data. Both names are
-per-user: the mutex lives in the session namespace, and the socket name carries
+socket lets a second launch ask the owner to show its window. The socket accepts
+only the fixed message b'activate', or b'open\t<path>\n' when a .eml file was
+double-clicked: the owner opens it only if it is an existing .eml file. Both names
+are per-user: the mutex lives in the session namespace, and the socket name carries
 a hash of the Windows account and is restricted to that account.
 """
 import hashlib
@@ -15,6 +16,8 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 MUTEX_NAME = 'Hongyan.SingleInstance'  # Also named in packaging/hongyan.iss (AppMutex).
 MESSAGE = b'activate'
+OPEN = b'open\t'
+MAX_MESSAGE = 4096
 _ERROR_ALREADY_EXISTS = 183
 
 
@@ -23,8 +26,19 @@ def _user_tag():
     return hashlib.sha256(who.casefold().encode('utf-8')).hexdigest()[:16]
 
 
+def eml_path(value):
+    """An existing .eml file named by value (str or UTF-8 bytes), as an absolute path; else None."""
+    from pathlib import Path
+    try:
+        path = Path(value.decode('utf-8') if isinstance(value, bytes) else value).resolve()
+        return str(path) if path.suffix.lower() == '.eml' and path.is_file() else None
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
 class SingleInstance(QObject):
     activated = Signal()
+    open_requested = Signal(str)  # A .eml file handed over by a second launch.
 
     def __init__(self, variant='', parent=None):
         super().__init__(parent)
@@ -64,10 +78,16 @@ class SingleInstance(QObject):
             buffer = bytearray()
 
             def read(socket=socket, buffer=buffer):
-                buffer += bytes(socket.read(64))
-                if len(buffer) >= len(MESSAGE) or len(buffer) > 64:
+                buffer += bytes(socket.read(MAX_MESSAGE))
+                if buffer.startswith(OPEN) and b'\n' not in buffer and len(buffer) <= MAX_MESSAGE:
+                    return  # The path is still arriving.
+                if len(buffer) >= len(MESSAGE) or buffer.startswith(OPEN):
                     if bytes(buffer[:len(MESSAGE) + 1]).strip() == MESSAGE:
                         self.activated.emit()
+                    elif buffer.startswith(OPEN) and len(buffer) <= MAX_MESSAGE:
+                        path = eml_path(bytes(buffer[len(OPEN):buffer.index(b'\n')]))
+                        if path:
+                            self.open_requested.emit(path)
                     socket.disconnectFromServer()
 
             socket.readyRead.connect(read)
@@ -75,8 +95,9 @@ class SingleInstance(QObject):
             if socket.bytesAvailable():
                 read()
 
-    def activate_existing(self, timeout_ms=3000):
-        """Ask the running instance to show itself. False if nobody answered."""
+    def activate_existing(self, timeout_ms=3000, path=None):
+        """Ask the running instance to show itself, or to open the .eml file at path.
+        False if nobody answered."""
         if sys.platform == 'win32':
             import ctypes
             ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY: let the owner take focus.
@@ -86,7 +107,7 @@ class SingleInstance(QObject):
             socket = QLocalSocket()
             socket.connectToServer(self.server_name)
             if socket.waitForConnected(300):
-                socket.write(MESSAGE)
+                socket.write(OPEN + str(path).encode('utf-8') + b'\n' if path else MESSAGE)
                 socket.flush()
                 if socket.bytesToWrite():
                     socket.waitForBytesWritten(1000)

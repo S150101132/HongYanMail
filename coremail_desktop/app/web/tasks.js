@@ -42,8 +42,7 @@ async function loadTasks() {
     if (token !== TK.token) return;
     TK.rows = TK.ids ? view.rows.filter((r) => TK.ids.includes(r.id)) : view.rows; TK.counts = view.counts; TK.status = status;
     renderTaskList(); renderTasksNav();
-    if (TK.gantt) showGantt();
-    else if (TK.selected && TK.rows.some((r) => r.id === TK.selected)) showTask(TK.selected);
+    if (TK.selected && TK.rows.some((r) => r.id === TK.selected)) showTask(TK.selected);
     else if (TK.selected == null || !TK.detail) renderTaskEmpty();
   } catch (err) { $('#tk-list').innerHTML = `<div class="list-foot">${esc(err.message)}</div>`; }
 }
@@ -54,7 +53,6 @@ function renderTaskList() {
   $$('#tk-tabs button').forEach((b) => { b.classList.toggle('on', b.dataset.view === TK.view); b.textContent = `${TK_TABS[b.dataset.view]} ${n[b.dataset.view]}`; });
   $('#tk-sub').textContent = st.mode === 'trial' ? '演练模式' : '';
   $('#tk-new').classList.toggle('hidden', st.mode === 'off');
-  $('#tk-gantt').classList.toggle('hidden', st.mode === 'off');
   $('#tk-ask').classList.toggle('hidden', st.mode === 'off');
   $('#tk-report').classList.toggle('hidden', st.mode === 'off');
   $('.tk-filter-row').classList.toggle('hidden', st.mode === 'off');
@@ -133,7 +131,7 @@ function renderTaskEmpty() {
 }
 
 async function showTask(id) {
-  TK.selected = id; TK.gantt = false;
+  TK.selected = id;
   $$('#tk-list .tk-row').forEach((el) => el.classList.toggle('sel', Number(el.dataset.id) === id));
   const el = $(`#tk-list .tk-row[data-id="${id}"]`); if (el) el.scrollIntoView({ block: 'nearest' });
   try {
@@ -348,7 +346,7 @@ $('#tk-detail').addEventListener('click', async (e) => {
   } catch (err) { fail(err); if (err.code === 'TASK_CONFLICT') loadTasks(); }
 });
 
-// ---------------------------------------------------------------- 任务关系与甘特图 (P1)
+// ---------------------------------------------------------------- 任务关系 (P1)
 // 上级 / 依赖 #N live in 阻塞与依赖 (the backend reads them, tasks/plan.py): no extra column.
 const REL_PARENT = /(?:上级|属于|父任务|母任务)\s*[:：]?\s*#\s*\d{1,5}/g;
 const REL_DEPS = /(?:依赖|前置|等待|先完成)\s*[:：]?\s*(?:#\s*\d{1,5}\s*[、,，和及/]?\s*)+/g;
@@ -387,63 +385,6 @@ function offerUnblock(items) {
     }
     toast(`${names} 已改为进行中`); loadTasks();
   } } });
-}
-
-$('#tk-gantt').onclick = () => { TK.gantt = true; showGantt(); };
-async function showGantt() {
-  TK.gantt = true; TK.selected = null; TK.detail = null;
-  $$('#tk-list .tk-row').forEach((el) => el.classList.remove('sel'));
-  let g;
-  try { g = await api('tasksGantt', { view: TK.view, query: TK.query }); } catch (err) { fail(err); return; }
-  if (!TK.gantt) return;
-  if (TK.ids) g.rows = g.rows.filter((r) => TK.ids.includes(r.id));
-  renderGantt(g);
-}
-function renderGantt(g) {
-  const pane = $('#tk-detail');
-  const head = `<div class="tk-gantt-head"><b>甘特图</b><span class="muted small">${g.rows.length} 条有日期的任务 · ${TK_TABS[TK.view]}${TK.query ? ' · ' + esc(TK.query) : ''}</span><span class="spacer"></span>
-    <span class="tk-gl"><i class="gl-bar"></i>计划</span><span class="tk-gl"><i class="gl-bar late"></i>逾期</span><span class="tk-gl"><i class="gl-bar wait"></i>等前置</span><span class="tk-gl"><i class="gl-bar done"></i>已完成</span></div>`;
-  if (!g.rows.length) {
-    pane.innerHTML = `<div class="tk-gantt">${head}<div class="empty"><p>列表里的任务都没有开始日期或计划完成日期。</p><p class="muted small">在任务的「编辑」中填写日期后就会出现在这里。</p></div></div>`;
-    return;
-  }
-  const ms = (s) => Date.parse(s + 'T00:00:00Z'), day = (s) => Math.round((ms(s) - ms(g.from)) / 864e5);
-  const days = day(g.to) + 1, LABEL = 250, H = 30;
-  const W = Math.max(4, Math.min(30, Math.floor(((pane.clientWidth || 800) - LABEL - 24) / days)));
-  const width = days * W;
-  // The scale: a tick per month, and per week when there is room.
-  let scale = '', last = -99;
-  for (let i = 0; i < days; i++) {
-    const d = new Date(ms(g.from) + i * 864e5), date = d.getUTCDate(), x = i * W;
-    if (date === 1 || i === 0) { scale += `<span class="tk-gm" style="left:${x}px">${d.getUTCFullYear() !== new Date().getFullYear() ? d.getUTCFullYear() + '-' : ''}${d.getUTCMonth() + 1} 月</span>`; last = x + 30; }
-    else if (d.getUTCDay() === 0 && W * 7 >= 28 && x > last + 6) { scale += `<span class="tk-gw" style="left:${x}px">${date}</span>`; last = x + 16; }
-  }
-  const index = new Map(g.rows.map((r, i) => [r.id, i]));
-  const bars = g.rows.map((r) => {
-    const x = day(r.start) * W, w = Math.max(W, (day(r.end) - day(r.start) + 1) * W);
-    const cls = r.status === '已完成' ? 'done' : r.status === '已取消' ? 'canceled' : r.late ? 'late' : r.waiting ? 'wait' : r.status === '受阻' ? 'blocked' : '';
-    const roll = r.rollup && r.rollup.total ? `<span class="tk-groll" style="width:${Math.round(100 * r.rollup.done / r.rollup.total)}%"></span>` : '';
-    const tip = `#${r.id} ${r.content}\n${r.start}${r.end !== r.start ? ' → ' + r.end : ''} · ${r.status}${r.late ? ' · 已逾期' : ''}${r.waiting ? ' · 等前置任务' : ''}` +
-      (r.rollup && r.rollup.total ? `\n子任务 ${r.rollup.done}/${r.rollup.total} 完成` : '');
-    return `<div class="tk-grow" data-goto="${r.id}"><div class="tk-glabel" style="padding-left:${10 + r.depth * 16}px" title="${esc(tip)}">
-        <b>#${r.id}</b><span>${esc(r.content)}</span></div>
-      <div class="tk-gtrack" style="width:${width}px"><div class="tk-gbar ${cls}${r.rollup ? ' parent' : ''}" style="left:${x}px;width:${w}px" title="${esc(tip)}">${roll}</div></div></div>`;
-  }).join('');
-  const lines = g.rows.flatMap((r) => r.deps.filter((dep) => index.has(dep)).map((dep) => {
-    const from = g.rows[index.get(dep)], y1 = index.get(dep) * H + H / 2, y2 = index.get(r.id) * H + H / 2;
-    const x1 = (day(from.end) + 1) * W, x2 = day(r.start) * W;
-    return `<path d="M${x1} ${y1} h6 V${y2} H${Math.max(x2, x1 + 6)}" />`;
-  })).join('');
-  const today = (day(g.today) + 0.5) * W;
-  pane.innerHTML = `<div class="tk-gantt">${head}<div class="tk-gscroll"><div class="tk-gbody" style="width:${LABEL + width}px">
-      <div class="tk-gscale"><div class="tk-glabel"></div><div class="tk-gtrack" style="width:${width}px">${scale}</div></div>
-      <div class="tk-grows">${bars}
-        <svg class="tk-glines" style="left:${LABEL}px" width="${width}" height="${g.rows.length * H}"><defs><marker id="tk-arrow" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L6 3L0 6z"/></marker></defs>${lines}</svg>
-        <div class="tk-gtoday" style="left:${LABEL + today}px" title="今天 ${esc(g.today)}"></div></div></div></div>
-    <p class="muted small tk-gnote">点击一行打开任务。条形从开始日期到计划完成日期（已完成的到结束日期）；只有一个日期的任务显示为一天。箭头表示前置关系。</p></div>`;
-  $$('.tk-glines path', pane).forEach((p) => p.setAttribute('marker-end', 'url(#tk-arrow)'));
-  const scroller = $('.tk-gscroll', pane);
-  scroller.scrollLeft = Math.max(0, today - (scroller.clientWidth - LABEL) / 2);
 }
 
 // ---------------------------------------------------------------- forms

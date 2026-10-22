@@ -98,9 +98,6 @@ STEPS = [
     (900, "$('#prompt-ok').click()", 'invite-answered'),
     (900, "selectMessage('demo14')", 'invite-cancelled'),
     (900, "selectMessage('demo5')", None),
-    (700, "TG.pick(['demo5'])", 'tag-picker'),
-    (700, "$('#prompt').classList.add('hidden'); TG.open('x19a1f0c0001')", None),
-    (1200, "selectMessage(S.rows[0].id)", 'tag-view'),
     (700, "openSettings(); RL.show('rules')", None),
     (900, "document.body.offsetWidth", 'settings-rules'),
     (700, "RL.edit(RL.rules[1])", 'rule-editor'),
@@ -115,16 +112,14 @@ STEPS = [
     (700, "S.prefs.sidebarWidth = 400; S.prefs.listWidth = 280; applyWidths()", 'resized-narrow-list'),
     (700, "$('#split-list').dispatchEvent(new MouseEvent('dblclick')); $('#split-side').dispatchEvent(new MouseEvent('dblclick'))", None),
     (700, "moreMenu($('#reader-body [data-act=more]'), S.message)", 'export-menu'),
-    (500, "hideMenu(); exportEml({ ...S.message, encryption: 'decrypted' })", 'export-encrypted'),
-    (500, "$('#prompt').classList.add('hidden'); api('saveTemplate', { name: '周报', recipients: true, value: { subject: '本周工作周报', "
+    (500, "hideMenu(); api('saveTemplate', { name: '周报', recipients: true, value: { subject: '本周工作周报', "
           "html: '<p>各位好，</p><p>本周完成：</p><ul><li>…</li></ul><p>下周计划：</p>', to: ['rd@example.invalid'] } })"
           ".then(() => api('saveTemplate', { name: '会议通知', value: { subject: '会议通知：', html: '<p>时间：</p><p>地点：</p><p>议程：</p>' } }))", None),
     (700, "openSettings('compose', '#tpl-section')", 'settings-templates'),
     (600, "$('#settings').classList.add('hidden'); startCompose('new')", None),
     (900, "templateMenu($('#cmp-template'))", 'template-menu'),
     (700, "hideMenu(); applyTemplate(S.templates.find((t) => t.name === '周报'))", 'template-applied'),
-    (700, "closeComposer(true); $('#btn-compose-more').click()", 'compose-menu'),
-    (500, "hideMenu(); newFromTemplate()", 'template-pick'),
+    (500, "hideMenu(); closeComposer(true)", None),
     (500, "$('#prompt').classList.add('hidden'); selectMessage(S.rows[3].id)", None),
     (900, lambda: window.native_openReader('demo3'), None),
     (2500, None, 'popout', 'reader'),
@@ -258,8 +253,6 @@ STEPS += [
     (9000, "document.body.offsetWidth", 'uc-list'),
     (500, "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'act' && (UC.cards.get(r.id) || {}).due).id)", 'uc-reader-act'),
     (500, "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'know').id)", 'uc-reader-know'),
-    (500, "ucOpen('act')", 'uc-act'),
-    (500, "ucOpen('know')", 'uc-know'),
     (500, "selectFolder('1')", None),
     (900, "const r = $$('#mail-list .row')[1].getBoundingClientRect(); showMenu(r.left + 80, r.top + 20, UC.menu(rowOf($$('#mail-list .row')[1].dataset.id)))", 'uc-menu'),
     (500, "hideMenu(); ucRuleDialog({ sender: 'rd@example.invalid', subject: '研发周报 · 第 42 周' }, 'know')", 'uc-rule'),
@@ -278,7 +271,7 @@ STEPS += [
     (700, "renderMessage({ ...S.message, encryption: 'decrypted', signature: { ...(" + SIG_OK + "), timeValid: false } })", 'sec-warn'),
 ]
 
-# 工作记忆 M2, 本周需要知道 / 等对方回复 / 人物卡片 M3, 任务关系与甘特图 P1 (HONGYAN_WALK_M2=1 runs only these; demo AI).
+# 工作记忆 M2, 本周需要知道 / 等对方回复 / 人物卡片 M3, 任务关系 P1 (HONGYAN_WALK_M2=1 runs only these; demo AI).
 M2 = len(STEPS)
 
 
@@ -327,8 +320,7 @@ STEPS += [
     (900, "$('#r-from-name').click()", 'm3-person'),
     (500, "closePersonPop(); openSettings(); $('#st-nav [data-tab=ai]').click(); setTimeout(() => $('#mem-projects').scrollIntoView({ block: 'center' }), 300)", None),
     (1200, "document.body.offsetWidth", 'm2-settings'),
-    (500, "$('#settings').classList.add('hidden'); openTasks()", None),
-    (1200, "$('#tk-gantt').click()", 'p1-gantt'),
+    (1200, "$('#settings').classList.add('hidden'); openTasks()", None),
     (900, "showTask(403)", 'p1-relations'),
 ]
 

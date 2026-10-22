@@ -48,9 +48,7 @@ CLOSE = "$('#prompt').classList.add('hidden'); hideMenu()"
 ATT = "PV.close(); PV.open(S.message, S.message.attachments.find((a) => a.name.endsWith(%r)))"
 STEPS = [
     (2500, None, None),
-    (600, "selectFolder('1')", 'tags-folded'),
-    (500, "$('#tag-head').click()", 'tags-open'),
-    (500, "$('#tag-head').click()", None),
+    (600, "selectFolder('1')", None),
     (900, "MG.deleteFolder(folderById(%r))" % folder, 'folder-delete-choices'),
     (500, "$('input[name=\"mg-mail\"][value=\"inbox\"]').checked = true; $('#prompt-ok').click()", None),
     (1500, "document.body.offsetWidth", 'folder-deleted-to-inbox'),

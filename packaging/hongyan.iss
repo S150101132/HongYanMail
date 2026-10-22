@@ -41,6 +41,8 @@ CloseApplications=yes
 ; whole install. Uninstall instead via {app}\Uninstall-Hongyan.cmd (or the Start-menu
 ; entry when shortcuts could be created).
 CreateUninstallRegKey=no
+; Tell Explorer that the .eml file type changed (task emlassoc).
+ChangesAssociations=yes
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
@@ -49,6 +51,8 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 DirNote=如果本机安全策略禁止程序写入用户目录（AppData），请选择其他磁盘上的文件夹，例如 D:\Programs\Hongyan。
 StartMenuIcon=创建开始菜单快捷方式（本机若禁止写入用户目录会跳过）
 DesktopIcon=创建桌面快捷方式
+EmlAssoc=双击 .eml 邮件文件时用鸿雁打开（只读查看，可回复、转发）
+EmlType=邮件文件
 LaunchNow=立即启动鸿雁
 RemoveDataTitle=卸载鸿雁
 RemoveDataText=鸿雁已从本机移除。本机保存的邮件缓存、草稿和登录信息（均已加密）默认保留，重新安装后可继续使用。
@@ -58,6 +62,7 @@ RemoveDataOk=确定
 [Tasks]
 Name: "startmenuicon"; Description: "{cm:StartMenuIcon}"
 Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Flags: unchecked
+Name: "emlassoc"; Description: "{cm:EmlAssoc}"
 
 [Files]
 Source: "..\dist\Hongyan\*"; DestDir: "{app}"; Excludes: "HongyanData\*,debug.log"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -68,6 +73,16 @@ Source: "Uninstall-Hongyan.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{autoprograms}\鸿雁"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Tasks: startmenuicon
 Name: "{autodesktop}\鸿雁"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{autoprograms}\卸载鸿雁"; Filename: "{app}\Uninstall-Hongyan.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExe}"; Tasks: startmenuicon
+
+[Registry]
+; Per-user file type for .eml (HKCU, no administrator rights). Managed machines may refuse
+; registry writes: noerror keeps the install going. Windows may still ask once which
+; program opens .eml when another mail program was chosen before.
+Root: HKCU; Subkey: "Software\Classes\Hongyan.eml"; ValueType: string; ValueData: "{cm:EmlType}"; Flags: uninsdeletekey noerror; Tasks: emlassoc
+Root: HKCU; Subkey: "Software\Classes\Hongyan.eml\DefaultIcon"; ValueType: string; ValueData: "{app}\{#AppExe},0"; Flags: noerror; Tasks: emlassoc
+Root: HKCU; Subkey: "Software\Classes\Hongyan.eml\shell\open\command"; ValueType: string; ValueData: """{app}\{#AppExe}"" ""%1"""; Flags: noerror; Tasks: emlassoc
+Root: HKCU; Subkey: "Software\Classes\.eml"; ValueType: string; ValueData: "Hongyan.eml"; Flags: uninsclearvalue noerror; Tasks: emlassoc
+Root: HKCU; Subkey: "Software\Classes\.eml\OpenWithProgids"; ValueType: none; ValueName: "Hongyan.eml"; Flags: uninsdeletevalue noerror; Tasks: emlassoc
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchNow}"; Flags: nowait postinstall skipifsilent

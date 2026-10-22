@@ -131,7 +131,8 @@ class PageTest(unittest.TestCase):
             self.assertIn(text, today)  # Task text and AI suggestions are shown as text.
         memory = self.read('memory.js')
         self.assertIn("if (kind !== 'week')", memory)  # 本周概括 left the inbox's 知会 for 今天.
-        self.assertIn("k !== 'wait'", self.read('understand.js'))  # 等回复 left the 已发送 list head.
+        self.assertNotIn('id="seg-u-', page)  # 要我做 / 知会 / 等回复 left the list head (R4: marks on the rows).
+        self.assertIn('class="uc-kind act"', self.read('understand.js'))
 
     def test_reply_and_strip(self):
         app, understand_js, memory = self.read('app.js'), self.read('understand.js'), self.read('memory.js')

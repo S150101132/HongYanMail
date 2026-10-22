@@ -259,9 +259,9 @@ class WebAssetsTest(unittest.TestCase):
     def test_hooks(self):
         html = (self.WEB / 'index.html').read_text(encoding='utf-8')
         self.assertLess(html.index('contacts.js'), html.index('<script src="rules.js">'))
-        self.assertIn('TG.chips(r.tags)', (self.WEB / 'app.js').read_text(encoding='utf-8'))
+        self.assertNotIn('TG.chips', (self.WEB / 'app.js').read_text(encoding='utf-8'))  # No 标签 in the page (R4).
         script = (self.WEB / 'rules.js').read_text(encoding='utf-8')
-        for name in ("api('saveRule'", "api('setAutoReply'", "api('tagMessages'", "api('respondInvitation'", "part: 'invite.ics'"):
+        for name in ("api('saveRule'", "api('setAutoReply'", "api('tags'", "api('respondInvitation'", "part: 'invite.ics'"):
             self.assertIn(name, script)
         from coremail_desktop.app.shell import BACKEND_METHODS
         from coremail_desktop.app.backend import MailBackend as B

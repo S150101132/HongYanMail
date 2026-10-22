@@ -327,7 +327,7 @@ class WiringTest(unittest.TestCase):
             self.assertIn(f'esc({field})', source)
         self.assertNotIn('innerHTML = c.', source)
         page = (WEB / 'index.html').read_text(encoding='utf-8')
-        for anchor in ('id="seg-u-act"', 'id="seg-u-know"', 'id="seg-u-wait"', 'id="uc-enc-allow"', 'id="uc-on"', 'src="understand.js"'):
+        for anchor in ('id="uc-enc-allow"', 'id="uc-on"', 'src="understand.js"'):
             self.assertIn(anchor, page)
         app = (WEB / 'app.js').read_text(encoding='utf-8')
         self.assertIn('UC.row(r)', app)

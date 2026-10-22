@@ -1,133 +1,19 @@
 'use strict';
-/* 鸿雁 — tags (标签), mail rules and holiday auto-reply (设置), meeting invitations (reader). Loaded after app.js.
-   Hooks into app.js by wrapping renderFolders / renderMessage / selectMessage / showMenu / openSettings, so
-   app.js itself only carries the tag-chip call in rowHtml. Every write goes through the backend, which reads
-   the server back and reports success only when the change is there. */
+/* 鸿雁 — mail rules and holiday auto-reply (设置), meeting invitations (reader). Loaded after app.js.
+   Hooks into app.js by wrapping renderMessage / selectMessage / openSettings. Every write goes through the
+   backend, which reads the server back and reports success only when the change is there. No 标签 (R4):
+   星标 is enough; rules made on the web that add a server tag still show and keep that action. */
 
-ICONS.tag = '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><circle cx="7.5" cy="7.5" r="1.5"/>';
 ICONS.calendar = '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>';
 ICONS.rule = '<path d="M4 6h16M4 12h10M4 18h6"/><path d="m16 15 3 3-3 3"/>';
 ICONS.up = '<path d="m6 15 6-6 6 6"/>';
 ICONS.down = '<path d="m6 9 6 6 6-6"/>';
 
-// ---------------------------------------------------------------- tags
-const TAG_COLORS = ['#cc0000', '#ee791a', '#f2d230', '#2ea962', '#24b3b3', '#30aed5', '#a847d7', '#e36dad', '#888888'];
-const TG = window.TG = {
-  list: [], limit: 100, ctx: null,
+// Server tags, only to name them in rules made on the web.
+const TG = {
+  list: [],
   byId(id) { return this.list.find((t) => t.id === id); },
-  chip(t, extra = '') { return `<span class="tg-chip${extra}" style="--tg:${esc(t.color)}" title="${esc(t.name)}">${esc(t.name)}</span>`; },
-  chips(ids, max = 3) {
-    const tags = (ids || []).map((id) => this.byId(id)).filter(Boolean);
-    if (!tags.length) return '';
-    return `<span class="tg-chips">${tags.slice(0, max).map((t) => this.chip(t)).join('')}${tags.length > max ? `<span class="tg-more">+${tags.length - max}</span>` : ''}</span>`;
-  },
-  async load(refresh = true) {
-    try { const r = await api('tags', { refresh }); this.list = r.tags; this.limit = r.limit; } catch (e) { /* tags are optional */ }
-    this.renderSide();
-    if (S.rows.length) renderList();
-    if (S.message) this.renderReader(S.message);
-  },
-  renderSide() {
-    let sec = $('#tag-section');
-    if (!sec) {
-      sec = document.createElement('div'); sec.id = 'tag-section';
-      sec.innerHTML = '<button class="side-section" id="tag-head" aria-controls="tag-list" title="展开或折叠标签"><i data-icon="chevron"></i><span>标签</span></button><nav id="tag-list" class="folders" aria-label="标签"></nav>';
-      ($('#shared-section') || $('#folder-list')).after(sec);
-      renderIcons(sec);
-      $('#tag-head').onclick = () => {
-        S.prefs.tagsOpen = !S.prefs.tagsOpen; this.renderSide();
-        api('setPrefs', { values: { tagsOpen: S.prefs.tagsOpen } }).then((p) => { S.prefs = p; }).catch(() => {});
-      };
-    }
-    sec.classList.toggle('hidden', !this.list.length);
-    // Collapsed by default; the open tag's view keeps its entry visible.
-    const open = !!S.prefs.tagsOpen || String(S.local || '').startsWith('tag:');
-    $('#tag-head').setAttribute('aria-expanded', String(open));
-    const nav = $('#tag-list');
-    nav.classList.toggle('hidden', !open);
-    nav.innerHTML = this.list.map((t) => `<a class="folder${S.local === 'tag:' + t.id ? ' on' : ''}" data-tag="${esc(t.id)}" title="${esc(t.name)}">
-      <i class="tg-dot" style="background:${esc(t.color)}"></i><span class="fname">${esc(t.name)}</span></a>`).join('');
-    $$('[data-tag]', nav).forEach((a) => (a.onclick = () => this.open(a.dataset.tag)));
-  },
-  async open(id) {
-    const t = this.byId(id); if (!t) return;
-    S.local = 'tag:' + id; S.search = null; S.listToken++; S.multi.clear(); renderSelection();
-    S.rows = []; S.more = false; renderFolders();
-    $('#list-title').textContent = t.name; $('#list-sub').textContent = '正在读取…';
-    $('#mail-list').innerHTML = '<div class="skeleton"></div>'.repeat(4);
-    const token = S.listToken;
-    try {
-      const res = await api('tagView', { tag_id: id });
-      if (token !== S.listToken) return;
-      S.rows = res.rows; S.total = res.total; S.more = false; renderList();
-      $('#list-sub').textContent = res.total != null ? `${res.total} 封 · 不含已删除` : '';
-      if (res.more) $('#mail-list').insertAdjacentHTML('beforeend', '<div class="list-foot">只显示最新的 50 封，更早的请用搜索查找</div>');
-      if (!res.rows.length) $('#mail-list').innerHTML = '<div class="list-foot">没有带这个标签的邮件</div>';
-    } catch (err) { if (token === S.listToken) $('#mail-list').innerHTML = `<div class="list-foot">${esc(err.message)}</div>`; }
-  },
-  renderReader(m) {
-    let box = $('#r-tags');
-    if (!box) { box = document.createElement('div'); box.id = 'r-tags'; box.className = 'r-tags'; $('#r-subject').after(box); }
-    const own = !m.mailbox && !m.imported;  // A local .eml file has no server tags.
-    $$('[data-tg="pick"]').forEach((b) => b.classList.toggle('hidden', !own || !this.list.length));
-    box.innerHTML = (m.tags || []).map((id) => this.byId(id)).filter(Boolean).map((t) =>
-      `<span class="tg-chip big" style="--tg:${esc(t.color)}">${esc(t.name)}${own ? `<button data-untag="${esc(t.id)}" title="去掉这个标签">×</button>` : ''}</span>`).join('') +
-      (own && this.list.length ? '<button class="tg-add" title="添加或去掉标签 (L)"><i data-icon="tag"></i><span>标签</span></button>' : '');
-    renderIcons(box);
-    $$('[data-untag]', box).forEach((b) => (b.onclick = () => this.apply([m.id], [], [b.dataset.untag])));
-    const add = $('.tg-add', box); if (add) add.onclick = () => this.pick([m.id]);
-  },
-  async apply(ids, add, remove) {
-    try {
-      await api('tagMessages', { ids, add, remove });
-      for (const r of S.rows.filter((x) => ids.includes(x.id))) {
-        const tags = (r.tags || []).filter((t) => !remove.includes(t));
-        r.tags = tags.concat(add.filter((t) => !tags.includes(t)));
-      }
-      if (S.message && ids.includes(S.message.id)) {
-        const tags = (S.message.tags || []).filter((t) => !remove.includes(t));
-        S.message.tags = tags.concat(add.filter((t) => !tags.includes(t)));
-        this.renderReader(S.message);
-      }
-      if (S.local && S.local.startsWith('tag:') && remove.includes(S.local.slice(4))) S.rows = S.rows.filter((r) => !ids.includes(r.id) || (r.tags || []).includes(S.local.slice(4)));
-      renderList();
-      toast(add.length && !remove.length ? '已添加标签' : !add.length ? '已去掉标签' : '标签已更新');
-    } catch (err) { fail(err); }
-  },
-  rowsOf(ids) { return ids.map((id) => (S.message && S.message.id === id ? S.message : S.rows.find((r) => r.id === id))).filter(Boolean); },
-  async pick(ids) {
-    const rows = this.rowsOf(ids);
-    if (!rows.length || rows.some((r) => r.mailbox)) { toast('共享邮箱的邮件请在网页版中设置标签', { error: true }); return; }
-    const has = (id) => rows.filter((r) => (r.tags || []).includes(id)).length;
-    const body = `<div class="tg-pick">${this.list.map((t) => { const n = has(t.id); return `<label class="tg-opt"><input type="checkbox" data-id="${esc(t.id)}"
-        ${n === rows.length ? 'checked' : ''} data-mixed="${n && n < rows.length ? 1 : 0}"><i class="tg-dot" style="background:${esc(t.color)}"></i>${esc(t.name)}</label>`; }).join('')}</div>
-      <div class="tg-new"><input id="tg-new-name" placeholder="新建标签名称" maxlength="24"><button class="btn ghost sm" id="tg-new-btn">新建并添加</button></div>`;
-    const result = await promptDialog({
-      title: rows.length > 1 ? `为 ${rows.length} 封邮件设置标签` : '设置标签', body, okText: '应用',
-      onOpen: (d, done) => {
-        $$('[data-mixed="1"]', d).forEach((c) => (c.indeterminate = true));
-        $('#tg-new-btn', d).onclick = async () => {
-          const name = $('#tg-new-name', d).value.trim(); if (!name) return;
-          try {
-            const r = await api('saveTag', { name, color: TAG_COLORS[this.list.length % TAG_COLORS.length] });
-            this.list = r.tags; this.renderSide();
-            done({ add: [r.saved], remove: [] });
-          } catch (err) { fail(err); }
-        };
-      },
-      collect: () => {
-        const add = [], remove = [];
-        $$('#prompt .tg-pick input').forEach((c) => {
-          if (c.indeterminate) return;
-          const n = has(c.dataset.id);
-          if (c.checked && n < rows.length) add.push(c.dataset.id);
-          if (!c.checked && n > 0) remove.push(c.dataset.id);
-        });
-        return { add, remove };
-      },
-    });
-    if (result && (result.add.length || result.remove.length)) this.apply(rows.map((r) => r.id), result.add, result.remove);
-  },
+  async load() { try { this.list = (await api('tags', { refresh: false })).tags; } catch (e) { /* only for names */ } },
 };
 
 // ---------------------------------------------------------------- meeting invitations
@@ -197,11 +83,11 @@ const IV = {
   },
 };
 
-// ---------------------------------------------------------------- settings: rules, auto-reply, tags
+// ---------------------------------------------------------------- settings: rules, auto-reply
 const RL = {
   FIELDS: { from: '发件人', to: '收件人', subject: '主题', attachment: '有附件', size: '邮件大小' },
   OPS: { contains: '包含', '=': '是', endsWith: '结尾是' },
-  ACTIONS: { move: '移动到', read: '标为已读', flag: '添加星标', forward: '转发到', tag: '添加标签' },
+  ACTIONS: { move: '移动到', read: '标为已读', flag: '添加星标', forward: '转发到' },
   rules: [], loaded: false,
   folderName(id) { const f = S.folders.find((x) => x.id === String(id)); return f ? f.name : `文件夹 ${id}`; },
   condText(c) {
@@ -262,7 +148,8 @@ const RL = {
   },
   actRow(a = { type: 'move' }) {
     const folders = S.folders.filter((f) => !['drafts', 'sent', 'virus'].includes(f.role));
-    return `<div class="rl-row" data-act-row><select data-type>${Object.entries(this.ACTIONS).map(([k, t]) => `<option value="${k}"${k === a.type ? ' selected' : ''}>${t}</option>`).join('')}</select>
+    const kinds = a.type === 'tag' ? { ...this.ACTIONS, tag: '添加标签' } : this.ACTIONS;  // Kept, not offered.
+    return `<div class="rl-row" data-act-row><select data-type>${Object.entries(kinds).map(([k, t]) => `<option value="${k}"${k === a.type ? ' selected' : ''}>${t}</option>`).join('')}</select>
       <select data-folder class="${a.type === 'move' ? '' : 'hidden'}">${folders.map((f) => `<option value="${esc(f.id)}"${f.id === a.folder ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select>
       <select data-tag class="${a.type === 'tag' ? '' : 'hidden'}">${TG.list.map((t) => `<option value="${esc(t.id)}"${t.id === a.tag ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
       <input data-to class="${a.type === 'forward' ? '' : 'hidden'}" value="${esc(a.to || '')}" placeholder="转发到的邮件地址">
@@ -357,43 +244,8 @@ const AR = {
   },
 };
 
-const TS = {
-  render() {
-    const pane = $('#st-tags');
-    pane.innerHTML = `<div class="st-intro"><p class="muted small">标签保存在服务器上，与网页版共用。一封邮件可以有多个标签；左侧栏点击标签可查看带该标签的邮件。</p>
-      <button class="btn primary" id="ts-new"><i data-icon="tag"></i>新建标签</button></div>
-      <div class="rl-list">${TG.list.map((t) => `<div class="rl-item" data-id="${esc(t.id)}"><i class="tg-dot big" style="background:${esc(t.color)}"></i>
-        <div class="rl-main"><div class="rl-name">${esc(t.name)}</div>${t.named ? '' : '<div class="muted small">默认颜色标签</div>'}</div>
-        <button class="icon-btn" data-edit title="重命名或换颜色"><i data-icon="pen"></i></button><button class="icon-btn" data-del title="删除"><i data-icon="trash"></i></button></div>`).join('')}</div>
-      <p class="muted small">共 ${TG.list.length} 个，最多 ${TG.limit} 个。</p>`;
-    renderIcons(pane);
-    $('#ts-new').onclick = () => this.edit(null);
-    $$('.rl-item', pane).forEach((el) => {
-      const t = TG.byId(el.dataset.id);
-      $('[data-edit]', el).onclick = () => this.edit(t);
-      $('[data-del]', el).onclick = async () => {
-        if (!(await confirmDialog('删除标签', `删除标签「${t.name}」后，所有邮件上的这个标签都会去掉，邮件本身不受影响。`, '删除'))) return;
-        try { TG.list = (await api('deleteTag', { tag_id: t.id })).tags; this.done('标签已删除'); } catch (err) { fail(err); }
-      };
-    });
-  },
-  done(text) { this.render(); TG.renderSide(); renderList(); if (S.message) TG.renderReader(S.message); toast(text); },
-  async edit(tag) {
-    let color = tag ? tag.color : TAG_COLORS[TG.list.length % TAG_COLORS.length];
-    const body = `<label class="pref-row">名称 <input id="ts-name" value="${esc(tag && tag.named ? tag.name : '')}" maxlength="24" placeholder="${esc(tag ? tag.name : '例如：待跟进')}"></label>
-      <div class="ts-colors">${TAG_COLORS.map((c) => `<button class="ts-color${c === color ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>`;
-    const value = await promptDialog({
-      title: tag ? '编辑标签' : '新建标签', body, okText: '保存',
-      onOpen: (d) => $$('.ts-color', d).forEach((b) => (b.onclick = () => { color = b.dataset.c; $$('.ts-color', d).forEach((x) => x.classList.toggle('on', x === b)); })),
-      collect: () => ({ name: $('#ts-name').value.trim() || (tag ? tag.name : ''), color }),
-    });
-    if (!value) return;
-    try { TG.list = (await api('saveTag', { name: value.name, color: value.color, tag_id: tag ? tag.id : null })).tags; this.done(tag ? '标签已保存' : '标签已创建'); } catch (err) { fail(err); }
-  },
-};
-
 // Settings pages: the left list picks one page. Local pages are in index.html; the
-// server-backed ones (rules, auto-reply, tags; manage.js adds 黑白名单) load when opened.
+// server-backed ones (rules, auto-reply; manage.js adds 黑白名单) load when opened.
 // Only 常规 and 写信 hold preferences saved by the 保存 button at the foot.
 const SAVED_PAGES = ['general', 'compose'];
 function addSettingsPage(name, label, icon) {
@@ -406,30 +258,24 @@ function addSettingsPage(name, label, icon) {
 (function settingsTabs() {
   addSettingsPage('rules', '收信规则', 'route');
   addSettingsPage('autoreply', '休假自动回复', 'clock');
-  addSettingsPage('tags', '标签', 'star');
   const show = (name) => {
     if (!$(`#st-nav [data-tab="${name}"]`)) name = 'general';
     $$('#st-nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $$('#settings [data-pane]').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== name));
     $('#st-foot').classList.toggle('hidden', !SAVED_PAGES.includes(name));
     $('#st-main').scrollTop = 0;
-    if (name === 'rules') { if (!TG.list.length) TG.load(false); RL.load(); }
+    if (name === 'rules') TG.load().then(() => RL.load());
     if (name === 'autoreply') AR.load();
-    if (name === 'tags') TG.load().then(() => TS.render());
   };
   $('#st-nav').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) RL.show(b.dataset.tab); });
   RL.show = show;
 })();
 
 // ---------------------------------------------------------------- hooks into app.js
-const _renderFolders = renderFolders;
-// The bridge can connect (and enterApp run) before this file has loaded: then the first
-// folder render after sign-in loads the tags instead of the enterApp hook below.
-renderFolders = function () { _renderFolders(); if (!TG.started && S.folders.length) { TG.started = true; TG.load(); } TG.renderSide(); };
 const _renderMessage = renderMessage;
-renderMessage = function (m) { _renderMessage(m); TG.renderReader(m); IV.render(m); };
+renderMessage = function (m) { _renderMessage(m); IV.render(m); };
 const _selectMessage = selectMessage;
-selectMessage = function (id, opts) { const c = $('#iv-card'); if (c) c.remove(); const t = $('#r-tags'); if (t) t.innerHTML = ''; return _selectMessage(id, opts); };
+selectMessage = function (id, opts) { const c = $('#iv-card'); if (c) c.remove(); return _selectMessage(id, opts); };
 const _openSettings = openSettings;
 // openSettings(page, anchor): a page of the list ('ai', 'tasks', …) and a heading on it to scroll to.
 openSettings = function (page, anchor) {
@@ -437,31 +283,3 @@ openSettings = function (page, anchor) {
   RL.show(typeof page === 'string' ? page : 'general');
   if (anchor) setTimeout(() => { const el = $(anchor); if (el) el.scrollIntoView({ block: 'start' }); }, 30);
 };
-const _enterApp = enterApp;
-enterApp = async function (profile) { await _enterApp(profile); TG.started = true; TG.load(); };
-// Row context menu: a 标签… entry for the user's own mail.
-$('#mail-list').addEventListener('contextmenu', (e) => {
-  const row = e.target.closest('.row');
-  TG.ctx = row && (!S.local || S.local.startsWith('tag:')) ? row.dataset.id : null;
-}, true);
-const _showMenu = showMenu;
-showMenu = function (x, y, items) {
-  const id = TG.ctx; TG.ctx = null;
-  const r = id && S.rows.find((x) => x.id === id);
-  if (r && !r.mailbox && TG.list.length) {
-    const ids = S.multi.size > 1 && S.multi.has(id) ? [...S.multi] : [id];
-    items = items.concat(['-', { label: ids.length > 1 ? `标签…（${ids.length} 封）` : '标签…', icon: 'tag', run: () => TG.pick(ids) }]);
-  }
-  _showMenu(x, y, items);
-};
-// Reader and selection toolbars get a 标签 button; L opens the picker.
-$('#reader-body .reader-toolbar .spacer').insertAdjacentHTML('beforebegin', '<button class="tb" data-tg="pick" title="标签 (L)"><i data-icon="tag"></i></button>');
-$('#reader-multi .reader-toolbar .spacer').insertAdjacentHTML('beforebegin', '<button class="tb" data-tg="batch" title="标签 (L)"><i data-icon="tag"></i><span>标签</span></button>');
-renderIcons($('#reader'));
-$('[data-tg="pick"]').onclick = () => S.message && TG.pick([S.message.id]);
-$('[data-tg="batch"]').onclick = () => S.multi.size && TG.pick([...S.multi]);
-document.addEventListener('keydown', (e) => {
-  if ((e.key !== 'l' && e.key !== 'L') || e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target)) return;
-  if (!$('#prompt').classList.contains('hidden') || !$('#settings').classList.contains('hidden') || !$('#composer').classList.contains('hidden')) return;
-  if (S.multi.size > 1) TG.pick([...S.multi]); else if (S.message) TG.pick([S.message.id]);
-});

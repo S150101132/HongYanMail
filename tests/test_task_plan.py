@@ -1,5 +1,5 @@
-"""任务关系与甘特图 (P1): 上级 / 依赖 #N read from 阻塞与依赖, loops refused, the parent's
-roll-up, the Gantt rows and 解除受阻 after a predecessor is done."""
+"""任务关系 (P1): 上级 / 依赖 #N read from 阻塞与依赖, loops refused, the parent's
+roll-up and 解除受阻 after a predecessor is done."""
 import unittest
 
 from coremail_desktop.app.backend import MailBackend
@@ -41,20 +41,6 @@ class RelationTest(unittest.TestCase):
                          task_row(4, '受阻', blockers='依赖 #1 依赖 #2'), task_row(5, '进行中', blockers='依赖 #1'))
         self.assertEqual([u['id'] for u in plan.unblocked(tasks, [1])], [3])
 
-    def test_gantt_rows(self):
-        tasks = tasks_of(task_row(1, '进行中', start='2026-10-01', due='2026-10-30'),
-                         task_row(2, '进行中', start='2026-10-05', due='2026-10-10', blockers='上级 #1'),
-                         task_row(3, '未开始', due='2026-10-25', blockers='依赖 #2 上级 #1'),
-                         task_row(4, '已完成', start='2026-09-20', end='2026-09-25'), task_row(5))
-        g = plan.gantt(tasks, '2026-10-20')
-        self.assertEqual([(r['id'], r['depth']) for r in g['rows']], [(4, 0), (1, 0), (2, 1), (3, 1)])
-        row = {r['id']: r for r in g['rows']}
-        self.assertEqual((row[2]['late'], row[3]['start'], row[3]['deps'], row[3]['waiting'], row[1]['rollup']),
-                         (True, '2026-10-25', [2], True, {'done': 0, 'total': 2}))
-        self.assertEqual((g['from'], g['to']), ('2026-09-20', '2026-10-30'))
-        self.assertEqual([r['id'] for r in plan.gantt(tasks, '2026-10-20', {2, 3})['rows']], [2, 3])  # Only the listed ones.
-
-
 class BackendTest(unittest.TestCase):
     def setUp(self):
         self.folder = folder_with(self, open_rows=[task_row(302, '进行中', start='2026-10-01', due='2026-10-30'),
@@ -65,11 +51,10 @@ class BackendTest(unittest.TestCase):
         b.tasks_import('live')
         b.tasks.clock = Clock()
 
-    def test_relations_gantt_loop_check_and_unblock(self):
+    def test_relations_loop_check_and_unblock(self):
         b = self.backend
         rel = b.task_get(302)['relations']
         self.assertEqual(([c['id'] for c in rel['children']], [n['id'] for n in rel['next']], rel['rollup']), ([333], [330], {'done': 0, 'total': 1}))
-        self.assertEqual([r['id'] for r in b.tasks_gantt()['rows']], [302])
         with self.assertRaises(AppError) as raised:
             b.task_update(302, b.task_get(302)['rev'], {'blockers': '依赖 #330'})
         self.assertEqual(raised.exception.code, 'TASK_RELATION_CYCLE')

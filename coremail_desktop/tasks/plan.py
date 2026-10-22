@@ -1,4 +1,4 @@
-"""任务关系与甘特图 (P1): 上级 / 子任务 and 前置 / 后续 between tasks.
+"""任务关系 (P1): 上级 / 子任务 and 前置 / 后续 between tasks.
 
 The relations are written in the task's own 阻塞与依赖 field, as people already do there
 and as the task assistant writes them (T1b): 「依赖 #12」「前置 #12」 for a predecessor and
@@ -6,15 +6,13 @@ and as the task assistant writes them (T1b): 「依赖 #12」「前置 #12」 fo
 existing column (lossless both ways) and readable by a person. Pure functions.
 """
 import re
-from datetime import date, timedelta
 
 from coremail_desktop.errors import AppError
-from coremail_desktop.tasks.rules import CANCELED, DONE, OPEN_STATUSES, is_day, overdue
+from coremail_desktop.tasks.rules import CANCELED, DONE
 
 DEP = re.compile(r'(?:依赖|前置|等待|先完成)\s*[:：]?\s*((?:#\s*\d{1,5}\s*[、,，和及/]?\s*)+)')
 PARENT = re.compile(r'(?:上级|属于|父任务|母任务)\s*[:：]?\s*#\s*(\d{1,5})')
 NUMBER = re.compile(r'#\s*(\d{1,5})')
-GANTT_DAYS = 400  # The longest span drawn; a bar beyond it is cut at the edge.
 
 
 def links(task):
@@ -109,45 +107,3 @@ def unblocked(tasks, finished):
             found.append({'id': task_id, 'content': task.get('content', '')[:60], 'rev': task.get('rev')})
     return found
 
-
-def gantt(tasks, today, ids=None):
-    """甘特图 rows: the tasks with a start or a planned date (ids: only these, e.g. the list on
-    screen), parents first with their subtasks below them. A bar runs from 开始日期 to
-    计划完成日期 (or 结束日期 when done); a task with one date is a one-day mark."""
-    rel = relations(tasks)
-    chosen = [t for t in tasks.values() if (ids is None or t['id'] in ids) and (is_day(t.get('start')) or is_day(t.get('due')) or is_day(t.get('end')))]
-    keep = {t['id'] for t in chosen}
-    rows, placed = [], set()
-
-    def bar(task):
-        first = task['start'] if is_day(task.get('start')) else None
-        last = task['end'] if task['status'] == DONE and is_day(task.get('end')) else task['due'] if is_day(task.get('due')) else None
-        first, last = first or last or task.get('end'), last or first or task.get('end')
-        if last < first:
-            first, last = last, first
-        return first, last
-
-    def place(task, depth):
-        if task['id'] in placed:
-            return
-        placed.add(task['id'])
-        first, last = bar(task)
-        r = rel[task['id']]
-        rows.append({'id': task['id'], 'content': task.get('content', '')[:80], 'system': task.get('system', ''), 'status': task['status'],
-                     'start': first, 'end': last, 'depth': depth, 'late': overdue(task, today), 'deps': [d for d in r['deps'] if d in keep],
-                     'waiting': any(tasks[d]['status'] != DONE for d in r['deps']), 'parent': r['parent'] if r['parent'] in keep else None,
-                     'rollup': rollup(tasks, rel, task['id']) if r['children'] else None})
-        for child in sorted((tasks[c] for c in r['children'] if c in keep), key=lambda t: bar(t)[0]):
-            place(child, depth + 1)
-
-    roots = [t for t in chosen if rel[t['id']]['parent'] not in keep]
-    for task in sorted(roots, key=lambda t: (bar(t)[0], t['id'])):
-        place(task, 0)
-    if not rows:
-        return {'rows': [], 'from': today, 'to': today, 'today': today}
-    first = min(min(r['start'] for r in rows), today)
-    last = max(max(r['end'] for r in rows), today)
-    if (date.fromisoformat(last) - date.fromisoformat(first)).days > GANTT_DAYS:
-        first = max(first, (date.fromisoformat(today) - timedelta(days=GANTT_DAYS // 2)).isoformat())
-        last = (date.fromisoformat(first) + timedelta(days=GANTT_DAYS)).isoformat()
-    return {'rows': rows, 'from': first, 'to': last, 'today': today, 'open': list(OPEN_STATUSES)}

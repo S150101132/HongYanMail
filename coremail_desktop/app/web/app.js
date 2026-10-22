@@ -544,7 +544,7 @@ function rowHtml(r, item = { ids: [r.id], rows: [r] }) {
     ${twisty}${avatarHtml(r.fromName, sentLike ? r.to : r.fromEmail)}
     <div class="main">
       <div class="line1"><span class="who">${esc(who)}</span>${thread ? `<span class="tcount" title="${size} 封邮件">${size}</span>` : ''}${folderTag}<span class="marks">${marks}</span><span class="when">${esc(shortDate(d))}</span></div>
-      <div class="subj">${uc.lead || ''}${badge}${esc(r.subject || '（无主题）')}${window.TG ? TG.chips(r.tags) : ''}</div>
+      <div class="subj">${uc.lead || ''}${badge}${esc(r.subject || '（无主题）')}</div>
       ${uc.prev || (r.preview ? `<div class="prev">${esc(r.preview)}</div>` : '')}
     </div></div>`;
 }
@@ -988,7 +988,7 @@ $('#reader-body').addEventListener('click', async (e) => {
     delete: () => deleteMessage(m.id), move: () => pickFolder(m.id), unread: () => setFlags(m.id, { read: false }),
     flag: () => setFlags(m.id, { flagged: !m.flags.flagged }), find: openFind,
     recall: () => recallMessage(m), status: () => loadDeliveryStatus(m, true), unschedule: () => unscheduleMessage(m),
-    print: () => printMessage(m), popout: () => popOut(m.id), more: () => moreMenu(b, m), summarize: () => aiMenu(b.offsetParent ? b : $('#reader-body [data-act="more"]'), m), aireply: () => replyAssist(m),
+    print: () => printMessage(m), more: () => moreMenu(b, m), summarize: () => aiMenu(b.offsetParent ? b : $('#reader-body [data-act="more"]'), m), aireply: () => replyAssist(m),
     ask: () => { const here = chatHere(); if (here) S.chat.attach = here.key; showAsk(); },
   }[b.dataset.act] || (() => {}))();
 });
@@ -1004,19 +1004,19 @@ async function exportPdf(m) {
   if (m.encryption === 'decrypted' && !(await confirmDialog('导出未加密的 PDF', PLAIN_COPY_TEXT, '仍然导出'))) return;
   api('exportPdf', { mid: m.id, remote: S.allowRemote.has(m.id) }).catch(fail);
 }
-async function exportEml(m) {
-  let decrypted = false;
-  if (m.encryption === 'decrypted') {
-    const choice = await promptDialog({ title: '导出加密邮件', okText: '导出',
-      text: '这是一封加密邮件。默认导出服务器上的原始加密邮件（.eml），需要你的证书才能打开。',
-      body: `<div class="pick-radio"><label class="check"><input type="radio" name="eml-kind" value="orig" checked> 原始加密邮件（推荐）</label>
-        <label class="check"><input type="radio" name="eml-kind" value="plain"> 解密后的副本（不加密保存）</label></div>`,
-      collect: () => ($('input[name="eml-kind"]:checked') || {}).value });
-    if (!choice) return;
-    decrypted = choice === 'plain';
-    if (decrypted && !(await confirmDialog('保存未加密的副本', PLAIN_COPY_TEXT, '保存解密副本'))) return;
-  }
-  try { if (await api('exportEml', { mid: m.id, decrypted })) toast(decrypted ? '已导出解密副本' : '邮件已导出'); } catch (err) { fail(err); }
+// Ctrl+C on a mail (or the selected mails) copies them as .eml files, to paste into a folder,
+// a chat or another mail. Selected text still copies as text. Encrypted mail goes as its original.
+function copyMail(e) {
+  const t = e.target, doc = (t && t.ownerDocument) || document;
+  if (isTyping(t) || String(doc.getSelection() || '').trim()) return false;
+  const ids = !READER_MID && S.multi.size >= 2 ? [...S.multi]
+    : S.message && (READER_MID || !$('#reader-body').classList.contains('hidden')) ? [S.message.id] : [];
+  if (!ids.length) return false;
+  e.preventDefault();
+  const sealed = ids.length === 1 && S.message.encryption !== 'none';
+  api('copyMail', { mids: ids }).then((n) => toast((n > 1 ? `已复制 ${n} 封邮件` : '已复制邮件') +
+    (sealed ? '（加密原件，对方需要证书才能打开）' : '') + '，可以粘贴到文件夹或聊天窗口')).catch(fail);
+  return true;
 }
 // 精简工具栏 (A4): the buttons folded away in scope, as they stand for this mail (sent, scheduled,
 // read-only), offered as menu items that click them — the same handlers and checks as on the bar
@@ -1038,8 +1038,6 @@ function moreMenu(button, m) {
     '-',
     { label: '打印…', icon: 'print', run: () => printMessage(m) },
     { label: '导出为 PDF…', icon: 'file', run: () => exportPdf(m) },
-    { label: m.encryption === 'none' ? '导出为 .eml…' : '导出为 .eml（加密原件或解密副本）…', icon: 'download', run: () => exportEml(m) },
-    ...(READER_MID ? [] : ['-', { label: '在新窗口中打开', icon: 'popout', run: () => popOut(m.id) }]),
   ]);
 }
 on('printed', (v) => {
@@ -1706,17 +1704,6 @@ composer.addEventListener('keydown', (e) => {
 
 // ---------------------------------------------------------------- templates (local, encrypted)
 async function loadTemplates() { try { S.templates = await api('templates'); } catch (e) { S.templates = []; } return S.templates; }
-async function pickTemplate(title) {
-  await loadTemplates();
-  if (!S.templates.length) { toast('还没有模板：在写信窗口点「模板」→「将当前邮件存为模板」'); return null; }
-  return promptDialog({ title,
-    body: '<div class="pick-list tpl-pick">' + S.templates.map((t, i) => `<button data-i="${i}"><i data-icon="template"></i><span class="tpl-name">${esc(t.name)}</span><span class="muted small tpl-sub">${esc(t.subject || '（无主题）')}</span></button>`).join('') + '</div>',
-    onOpen: (d, done) => $$('[data-i]', d).forEach((b) => (b.onclick = () => done(S.templates[+b.dataset.i]))) });
-}
-async function newFromTemplate() {
-  const t = await pickTemplate('从模板新建'); if (!t) return;
-  startCompose('new', null, { subject: t.subject, html: t.html, to: t.to, cc: t.cc, bcc: t.bcc });
-}
 async function applyTemplate(t) {
   const body = $('#cmp-editor').innerText.replace(/\s+/g, '');
   const typed = C.dirty && (body || $('#cmp-subject').value.trim());
@@ -1734,7 +1721,7 @@ async function applyTemplate(t) {
 async function saveAsTemplate() {
   const value = collectDraft();
   const got = await promptDialog({ title: '存为模板', okText: '保存',
-    text: '保存当前邮件的主题和正文，以后可以从模板新建。模板只保存在本机，已加密；附件不会保存。',
+    text: '保存当前邮件的主题和正文，以后在写信窗口点「模板」套用。模板只保存在本机，已加密；附件不会保存。',
     body: `<input type="text" id="tpl-name" maxlength="60" placeholder="模板名称" value="${esc(value.subject.slice(0, 60))}">
       <label class="check" style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" id="tpl-rcpt"> 同时保存收件人、抄送和密送</label>`,
     collect: () => ({ name: $('#tpl-name').value.trim(), recipients: $('#tpl-rcpt').checked }) });
@@ -1760,12 +1747,6 @@ async function templateMenu(button) {
   m.style.top = Math.max(8, r.top - h - 4) + 'px';  // Opens upwards from the composer foot.
 }
 $('#cmp-template').onclick = (e) => templateMenu(e.currentTarget);
-$('#btn-compose-more').onclick = (e) => {
-  const r = e.currentTarget.getBoundingClientRect();
-  showMenu(r.left, r.bottom + 4, [{ label: '写邮件', icon: 'pen', run: () => startCompose('new') },
-    { label: '从模板新建…', icon: 'template', run: newFromTemplate },
-    '-', { label: '打开 .eml 邮件文件…', icon: 'open', run: importEml }]);
-};
 function renderTemplates() {
   const box = $('#tpl-list');
   box.innerHTML = S.templates.length ? S.templates.map((t) => `<div class="tpl-row" data-id="${esc(t.id)}"><i data-icon="template"></i>
@@ -1868,6 +1849,8 @@ function handleKey(e) {
     return;
   }
   if (e.ctrlKey && (e.key === 'q' || e.key === 'Q')) { e.preventDefault(); quitApp(); return; }
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'C') && (READER_MID || (!$('#app').classList.contains('hidden') && !['tasks', 'contacts'].includes(S.local)))
+      && copyMail(e)) return;
   if (READER_MID) { readerKey(e); return; }
   if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); if (S.message && S.multi.size < 2 && !$('#reader-body').classList.contains('hidden')) printMessage(S.message); return; }
   if (e.key === 'Escape') { const menu = !$('#menu').classList.contains('hidden'); hideMenu(); closeFind(); if (!isTyping(t)) clearSelection(); void menu; }

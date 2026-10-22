@@ -229,6 +229,35 @@ class SingleInstanceTest(unittest.TestCase):
         self._pump(lambda: socket.state() == QLocalSocket.LocalSocketState.UnconnectedState, 1)
         self.assertEqual(hits, [])
 
+    def test_a_double_clicked_eml_is_handed_to_the_owner(self):
+        from PySide6.QtNetwork import QLocalSocket
+        from coremail_desktop.app.single_instance import SingleInstance
+        owner = SingleInstance('test-' + uuid.uuid4().hex[:8])
+        self.addCleanup(owner.deleteLater)
+        self.addCleanup(owner.release)
+        opened, hits = [], []
+        owner.open_requested.connect(opened.append)
+        owner.activated.connect(lambda: hits.append(1))
+        self.assertTrue(owner.acquire())
+        folder = Path(__file__).resolve().parents[1] / ('.test-eml-' + uuid.uuid4().hex[:8])
+        folder.mkdir()
+        self.addCleanup(shutil.rmtree, folder, True)
+        mail = folder / '邮件 测试.EML'
+        mail.write_bytes(b'From: a@example.invalid\r\nSubject: x\r\n\r\nbody\r\n')
+        other = folder / 'note.txt'
+        other.write_bytes(b'x')
+        for target in (mail, other, folder / 'missing.eml'):
+            socket = QLocalSocket()
+            self.addCleanup(socket.deleteLater)
+            self.addCleanup(socket.abort)
+            socket.connectToServer(owner.server_name)
+            self.assertTrue(socket.waitForConnected(1000))
+            socket.write(b'open\t' + str(target).encode('utf-8') + b'\n')
+            socket.waitForBytesWritten(1000)
+            self._pump(lambda: socket.state() == QLocalSocket.LocalSocketState.UnconnectedState, 1)
+        self.assertEqual(opened, [str(mail.resolve())])  # Only an existing .eml file.
+        self.assertEqual(hits, [])
+
     def test_variants_and_users_do_not_collide(self):
         from coremail_desktop.app.single_instance import SingleInstance
         self.assertNotEqual(SingleInstance('').server_name, SingleInstance('demo').server_name)

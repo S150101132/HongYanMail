@@ -9,9 +9,10 @@ def main(argv=None):
     parser.add_argument('--demo',action='store_true',help='show explicitly synthetic data; no network')
     parser.add_argument('--classic',action='store_true',help='the earlier Qt Widgets interface')
     parser.add_argument('--minimized',action='store_true',help='start hidden in the tray (used by 开机自动启动)')
+    parser.add_argument('file',nargs='?',help='a .eml file to open read-only (双击 .eml 文件)')
     args=parser.parse_args(argv)
     if not args.classic:
-        return run_app(args.demo,args.minimized)
+        return run_app(args.demo,args.minimized,args.file)
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import QSettings
     from .ui.theme import apply_theme
@@ -101,7 +102,7 @@ def _relaunch_without_sandbox():
     subprocess.Popen(command,env={**os.environ,'HONGYAN_NO_SANDBOX':'1'},close_fds=True)
 
 
-def run_app(demo=False,minimized=False):
+def run_app(demo=False,minimized=False,eml=None):
     """The daily-use interface: web UI in Qt WebEngine over the verified protocol layer."""
     import time
     # Some managed Windows machines stop Chromium's sandboxed renderer from starting
@@ -122,11 +123,12 @@ def run_app(demo=False,minimized=False):
     app.setQuitOnLastWindowClosed(False)
     # One copy per user: a second launch shows the running window and exits. Demo runs
     # use their own name so they never hand off to (or block) the real client.
-    from .app.single_instance import SingleInstance
+    from .app.single_instance import SingleInstance, eml_path
     guard=SingleInstance('demo' if demo else '')
+    eml=eml_path(eml) if eml else None  # A double-clicked .eml file; the owner opens it.
     if not guard.acquire():
         # A sandbox relaunch takes over from its dying parent instead of activating it.
-        if os.environ.get('HONGYAN_NO_SANDBOX')!='1' and guard.activate_existing():
+        if os.environ.get('HONGYAN_NO_SANDBOX')!='1' and guard.activate_existing(path=eml):
             return 0
         guard.listen()  # The owner did not answer (it is exiting): carry on as the new owner.
     from .app.backend import MailBackend
@@ -161,9 +163,12 @@ def run_app(demo=False,minimized=False):
         guard.release(); _relaunch_without_sandbox()
     window=shell.AppShell(backend,demo=demo,sandboxed=sandboxed,relaunch_without_sandbox=None if not sandboxed else relaunch)
     guard.activated.connect(window.bring_to_front)
+    guard.open_requested.connect(window.open_eml_file)
     from PySide6.QtWidgets import QSystemTrayIcon
     if minimized and QSystemTrayIcon.isSystemTrayAvailable():
         window.start_in_background()
     else:
         window.show()  # Minimized: only the tray icon; the page still loads, signs in and polls.
+    if eml:
+        window.open_eml_file(eml)
     return app.exec()

@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
-from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QMarginsF, QObject, QSize, QTimer, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QMarginsF, QMimeData, QObject, QSize, QTimer, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QPageLayout, QPageSize, QShortcut
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWebChannel import QWebChannel
@@ -94,7 +94,7 @@ BACKEND_METHODS = {
     'memoryProjects': 'memory_projects', 'memoryProject': 'memory_project', 'memoryFacts': 'memory_facts', 'memoryRecent': 'memory_recent',
     'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryWeekBrief': 'memory_week_brief', 'memoryPerson': 'memory_person', 'followups': 'followups',
     'todayOverview': 'today_overview', 'todayWaiting': 'today_waiting',
-    'followupDismiss': 'followup_dismiss', 'tasksGantt': 'tasks_gantt',
+    'followupDismiss': 'followup_dismiss',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
@@ -149,6 +149,18 @@ def _save_dir(backend):
 
 def _saved(target):
     _LAST_SAVE_DIR[:] = [Path(target).parent]
+
+
+def _copy_dir(backend):
+    """A fresh folder for the .eml files of the last Ctrl+C (the clipboard names files,
+    so they must exist until pasted). Earlier copies are removed first; the system temp
+    folder is preferred, the data folder is the fallback on PCs that forbid it."""
+    import shutil
+    import tempfile
+    temp = Path(tempfile.gettempdir()) / 'Hongyan-copy'
+    folder = temp if _writable(temp) else backend.data_dir / '复制的邮件'
+    shutil.rmtree(folder, ignore_errors=True)
+    return folder
 
 
 def _png_from_image(data):
@@ -423,14 +435,34 @@ class _PrintHost:
         self._render_print(mid, remote, ready)
         return True
 
-    def native_exportEml(self, mid='', decrypted=False):
-        name, data = self.backend.export_eml(mid, decrypted is True)
-        target, _ = QFileDialog.getSaveFileName(self, '导出邮件', str(_save_dir(self.backend) / name), '邮件文件 (*.eml)')
-        if not target:
-            return False
-        Path(target).write_bytes(data)
-        _saved(target)
-        return True
+    def native_copyMail(self, mids=()):
+        """Ctrl+C on mail: the messages go on the clipboard as .eml files, to paste into a
+        folder, a chat or another mail. Encrypted mail is copied as its encrypted original."""
+        if not isinstance(mids, list) or not 0 < len(mids) <= 200:
+            raise AppError('INVALID_MAIL_ACTION')
+        folder = _copy_dir(self.backend)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            raise AppError('COPY_FAILED') from None
+        urls, used = [], set()
+        for mid in mids:
+            name, data = self.backend.export_eml(mid)
+            stem, n = name[:-4], 1
+            while name.casefold() in used:
+                n += 1
+                name = f'{stem} ({n}).eml'
+            used.add(name.casefold())
+            try:
+                (folder / name).write_bytes(data)
+            except OSError:
+                raise AppError('COPY_FAILED') from None
+            urls.append(QUrl.fromLocalFile(str(folder / name)))
+        mime = QMimeData()
+        mime.setUrls(urls)  # CF_HDROP on Windows: Explorer, chat and mail programs paste files.
+        mime.setData('application/x-qt-windows-mime;value="Preferred DropEffect"', QByteArray(b'\x01\0\0\0'))  # Copy, not move.
+        QApplication.clipboard().setMimeData(mime)
+        return len(urls)
 
 
 class ReaderWindow(_PrintHost, QMainWindow):
@@ -981,16 +1013,28 @@ class AppShell(_PrintHost, QMainWindow):
         window.activateWindow()
         return True
 
-    def native_importEml(self):
-        """导入 .eml: a local message file, opened read-only in a pop-out reader."""
-        path, _ = QFileDialog.getOpenFileName(self._parent(), '打开邮件文件', str(Path.home() / 'Downloads'), '邮件文件 (*.eml);;所有文件 (*)')
-        if not path:
-            return False
+    def open_eml_file(self, path):
+        """A .eml file double-clicked in Explorer (passed on the command line, or handed
+        over by a second launch): opened read-only in a pop-out reader once the page is up."""
+        if not self._page_loaded:
+            def later(ok, path=path):
+                self.page.loadFinished.disconnect(later)
+                self.open_eml_file(path)
+            self.page.loadFinished.connect(later)
+            return
         from coremail_desktop.app.backend import MAX_EML_BYTES
-        if Path(path).stat().st_size > MAX_EML_BYTES:
-            raise AppError('EML_TOO_LARGE')
-        mid = self.backend.import_eml(Path(path).read_bytes())
-        return self.native_openReader(mid)
+        try:
+            try:
+                if Path(path).stat().st_size > MAX_EML_BYTES:
+                    raise AppError('EML_TOO_LARGE')
+                raw = Path(path).read_bytes()
+            except OSError:
+                raise AppError('EML_UNREADABLE') from None
+            self.native_openReader(self.backend.import_eml(raw))
+        except AppError as error:
+            from PySide6.QtWidgets import QMessageBox
+            self.bring_to_front()
+            QMessageBox.warning(self, '打开邮件文件', user_message(error.code))
 
     def native_openAttachedMail(self, mid='', part=''):
         """A mail attachment opens as a mail in a pop-out reader, not as raw text."""

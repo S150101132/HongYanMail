@@ -179,6 +179,22 @@ class PopOutAndPrintTest(unittest.TestCase):
         with self.assertRaises(AppError):
             window.native_openReader('')
 
+        # Ctrl+C: the mails go on the clipboard as .eml files (the original bytes), earlier copies removed.
+        from unittest import mock
+        temp = Path(scratch(self))
+        second = backend.messages('1', 0, 5)['rows'][1]['id']
+        with mock.patch('tempfile.gettempdir', return_value=str(temp)):
+            window.native_copyMail([second])
+            self.assertEqual(window.native_copyMail([mid, mid]), 2)
+        urls = self.app.clipboard().mimeData().urls()
+        files = [Path(u.toLocalFile()) for u in urls]
+        self.assertEqual(len({f.name for f in files}), 2)
+        self.assertTrue(all(f.parent == temp / 'Hongyan-copy' and f.suffix == '.eml' for f in files))
+        self.assertEqual(files[0].read_bytes(), backend.export_eml(mid)[1])
+        self.assertEqual(len(list((temp / 'Hongyan-copy').iterdir())), 2)  # The first copy is gone.
+        with self.assertRaises(AppError):
+            window.native_copyMail('x')
+
         result = {}
 
         def ready(view, _ok):

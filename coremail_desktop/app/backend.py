@@ -3180,13 +3180,6 @@ class MailBackend:
         result['relations'] = plan.view(center.store.tasks, result['task']['id'])
         return result
 
-    def tasks_gantt(self, view='open', query=''):
-        """甘特图 (P1) of the tasks in the list (same view and words as tasks_overview)."""
-        from coremail_desktop.tasks import plan
-        center = self._tasks()
-        ids = {r['id'] for r in center.overview(view, query)['rows']}
-        return plan.gantt(center.store.tasks, center.today(), ids)
-
     def _unblocked(self, result, ids):
         """前置任务完成 (P1): the 受阻 tasks now free to go on, for the page to offer."""
         from coremail_desktop.tasks import plan

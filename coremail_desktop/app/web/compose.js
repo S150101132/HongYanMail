@@ -1,6 +1,6 @@
 'use strict';
 /* 鸿雁 · v0.5 compose and send: undo send, offline outbox, server drafts, body images,
-   tables, forward as attachment, opening .eml files. Uses app.js globals ($, api, C, S...). */
+   tables, forward as attachment. Uses app.js globals ($, api, C, S...). */
 
 // ---------------------------------------------------------------- 撤销发送
 // The backend holds the draft for the delay and the main window's timer releases it;
@@ -346,8 +346,3 @@ $('#cmp-editor').addEventListener('keydown', (e) => {
   if (i >= list.length) { addRow(list[list.length - 1], true); C.dirty = true; list = cells(); }
   caretIn(list[i]);
 });
-
-// ---------------------------------------------------------------- .eml 文件
-async function importEml() {
-  try { await api('importEml'); } catch (err) { fail(err); }
-}

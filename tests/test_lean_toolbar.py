@@ -54,8 +54,8 @@ class ReachTest(unittest.TestCase):
 
     def test_reader_buttons_are_in_the_more_menu(self):
         acts = {a['data-act']: a for tag, a in self.folded.hide if 'data-act' in a}
-        self.assertEqual(set(acts), {'move', 'unread', 'recall', 'status', 'unschedule', 'summarize', 'aireply', 'find', 'print', 'popout'})
-        in_menu = {'print': "label: '打印…'", 'popout': "label: '在新窗口中打开'"}  # moreMenu has had these.
+        self.assertEqual(set(acts), {'move', 'unread', 'recall', 'status', 'unschedule', 'summarize', 'aireply', 'find', 'print'})
+        in_menu = {'print': "label: '打印…'"}  # moreMenu has had these.
         for act, a in acts.items():
             self.assertTrue(a.get('data-label') or in_menu[act] in self.app, act)
         self.assertIn("foldedItems($('#reader-body .reader-toolbar'))", self.app)
