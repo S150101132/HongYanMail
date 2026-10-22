@@ -106,6 +106,11 @@ if (typeof document !== 'undefined') {
     }
     add('命令', 'spark', '问邮箱', () => showAsk(), ['ai', '提问', '对话', '聊天', 'AI 助手'], 'Ctrl+J');
     add('命令', 'pen', '写邮件', () => startCompose('new'), ['新邮件', '写信', '新建邮件', '发邮件'], 'Ctrl+N');
+    if (typeof showToday === 'function') {
+      add('前往', 'clock', '在等别人', () => showToday('wait'), ['等回复', '等对方回复', '催办', '跟进', '受阻']);
+      add('前往', 'spark', '待我确认', () => showToday('confirm'), ['待确认', 'AI 建议', '确认建议']);
+      if (ucOn()) add('前往', 'spark', '本周概括', () => showToday('week'), ['本周需要知道', '需要知道', '周报', '本周']);
+    }
     add('命令', 'template', '从模板新建', () => newFromTemplate(), ['模板', '用模板写信']);
     add('命令', 'refresh', '收信', () => $('#btn-refresh').click(), ['刷新', '同步', '收邮件'], 'F5');
     add('命令', 'filter', '高级搜索', () => SF.open(), ['筛选', '条件搜索', '搜索条件']);
@@ -120,6 +125,10 @@ if (typeof document !== 'undefined') {
     }
     if (typeof MG !== 'undefined') add('命令', 'folderplus', '新建文件夹', () => MG.createFolder(null), ['建文件夹']);
     if (typeof toggleSidebar === 'function') add('命令', 'sidebar', '隐藏 / 显示左侧栏', () => toggleSidebar(), ['侧栏', '左侧栏'], 'Ctrl+B');
+    if (typeof writeReport === 'function') {
+      add('命令', 'mail', '写本周周报', () => writeReport(''), ['周报', '本周周报', '工作周报']);
+      add('命令', 'mail', '写上周周报', () => writeReport('last'), ['上周周报']);
+    }
     add('命令', 'tasks', '新建任务', () => { if (S.local !== 'tasks') $('#nav-tasks').click(); setTimeout(() => $('#tk-new').click(), 50); }, ['任务', '加任务']);
     add('命令', 'lock', '解锁个人证书', () => unlockCertificate(), ['证书', '解锁证书']);
     const theme = (t, label, names) => add('外观', 'settings', label, async () => {
@@ -155,7 +164,8 @@ if (typeof document !== 'undefined') {
     const hits = all.map((c, i) => ({ c, s: cmdScore(c.names, q), i })).filter((x) => x.s >= 30)
       .sort((a, b) => b.s - a.s || a.i - b.i).slice(0, 7).map((x) => ({ ...x.c, score: x.s }));
     const tail = [];
-    if (S.local === 'tasks') tail.push({ group: '任务助手', icon: 'tasks', title: q, hint: '交给任务助手', run: () => { $('#tk-cmd').value = q; $('#tk-cmd').dispatchEvent(new Event('input')); runCommand(); } });
+    const number = q.match(/^#?\s*(\d{1,4})$/);
+    if (number && typeof openTask === 'function') tail.push({ group: '任务', icon: 'tasks', title: `打开任务 #${number[1]}`, hint: '任务中心', run: () => openTask(number[1]) });
     const p = cmdParse(q);
     if (p.labels.length || (!cmdIsQuestion(q) && q.length <= 30)) {
       tail.push({ group: '搜索', icon: 'search', title: [...p.labels, p.words ? `「${p.words}」` : ''].filter(Boolean).join(' · '), hint: '搜索邮件',

@@ -33,6 +33,7 @@ DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify'
                  'understand': '',  # 理解层: '' not asked yet, 'on', 'off'.
                  'listGist': True,  # The list's second line shows the card's 要点 instead of the body's start.
                  'toolbar': 'lean',  # A4: 'lean' folds low-use buttons into ⋯ / 格式 / the send menu; 'full' shows them all.
+                 'startPage': 'today',  # R2a: 'today' opens 今天 after signing in, 'inbox' the 收件箱.
                  'hiddenFolders': []}  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
 CLOSE_ACTIONS = ('', 'tray', 'quit')
 UNDO_CHOICES = (0, 5, 10, 20, 30)  # 撤销发送 delay in seconds; 0 sends at once.
@@ -227,6 +228,7 @@ UNDERSTAND_SKIP = ('sent', 'drafts', 'trash', 'spam', 'virus')
 UNDERSTAND_DAYS, UNDERSTAND_ROUND = 30, 10
 # 催办 (M3): sent mail that asked something of its To recipients and got no reply.
 FOLLOWUP_DAYS, FOLLOWUP_KEEP = 3, 500
+TODAY_DAYS = 3  # 今天 (R2a): tasks due within this many days are on the list.
 ASKING = re.compile(r'[?？]|请|麻烦|能否|是否|可否|确认|please|could you|can you|kindly|let me know|advise', re.I)
 
 
@@ -538,6 +540,8 @@ class MailBackend:
             prefs['closeAction'] = ''
         if prefs['understand'] not in ('', 'on', 'off'):
             prefs['understand'] = ''
+        if prefs['startPage'] not in ('today', 'inbox'):
+            prefs['startPage'] = 'today'
         if prefs['toolbar'] not in ('lean', 'full'):
             prefs['toolbar'] = 'lean'
         if prefs['undoSeconds'] not in UNDO_CHOICES:
@@ -2730,14 +2734,23 @@ class MailBackend:
             raise AppError('AI_PLAN_EXPIRED')
         return entry
 
-    def assistant_plan_run(self, plan):
+    def assistant_plan_run(self, plan, picks=None):
         """执行 on a plan card: its operations through run_plan, as the task center's command
-        box does; the conversation learns it ran, so a follow-up does not propose it again."""
+        box does; the conversation learns it ran, so a follow-up does not propose it again.
+        picks: the indexes the user left ticked (all when None); a new task's #N1 left out
+        makes the operations naming it fail rather than run half-done."""
         entry = self._plan_entry(plan, 'tasks')
+        actions = entry['actions']
+        if picks is not None:
+            if not isinstance(picks, list) or not picks or any(type(i) is not int or not 0 <= i < len(actions) for i in picks):
+                raise AppError('TASK_INVALID')
+            actions = [a for i, a in enumerate(actions) if i in set(picks)]
         self._plans.pop(plan)
-        result = self._tasks().run_plan(entry['actions'], entry['basis'])
+        result = self._tasks().run_plan(actions, entry['basis'])
         done = '、'.join(f'#{d["id"]}' for d in result['done']) or '无'
-        self._chat_note(entry, f'\n（用户已确认执行计划 {entry["ref"]}：成功 {len(result["done"])} 项（{done}），失败 {len(result["failed"])} 项。）')
+        left = len(entry['actions']) - len(actions)
+        self._chat_note(entry, f'\n（用户已确认执行计划 {entry["ref"]}：成功 {len(result["done"])} 项（{done}），失败 {len(result["failed"])} 项'
+                               + (f'，没有勾选 {left} 项' if left else '') + '。）')
         # 提醒回信 (W4): which done operations may deserve a reply; the page asks assistant_nudge.
         actions = {a.get('id'): a for a in entry['actions']}
         told = [(d['id'], what) for d in result['done'] if (what := self._nudge_what(actions.get(d['id'], d)))]
@@ -3706,6 +3719,52 @@ class MailBackend:
                 memory.put_card(mid, {**card, 'done': bool(done)})
                 changed.append(mid)
         return {'changed': changed, 'status': self.understand_status()}
+
+    def understand_answered(self, mid):
+        """回复即已处理 (R1a): mid was replied to or forwarded and went out, so it and the earlier
+        要我做 mail of its conversation are done; returns the ids that changed (for 撤销)."""
+        if not isinstance(mid, str) or not mid or len(mid) > 300:
+            raise AppError('UNDERSTAND_INVALID')
+        if not self._understand_on() or self.cache.summary(mid) is None:
+            return {'changed': []}
+        _, _, rows = self._thread_rows(mid)
+        ts = self.cache.summary(mid).get('ts') or 0
+        ids = [r['id'] for r in rows if (r.get('ts') or 0) <= ts] or [mid]
+        cards = {i: self.memory.card(i) for i in ids}
+        return self.understand_set_done([i for i, c in cards.items() if c and c.get('sure')])
+
+    # 今天 (R2a) ------------------------------------------------------------------
+    def today_overview(self):
+        """今天: one list of what is mine to do now — 要我做 mail and unfinished tasks overdue or
+        due within TODAY_DAYS days (受阻 ones wait on others, so they are under 在等别人) —
+        overdue first, then by due date, undated last (newest first); and the counts behind
+        the head's links. From the caches and the task store only: no AI, no network."""
+        from coremail_desktop.tasks.rules import is_day
+        center = self._tasks()
+        today, tasks_on = center.today(), center.status()['mode'] != 'off'
+        horizon = (datetime.fromisoformat(today) + timedelta(days=TODAY_DAYS)).date().isoformat()
+        understanding = self._understand_on()
+        rows = [{'kind': 'mail', 'id': r['id'], 'due': r['card']['due'], 'ts': r.get('ts') or 0, 'mail': r}
+                for r in (self.understand_view('act')['rows'] if understanding else [])]
+        blocked = []
+        for t in center.overview('open')['rows'] if tasks_on else []:
+            if t['status'] == '受阻':
+                blocked.append(t)
+            elif is_day(t['due']) and t['due'] <= horizon:
+                rows.append({'kind': 'task', 'id': t['id'], 'due': t['due'], 'ts': 0, 'task': t})
+        rows.sort(key=lambda r: -r['ts'])
+        rows.sort(key=lambda r: (not (r['due'] and r['due'] < today), r['due'] or '9999'))
+        waiting = len(self.followups()) if understanding else 0
+        return {'date': today, 'rows': rows, 'understanding': understanding, 'tasks': tasks_on,
+                'counts': {'overdue': sum(1 for r in rows if r['due'] and r['due'] < today),
+                           'today': sum(1 for r in rows if r['due'] == today),
+                           'waiting': waiting + len(blocked), 'confirm': len(center.pending()) if tasks_on else 0}}
+
+    def today_waiting(self):
+        """在等别人: sent mail nobody answered (催办) and 受阻 tasks."""
+        center = self._tasks()
+        tasks = [t for t in center.overview('open')['rows'] if t['status'] == '受阻'] if center.status()['mode'] != 'off' else []
+        return {'mail': self.followups() if self._understand_on() else [], 'tasks': tasks}
 
     def understand_rules(self):
         return sorted(self._memory().rules.values(), key=lambda r: (r['sender'], r['keyword']))

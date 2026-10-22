@@ -248,13 +248,14 @@ PLAN_SPEC = {'type': 'function', 'function': {
     'description': '提议修改任务：只生成计划，显示为预览卡片，用户点「执行」后才写入。返回每项操作能否执行、会改哪些字段。'
                    '操作：progress 记录进展（text 必填，可同时改 fields 里的 status、next、blockers）；update 修改字段（fields）；'
                    'complete 标记完成并归档（note 可写交付结果）；cancel 取消并归档（reason 必填）；reopen 重新打开已归档任务（status、reason）；'
-                   'create 新建任务（fields.content 必填，不填 task）。字段名：system、content、priority（高/中/低）、status、latest、owner、'
+                   'create 新建任务（fields.content 必填，不填 task；可给 ref：N1、N2…，同一计划里其他操作的 text / fields 写 #N1 就指这条新任务，执行时换成真实编号）。字段名：system、content、priority（高/中/低）、status、latest、owner、'
                    'start、due、end、blockers、next、updated、acceptance。未完成状态只有：未开始、待处理、进行中、受阻、待验收。',
     'parameters': {'type': 'object', 'properties': {
         'summary': {'type': 'string', 'description': '一句话说明这次要做什么，显示在卡片上'},
         'actions': {'type': 'array', 'description': '最多 10 项；每条任务在一个计划里最多出现一次', 'items': {'type': 'object', 'properties': {
             'op': {'type': 'string', 'enum': ['progress', 'update', 'complete', 'cancel', 'reopen', 'create']},
             'task': {'type': 'string', 'description': '任务编号，如 T12；必须是 list_tasks / read_task 返回过的'},
+            'ref': {'type': 'string', 'description': 'create 的占位编号 N1、N2…'},
             'text': {'type': 'string'}, 'date': {'type': 'string', 'description': 'YYYY-MM-DD，用户没说就留空（默认今天）'},
             'fields': {'type': 'object'}, 'note': {'type': 'string'}, 'reason': {'type': 'string'}, 'status': {'type': 'string'}},
             'required': ['op']}}}, 'required': ['actions']}}}

@@ -102,13 +102,14 @@ async function showUnderstand(kind, quiet) {
   } catch (err) { if (token === S.listToken) $('#mail-list').innerHTML = `<div class="list-foot">${esc(err.message)}</div>`; }
 }
 // No sidebar entries: they are filters of the list head beside 全部 / 未读 / 星标 — 要我做 and
-// 知会 in the account's own 收件箱, 等回复 in its 已发送. Choosing 全部 / 未读 / 星标 goes back.
+// 知会 in the account's own 收件箱 (等回复 is on 今天). Choosing 全部 / 未读 / 星标 goes back.
 const UC_VIEWS = { act: ['要我做', 'flag', ['待我处理', '要我做', '待办']], know: ['知会', 'spark', ['需要知道', '知会', '周报']], wait: ['等回复', 'clock', ['等对方回复', '催办', '跟进']] };
 const ucRole = (kind) => (kind === 'wait' ? 'sent' : 'inbox');
 function ucViewsHere() {
   const f = !S.search && folderById(S.folderId);
   if (!ucOn() || (UC.status && !UC.status.available) || !f || f.mailbox) return [];
-  return Object.keys(UC_VIEWS).filter((k) => ucRole(k) === f.role).map((k) => [k, ...UC_VIEWS[k]]);
+  // 等回复 moved to 今天 → 在等别人 (R2a); the view itself stays for the 命令框 and the conversation.
+  return Object.keys(UC_VIEWS).filter((k) => k !== 'wait' && ucRole(k) === f.role).map((k) => [k, ...UC_VIEWS[k]]);
 }
 // From anywhere (命令框, the conversation): open the folder, then its filter.
 function ucOpen(kind) {
@@ -254,6 +255,21 @@ function ucAfterChange() {
   if (S.message) renderUcStrip(S.message);
   if (ucLocal()) showUnderstand(S.local.slice(2), true);
   ucRefreshStatus();
+}
+
+// 回复即已处理 (R1a): a reply or forward that went out takes its 要我做 mail (and the earlier
+// ones of the conversation) off the list; 撤销 in the toast puts back exactly those.
+const _ucSendOutcome = sendOutcome;
+sendOutcome = function (res, meta = {}) { _ucSendOutcome(res, meta); ucAnswered(res, meta); };
+async function ucAnswered(res, meta) {
+  if (!ucOn() || !meta.source || !['Accepted', 'Queued'].includes(res.state)) return;
+  let changed;
+  try { ({ changed } = await api('understandAnswered', { mid: meta.source })); } catch { return; }
+  if (!changed.length) return;
+  const set = (done) => api('understandSetDone', { ids: changed, done }).then(() => { UC.cards.clear(); ucAfterChange(); });
+  UC.cards.clear(); ucAfterChange();
+  toast(`已回复：${changed.length > 1 ? `${changed.length} 封「要我做」` : '这封「要我做」'}标为已处理`, { ms: 8000,
+    action: { label: '撤销', run: () => set(false).then(() => toast('已撤销')).catch(fail) } });
 }
 async function ucRuleDialog(info, kind) {
   const email = (info.sender || '').toLowerCase(), domain = email.includes('@') ? email.split('@')[1] : '';

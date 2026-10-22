@@ -379,6 +379,30 @@ class PlanBackendTest(TaskCenterCase):
             with self.assertRaises(AppError):
                 self.backend.assistant_plan_run(bad)
 
+    def prerequisite_302(self, **kwargs):
+        return self.ask(('tools', [('read_task', {'ref': 'T302'})]), ('tools', [('plan_tasks', {'summary': '新增前提任务', 'actions': [
+            {'op': 'create', 'ref': 'N1', 'fields': {'content': '开发 LDAP 插件（#302 的前提）', 'system': 'CRM'}},
+            {'op': 'progress', 'task': 'T302', 'text': '新增前提任务 #N1', 'fields': {'blockers': '等待客户；依赖 #N1：开发 LDAP 插件'}}]})]),
+            ('answer', '请确认'), question='302 新增前提任务：开发 LDAP 插件', **kwargs)
+
+    def test_a_new_prerequisite_gets_its_number_in_the_dependency(self):  # T1b, now in the sidebar (R2b).
+        result, model = self.prerequisite_302()
+        self.assertIn('ref 填 N1', '\n'.join(m['content'] for m in model.seen[0][0] if m['role'] == 'system'))
+        plan = result['plans'][0]
+        done = self.backend.assistant_plan_run(plan['id'], picks=[0, 1])
+        new = done['ids'][0]
+        self.assertEqual(self.backend.tasks.store.tasks[302]['blockers'], f'等待客户；依赖 #{new}：开发 LDAP 插件')
+
+    def test_unticked_items_are_left_out_and_the_conversation_told(self):
+        result, _ = self.prerequisite_302()
+        for bad in ([], [5], ['0'], 'all'):
+            with self.assertRaises(AppError):
+                self.backend.assistant_plan_run(result['plans'][0]['id'], picks=bad)
+        done = self.backend.assistant_plan_run(result['plans'][0]['id'], picks=[1])  # The progress alone: it names #N1, so it fails.
+        self.assertEqual((done['done'], [f['code'] for f in done['failed']]), ([], ['TASK_PLAN_REF']))
+        self.assertEqual(self.backend.tasks.store.tasks[302]['blockers'], '等待客户')
+        self.assertIn('没有勾选 1 项', self.backend._chats[result['chat']]['turns'][0][1])
+
     def test_errors_explained_and_plans_expire_or_get_replaced(self):
         result, _ = self.ask(('tools', [('read_task', {'ref': 'T302'})]), ('tools', [('plan_tasks', {'actions': [
             {'op': 'update', 'task': 'T302', 'fields': {'status': '已完成'}}]})]), ('answer', '不能这样改'), question='302 改成已完成')
@@ -596,9 +620,9 @@ class PageTest(unittest.TestCase):
         self.assertIn("current_task: here && here.kind === 'task'", source)
         self.assertIn('openTask(task.dataset.task)', source)
         self.assertIn('chatMailChanged()', (web / 'tasks.js').read_text(encoding='utf-8'))  # The chip follows the selected task.
-        self.assertIn("api('assistantPlanRun', { plan: p.id })", source)
+        self.assertIn("api('assistantPlanRun', picks ? { plan: p.id, picks } : { plan: p.id })", source)  # Unticked items left out.
         self.assertIn('esc(p.summary)', source)
-        self.assertIn('p.preview.map(planItem)', source)  # The task center's own preview rows (esc inside).
+        self.assertIn('p.preview.map((x, i) => planItem(x', source)  # The task center's own preview rows (esc inside).
         from coremail_desktop.app.shell import BACKEND_METHODS, TASK_METHODS
         self.assertEqual(BACKEND_METHODS['assistantPlanRun'], 'assistant_plan_run')
         self.assertIn('assistantPlanRun', TASK_METHODS)  # Writes run on the task thread, after any other change.

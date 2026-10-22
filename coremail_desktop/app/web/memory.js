@@ -1,7 +1,7 @@
 'use strict';
 /* 鸿雁 · 工作记忆 (M2) and its uses (M3). The 理解层 remembers the facts of the user's projects
    (backend memory_*); here: the reader's 「这个项目最近」 and task candidate, the project's
-   timeline with corrections, 本周你需要知道的 above 知会, 等回复 (催办) with 起草跟进,
+   timeline with corrections, 本周你需要知道的 (on 今天 → 本周概括), 等回复 (催办) with 起草跟进,
    the person popover's extra lines and the project list in 设置 → AI 助手. Facts are plain
    text only (esc). Loaded after understand.js and contacts.js. */
 
@@ -29,20 +29,30 @@ renderUcStrip = function (m) {
       '<button class="btn ghost" data-mem="follow" title="用 AI 起草一封礼貌的跟进邮件（全部回复，由你检查后发送）">起草跟进</button>' +
       '<button class="btn ghost" data-mem="nofollow" title="从「等回复」中移除">不用跟进</button></div>');
   }
+  // 阅读条合并 (R1b): one strip above the mail. The task candidate is a button on it; 这个项目最近
+  // opens from its project name and stays open (or closed) for the next mail.
+  const strip = $('#uc-strip');
   const linked = typeof TK !== 'undefined' && TK.mailIndex && (TK.mailIndex[m.id] || []).length;
   if (c && c.task && !linked) {
-    lines.push(`<div class="mem-line"><i data-icon="tasks"></i><span class="uc-text muted">可能与任务 #${c.task} 有关${c.why ? '：' + esc(c.why) : ''}</span>` +
-      `<button class="btn ghost" data-mem="link" title="把这封邮件关联到任务 #${c.task}">关联</button></div>`);
+    const title = `可能与任务 #${c.task} 有关${c.why ? '：' + c.why : ''}。点击把这封邮件关联到这条任务`;
+    if (strip) $('[data-uc="menu"]', strip).insertAdjacentHTML('beforebegin', `<button class="btn ghost" data-mem="link" title="${esc(title)}">关联 #${c.task}</button>`);
+    else lines.push(`<div class="mem-line"><i data-icon="tasks"></i><span class="uc-text muted">${esc(title)}</span><button class="btn ghost" data-mem="link">关联</button></div>`);
+  }
+  const chip = strip && $('.uc-project', strip);
+  if (chip) {
+    chip.classList.add('link'); chip.classList.toggle('on', memRecentOpen());
+    chip.title = memRecentOpen() ? '收起「这个项目最近」' : '看这个项目最近的情况';
+    chip.onclick = () => { memRecentOpen(!memRecentOpen()); renderUcStrip(m); };
   }
   const token = MEM.strip = (MEM.strip || 0) + 1;
   const draw = (recent) => {
     if (token !== MEM.strip || !S.message || S.message.id !== m.id) return;  // Another mail, or drawn again since.
     const extra = recent && recent.facts.length ? `<div class="mem-line recent" data-mem="timeline" title="点击查看「${esc(recent.project)}」的全部记忆"><i data-icon="spark"></i>` +
       `<span class="uc-text"><b>这个项目最近：</b>${recent.facts.map((f) => esc(f.text)).join('；')}</span>` +
-      (recent.pending ? `<span class="uc-due late">${recent.pending} 条待确认</span>` : '') + `<span class="uc-project">${esc(recent.project)}</span></div>` : '';
+      (recent.pending ? `<span class="uc-due late">${recent.pending} 条待确认</span>` : '') + '</div>' : '';
     box.innerHTML = lines.join('') + extra;
-    if (!box.innerHTML) { box.remove(); return; }
-    if (!box.isConnected) ($('#uc-strip') || $('#r-banners')).after(box);
+    if (!box.innerHTML) box.remove();
+    else if (!box.isConnected) ($('#uc-strip') || $('#r-banners')).after(box);
     renderIcons(box);
     $$('[data-mem]', box).forEach((b) => (b.onclick = () => ({
       follow: () => memFollowup(m), nofollow: () => memNoFollow(m.id),
@@ -51,8 +61,14 @@ renderUcStrip = function (m) {
     }[b.dataset.mem])()));
   };
   draw(null);
-  if (c && c.project) memRecent(c.project).then(draw);
+  if (strip) $$('[data-mem="link"]', strip).forEach((b) => (b.onclick = () =>
+    api('taskLink', { id: c.task, mid: m.id }).then(() => { toast(`已关联到任务 #${c.task}`); if (typeof loadMailIndex === 'function') loadMailIndex(); renderUcStrip(m); }).catch(fail)));
+  if (c && c.project && memRecentOpen()) memRecent(c.project).then(draw);
 };
+function memRecentOpen(open) {
+  try { if (open !== undefined) localStorage.setItem('hy-mem-recent', open ? '1' : '0'); return localStorage.getItem('hy-mem-recent') === '1'; }
+  catch (e) { return MEM.recentOpen = open === undefined ? !!MEM.recentOpen : open; }
+}
 
 async function memFollowup(m) {
   await startCompose('reply_all', m.id);
@@ -144,13 +160,13 @@ function memOpenMail(mid) {
   api('openReader', { mid }).catch(fail);
 }
 
-// ---------------------------------------------------------------- 本周你需要知道的 (above 需要知道)
+// ---------------------------------------------------------------- 本周你需要知道的 (今天 → 本周概括)
 async function memTop(kind) {
   const top = $('#uc-top');
-  if (kind !== 'know') { top.classList.add('hidden'); top.innerHTML = ''; return; }
+  if (kind !== 'week') { top.classList.add('hidden'); top.innerHTML = ''; return; }
   let week;
   try { week = await api('memoryWeek', { offset: MEM.week }); } catch (err) { top.classList.add('hidden'); return; }
-  if (S.local !== 'u-know') return;
+  if (!memWeekHere()) return;
   const count = week.groups.reduce((n, g) => n + g.facts.length, 0);
   const label = MEM.week ? '上周' : '本周';
   if (!count && !MEM.week && !MEM.weekOpen) { top.classList.add('hidden'); top.innerHTML = ''; return; }
@@ -179,7 +195,7 @@ async function memTop(kind) {
     else if (b.dataset.mw === 'all') { MEM.weekAll.has(b.dataset.project) ? MEM.weekAll.delete(b.dataset.project) : MEM.weekAll.add(b.dataset.project); }
     else if (b.dataset.mw === 'refresh') { memBrief(key, true); return; }
     else { memTimeline(b.dataset.project); return; }
-    memTop('know');
+    memTop('week');
   }));
   if (MEM.weekOpen && count && !brief) memBrief(key, false);
 }
@@ -187,13 +203,15 @@ async function memTop(kind) {
 // without AI, or when it fails, each project shows its few key facts instead.
 function memBrief(key, refresh) {
   MEM.brief = { key, loading: true };
-  memTop('know');
+  memTop('week');
   api('memoryWeekBrief', { offset: MEM.week, refresh }).then((data) => ({ key, data }), () => ({ key, failed: true })).then((done) => {
-    if (MEM.brief && MEM.brief.key === key) { MEM.brief = done; if (S.local === 'u-know') memTop('know'); }
+    if (MEM.brief && MEM.brief.key === key) { MEM.brief = done; if (memWeekHere()) memTop('week'); }
   });
 }
 const _memRenderUcNav = renderUcNav;
-renderUcNav = function () { _memRenderUcNav(); if (S.local !== 'u-know' && !$('#uc-top').classList.contains('hidden')) memTop(''); };
+renderUcNav = function () { _memRenderUcNav(); if (!memWeekHere() && !$('#uc-top').classList.contains('hidden')) memTop(''); };
+// 本周概括 (R2a): shown on 今天 → 本周概括, no longer above the inbox's 知会.
+function memWeekHere() { return S.local === 'today' && typeof TD !== 'undefined' && TD.sub === 'week'; }
 
 // ---------------------------------------------------------------- 人物卡片 (the person popover)
 window.personExtra = async function (pop, person) {

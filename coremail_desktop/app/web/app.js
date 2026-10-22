@@ -327,7 +327,7 @@ for (const [key, sp] of Object.entries(SPLITS)) {
 const ROLE_ICON = { inbox: 'inbox', drafts: 'drafts', sent: 'sent', trash: 'trash', spam: 'spam', virus: 'virus' };
 // 设置 › 左侧栏显示: hidden folders (and their subfolders) stay out of the sidebar unless open.
 const LOCAL_NAV = [['scheduled', '定时发送', '#nav-scheduled'], ['outbox', '发件箱', '#nav-outbox'], ['drafts', '本机草稿', '#nav-drafts'],
-  ['archive', '本地存档', '#nav-archive'], ['tasks', '任务', '#nav-tasks'],
+  ['archive', '本地存档', '#nav-archive'], ['today', '今天', '#nav-today'], ['tasks', '任务', '#nav-tasks'],
   ['contacts', '通讯录', '#nav-contacts']];
 function folderShown(f) {
   const hidden = S.prefs.hiddenFolders || [];
@@ -1317,6 +1317,7 @@ async function startCompose(mode, mid, extra = {}) {
   try {
     const box = mode === 'new' && !mid ? currentBox() : null;
     const draft = await api('compose', box ? { mode, mid, mailbox: box.id } : { mode, mid });
+    if (mid && mode !== 'new') draft.sourceMid = mid;  // 回复即已处理 (understand.js) once it goes out.
     Object.assign(draft, extra);
     openComposer(draft);
   } catch (err) { fail(err); }
@@ -1658,7 +1659,7 @@ async function sendMail() {
       if (go && (await unlockCertificate())) setTimeout(sendMail, 0);
       return;
     }
-    const meta = { encrypt: value.encrypt, sign: value.sign, subject: value.subject };
+    const meta = { encrypt: value.encrypt, sign: value.sign, subject: value.subject, source: C.draft.sourceMid || C.draft.replySourceId || '' };
     if (res.state === 'Held') {
       // 撤销发送: the composer closes; the bar counts down and can bring it back.
       closeComposer(true);
@@ -1798,6 +1799,7 @@ function openSettings() {
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-autostart').checked = !!p.autostart;
   $('#pref-close').value = p.closeAction || '';
+  $('#pref-start').value = p.startPage || 'today';
   // The first-close dialog may have remembered a choice since the page last read prefs.
   api('prefs').then((fresh) => { S.prefs.closeAction = fresh.closeAction; $('#pref-close').value = fresh.closeAction || ''; }).catch(() => {});
   $('#pref-undo').value = String(p.undoSeconds ?? 10); $('#pref-precheck').checked = p.precheck !== false;
@@ -1831,7 +1833,7 @@ $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, toolbar: $('#toolbar-seg .on').dataset.toolbar, pollSeconds: +$('#pref-poll').value,
     notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, precheck: $('#pref-precheck').checked, signature: signatureHtml(),
-    closeAction: $('#pref-close').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
+    closeAction: $('#pref-close').value, startPage: $('#pref-start').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
   try {
     S.prefs = await api('setPrefs', { values });
     applyTheme(S.prefs.theme, S.prefs.density);
@@ -1874,7 +1876,7 @@ function handleKey(e) {
   if (e.ctrlKey && (e.key === 'k' || e.key === 'K') && !$('#app').classList.contains('hidden') && window.CP) { e.preventDefault(); CP.open(); return; }
   if (e.key === 'F5') { e.preventDefault(); $('#btn-refresh').click(); return; }
   if ((e.ctrlKey && (e.key === 'f' || e.key === 'F')) || (e.key === '/' && !isTyping(t))) {
-    e.preventDefault(); const box = $(S.local === 'tasks' ? '#tk-cmd' : '#search'); box.focus(); box.select(); return;
+    e.preventDefault(); const box = $(S.local === 'tasks' ? '#tk-filter' : '#search'); box.focus(); box.select(); return;
   }
   if (isTyping(t) || e.ctrlKey || e.altKey || $('#app').classList.contains('hidden') || S.local === 'tasks') return;
   const m = S.message;

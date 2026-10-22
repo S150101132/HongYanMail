@@ -317,7 +317,7 @@ STEPS += [
     (12000, "UC.cards.clear(); memReset(); renderList()", None),
     (1500, KNOW_MAIL, 'm2-reader'),
     (900, "memTimeline(UC.cards.get(S.message.id).project)", 'm2-timeline'),
-    (500, "$('#prompt [data-close]').click(); MEM.weekOpen = true; MEM.week = 1; ucOpen('know')", None),
+    (500, "$('#prompt [data-close]').click(); MEM.weekOpen = true; MEM.week = 1; showToday('week')", None),
     (1500, "document.body.offsetWidth", 'm3-week'),  # The AI brief of the week arrives after the facts.
     (900, "ucOpen('wait')", None),
     (900, "selectMessage(S.rows[0].id)", 'm3-wait'),
@@ -329,6 +329,30 @@ STEPS += [
     (500, "$('#settings').classList.add('hidden'); openTasks()", None),
     (1200, "$('#tk-gantt').click()", 'p1-gantt'),
     (900, "showTask(403)", 'p1-relations'),
+]
+
+# R1/R2: 今天, the task card, 在等别人, 本周概括, the one strip, the task list's filter and the one
+# assistant (HONGYAN_WALK_R2=1 runs only these; demo AI).
+R2 = len(STEPS)
+STEPS += [
+    (900, m2_setup, None),
+    (600, "S.prefs.understand = 'on'; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
+    (12000, "ucRound()", None),
+    (12000, "UC.cards.clear(); memReset(); showToday()", None),
+    (1500, "document.body.offsetWidth", 'r2-today'),
+    (500, "selectMessage(S.rows[0].id)", 'r2-today-mail'),
+    (700, "sendOutcome({ state: 'Accepted', localId: 'walk' }, { subject: 'Re', source: S.selected })", 'r2-replied'),  # 回复即已处理 (R1a).
+    (900, "$('#mail-list .td-task').click()", 'r2-task-card'),
+    (900, "showAsk()", 'r2-ask-today'),
+    (500, "hideAsk(); showToday('wait')", 'r2-wait'),
+    (900, "MEM.week = 0; showToday('week')", 'r2-week'),
+    (1500, "showToday('confirm')", 'r2-confirm'),
+    (900, "selectFolder('1')", None),
+    (1200, KNOW_MAIL, 'r2-strip'),
+    (700, "$('#uc-strip .uc-project').click()", 'r2-strip-open'),
+    (900, "$('#uc-strip .uc-project').click(); openTasks()", None),
+    (1200, "showTask(403)", 'r2-tasks'),
+    (900, "$('#tk-ask').click()", 'r2-ask-tasks'),
 ]
 
 
@@ -367,6 +391,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

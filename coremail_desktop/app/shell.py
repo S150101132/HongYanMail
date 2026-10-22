@@ -89,10 +89,11 @@ BACKEND_METHODS = {
     'aiEncrypted': 'ai_encrypted', 'setAiEncrypted': 'set_ai_encrypted',
     'understandStatus': 'understand_status', 'setUnderstand': 'set_understand', 'understandPending': 'understand_pending',
     'understandFetch': 'understand_fetch', 'understandMail': 'understand_mail', 'understandCards': 'understand_cards',
-    'understandView': 'understand_view', 'understandCorrect': 'understand_correct', 'understandSetDone': 'understand_set_done', 'understandRules': 'understand_rules',
+    'understandView': 'understand_view', 'understandCorrect': 'understand_correct', 'understandSetDone': 'understand_set_done', 'understandAnswered': 'understand_answered', 'understandRules': 'understand_rules',
     'understandAddRule': 'understand_add_rule', 'understandDeleteRule': 'understand_delete_rule', 'understandClear': 'understand_clear',
     'memoryProjects': 'memory_projects', 'memoryProject': 'memory_project', 'memoryFacts': 'memory_facts', 'memoryRecent': 'memory_recent',
     'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryWeekBrief': 'memory_week_brief', 'memoryPerson': 'memory_person', 'followups': 'followups',
+    'todayOverview': 'today_overview', 'todayWaiting': 'today_waiting',
     'followupDismiss': 'followup_dismiss', 'tasksGantt': 'tasks_gantt',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
@@ -113,7 +114,7 @@ STREAM_METHODS = {'rewrite', 'draftReply', 'assistantDraftWrite'}
 ARCHIVE_METHODS = {'archiveScan'}
 # 任务中心: one thread, so every task change and its export run one after another.
 TASK_METHODS = {name for name in BACKEND_METHODS if name.startswith('task')} | {'assistantPlanRun', 'assistantSent',
-                                                                                'assistantNudgeDismiss', 'assistantLinkRun'}
+                                                                                'assistantNudgeDismiss', 'assistantLinkRun', 'todayOverview', 'todayWaiting'}
 # assistantNudge reads the task's conversation from the server: the mail thread, like thread.
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}

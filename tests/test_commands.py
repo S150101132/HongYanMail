@@ -68,7 +68,7 @@ class WiringTest(unittest.TestCase):
         # button there has a command without a list to keep in step.
         self.assertIn("#reader-body .reader-toolbar [data-act]", source)
         self.assertIn("#reader-multi [data-batch]", source)
-        for name in ('showAsk(q)', 'runSearch(p.words)', 'runCommand()', 'selectFolder(f.id)', 'openSettings(b.dataset.tab)'):
+        for name in ('showAsk(q)', 'runSearch(p.words)', 'openTask(number[1])', 'selectFolder(f.id)', 'openSettings(b.dataset.tab)', "showToday('wait')"):
             self.assertIn(name, source)
         for field in ('c.title', 'c.hint', 'c.group', 'c.key'):
             self.assertIn(f'esc({field}', source)  # Folder names and typed text are shown as text.

@@ -365,7 +365,7 @@ function renderAiSettings() {
     $('#ai-key').placeholder = a.hasKey ? '已保存（不可查看），输入新 Key 可替换' : '未设置';
     $('#ai-clear').classList.toggle('hidden', !a.hasKey);
     $('#ai-actions').checked = a.actions;
-    status.textContent = (a.demo ? '演示模式：摘要由本机生成，不联网。' : a.hasKey ? '已设置 API Key。' : '未设置 API Key，「总结」和「问邮箱」暂不可用。') +
+    status.textContent = (a.demo ? '演示模式：摘要由本机生成，不联网。' : a.hasKey ? '已设置 API Key。' : '未设置 API Key，「总结」和「问鸿雁」暂不可用。') +
       ` 本月已调用 ${a.usage.calls} 次，共 ${a.usage.tokens} tokens。`;
   }).catch(fail);
 }
@@ -423,9 +423,10 @@ const CHAT_THIS = /这封|这件事|这个邮件|本邮件|此邮件|这份|上�
 const CHAT_THIS_TASK = /这个任务|该任务|这条任务|此任务|这项任务|这一条/;
 function chatHere() {
   if (READER_MID) return null;
-  if (S.local === 'tasks') {
+  const card = S.local === 'today' && typeof TD !== 'undefined' && TD.task;  // 今天's task card (today.js).
+  if (S.local === 'tasks' || card) {
     const d = typeof TK !== 'undefined' && TK.detail;
-    if (!d || d.task.id !== TK.selected) return null;
+    if (!d || d.task.id !== (card || TK.selected)) return null;
     return { kind: 'task', key: 'task:' + d.task.id, id: d.task.id, subject: `#${d.task.id} ${tkText(d.task.content).slice(0, 60)}` };
   }
   const m = S.message;
@@ -477,8 +478,11 @@ function renderAsk() {
   $('#ask-run').disabled = !!(last && last.loading);
   renderHere();
   if (!turns.length) {
-    const tries = ['现在有什么任务，哪些需要我做？', '上周有哪些邮件需要我回复？', '最近谁给我发过报价？'];
-    out.innerHTML = '<div class="chat-empty"><b>问问你的邮箱</b>AI 会搜索服务器和本地存档里的邮件，阅读最相关的几封后回答，并标出出处。<br>可以接着追问，例如「第二封是谁发的」。' +
+    // One assistant for every page (R2b): the samples follow where the user is.
+    const tries = S.local === 'tasks' ? ['哪些任务受阻？', '这周有哪些任务到期？', '这个任务今天完成了', '给这个任务加一个前提任务：…']
+      : S.local === 'today' ? ['这些事先做哪件？', '哪些要今天回复？', '这个任务记一条进展：…']
+      : ['现在有什么任务，哪些需要我做？', '上周有哪些邮件需要我回复？', '最近谁给我发过报价？'];
+    out.innerHTML = '<div class="chat-empty"><b>问鸿雁</b>查邮件和任务、记进展、起草回复，都在这里说。AI 会搜索阅读邮件和任务后回答，并标出出处；要改任务或起草时先给你看计划，你确认后才执行。<br>可以接着追问，例如「第二封是谁发的」。' +
       `<div class="chat-try">${tries.map((q) => `<button type="button" data-try="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`;
     return;
   }
@@ -539,7 +543,9 @@ function planCard(p, turn, j) {
   if (p.kind === 'draft') return draftCard(p, turn, j);
   if (p.kind === 'link') return linkCard(p, turn, j);
   if (p.kind === 'mail') return mailCard(p, turn, j);
-  const ready = p.preview.filter(planReady).length, at = `data-turn="${turn}" data-plan="${j}"`;
+  // Each operation can be left out (T1b, now here): p.skip holds the unticked indexes.
+  const skip = p.skip || new Set(), picking = !p.state && p.preview.filter(planReady).length > 1;
+  const ready = p.preview.filter((x, i) => planReady(x) && !skip.has(i)).length, at = `data-turn="${turn}" data-plan="${j}"`;
   const title = p.state === 'done' ? '任务操作 · 已执行' : p.state === 'off' ? '任务操作 · 未执行' : ready ? '任务操作 · 待你确认' : '任务操作 · 不能执行';
   let foot = '';
   if (p.state === 'running') foot = '<span class="tk-spin"></span>正在执行…';
@@ -550,11 +556,11 @@ function planCard(p, turn, j) {
       `<button class="btn ghost sm" ${at} data-plan-act="verify">核验结果</button>`;
   } else if (p.state === 'off') foot = `<span class="muted small">${esc(p.note)}</span>`;
   else if (ready) {
-    foot = `<span class="muted small">点「执行」后才会写入任务清单</span><span class="spacer"></span>` +
+    foot = `<span class="muted small">${picking ? '取消勾选的项不会执行；依赖新任务的项要和新任务一起执行' : '点「执行」后才会写入任务清单'}</span><span class="spacer"></span>` +
       `<button class="btn ghost sm" ${at} data-plan-act="edit">修改</button><button class="btn primary sm" ${at} data-plan-act="run">执行${ready > 1 ? ` ${ready} 项` : ''}</button>`;
   }
-  return `<div class="chat-plan${p.state ? ' ' + p.state : ''}"><div class="chat-plan-head"><i data-icon="tasks"></i><b>${title}</b>` +
-    (p.summary ? `<span class="muted small">${esc(p.summary)}</span>` : '') + `</div><div class="tk-plan">${p.preview.map(planItem).join('')}</div>` +
+  return `<div class="chat-plan${p.state ? ' ' + p.state : ''}" ${at}><div class="chat-plan-head"><i data-icon="tasks"></i><b>${title}</b>` +
+    (p.summary ? `<span class="muted small">${esc(p.summary)}</span>` : '') + `</div><div class="tk-plan">${p.preview.map((x, i) => planItem(x, picking && planReady(x) ? i : undefined, !skip.has(i))).join('')}</div>` +
     (foot ? `<div class="chat-plan-foot">${foot}</div>` : '') + '</div>' + (p.nudge ? nudgeLine(p.nudge, at) : '');
 }
 // 提醒回信 (W4): under an executed plan, once, when the task's conversation waits on the user.
@@ -651,7 +657,8 @@ async function runPlan(p) {
   if (p.state) return;
   p.state = 'running'; renderAsk();
   try {
-    const result = await api('assistantPlanRun', { plan: p.id });
+    const picks = p.skip && p.skip.size ? p.preview.map((x, i) => i).filter((i) => planReady(p.preview[i]) && !p.skip.has(i)) : null;
+    const result = await api('assistantPlanRun', picks ? { plan: p.id, picks } : { plan: p.id });
     p.state = 'done'; p.outcome = result;
     if (result.failed.length) toast(`${result.failed.length} 项没有执行：${result.failed.map((f) => (f.id ? '#' + f.id + ' ' : '') + (TK_OP[f.op] || f.op)).join('、')}`, { error: true, ms: 8000 });
     const ex = result.export || {};
@@ -751,6 +758,14 @@ $('#ask-out').addEventListener('change', (e) => {
   else if (el.dataset.draft === 'link') p.picks = $$('[data-draft="link"]', card).filter((c) => c.checked).map((c) => +c.value);
   if (el.dataset.draft !== 'points') renderAsk();
 });
+$('#ask-out').addEventListener('change', (e) => {
+  const box = e.target.closest('.tk-pick'), card = box && box.closest('.chat-plan[data-plan]');
+  if (!card) return;
+  const p = S.chat.turns[+card.dataset.turn].result.plans[+card.dataset.plan];
+  p.skip = p.skip || new Set();
+  if (box.checked) p.skip.delete(+box.dataset.pick); else p.skip.add(+box.dataset.pick);
+  renderAsk();
+});
 $('#ask-out').addEventListener('input', (e) => {
   const el = e.target.closest('[data-draft="points"]'), card = el && el.closest('.chat-plan[data-plan]');
   if (card) S.chat.turns[+card.dataset.turn].result.plans[+card.dataset.plan].points = el.value;
@@ -807,7 +822,10 @@ $('#ask-out').addEventListener('click', async (e) => {
     else if (planAct.dataset.planAct === 'skip') { p.state = 'off'; p.note = p.kind === 'link' ? '没有关联。' : '没有起草。'; renderAsk(); }
     else { p.state = 'off'; p.note = '没有执行。在下面说说要怎么改，例如「日期改成昨天」。'; renderAsk(); $('#ask-input').focus(); }
   } else if (t.closest('[data-open]')) openSource(t.closest('[data-open]').dataset.open);
-  else if (tried) { $('#ask-input').value = tried.dataset.try; askMailbox(); }
+  else if (tried) {  // A sample ending in … is only begun: the user finishes it.
+    const q = tried.dataset.try; $('#ask-input').value = q.replace(/…$/, '');
+    if (q.endsWith('…')) { fitAsk(); $('#ask-input').focus(); } else askMailbox();
+  }
   else if (task) openTask(task.dataset.task).catch(fail);
   else if (act) {
     ({ cancel: () => api('cancelAsk').catch(() => {}),
