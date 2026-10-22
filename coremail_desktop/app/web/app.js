@@ -327,7 +327,7 @@ for (const [key, sp] of Object.entries(SPLITS)) {
 const ROLE_ICON = { inbox: 'inbox', drafts: 'drafts', sent: 'sent', trash: 'trash', spam: 'spam', virus: 'virus' };
 // 设置 › 左侧栏显示: hidden folders (and their subfolders) stay out of the sidebar unless open.
 const LOCAL_NAV = [['scheduled', '定时发送', '#nav-scheduled'], ['outbox', '发件箱', '#nav-outbox'], ['drafts', '本机草稿', '#nav-drafts'],
-  ['archive', '本地存档', '#nav-archive'], ['tasks', '任务', '#nav-tasks'], ['u-act', '待我处理', '#nav-u-act'], ['u-know', '需要知道', '#nav-u-know'], ['u-wait', '等对方回复', '#nav-u-wait'],
+  ['archive', '本地存档', '#nav-archive'], ['tasks', '任务', '#nav-tasks'],
   ['contacts', '通讯录', '#nav-contacts']];
 function folderShown(f) {
   const hidden = S.prefs.hiddenFolders || [];
@@ -338,7 +338,7 @@ function folderShown(f) {
 function renderFolders() {
   const nav = $('#folder-list');
   for (const [key, , sel] of LOCAL_NAV) { const el = $(sel); if (el) el.classList.toggle('user-hidden', (S.prefs.hiddenFolders || []).includes('local:' + key) && S.local !== key); }
-  nav.innerHTML = S.folders.filter(folderShown).map((f) => `<a class="folder${f.id === S.folderId && !S.local ? ' on' : ''}" data-id="${esc(f.id)}" title="${esc(f.name)}">
+  nav.innerHTML = S.folders.filter(folderShown).map((f) => `<a class="folder${f.id === S.folderId && (!S.local || S.local.startsWith('u-')) ? ' on' : ''}" data-id="${esc(f.id)}" title="${esc(f.name)}">
       <i data-icon="${ROLE_ICON[f.role] || 'folder'}"></i><span class="fname">${esc(f.name)}</span>
       <span class="count">${f.unread && f.role !== 'sent' && f.role !== 'trash' ? f.unread : ''}</span></a>`).join('');
   renderIcons(nav);
@@ -670,8 +670,8 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
   ]));
 });
 
-$$('#filter-seg button').forEach((b) => (b.onclick = () => {
-  $$('#filter-seg button').forEach((x) => x.classList.toggle('on', x === b));
+$$('#filter-seg button[data-filter]').forEach((b) => (b.onclick = () => {
+  $$('#filter-seg button[data-filter]').forEach((x) => x.classList.toggle('on', x === b));
   S.filter = b.dataset.filter; renderList();
 }));
 $('#btn-refresh').onclick = () => { api('syncNow'); if (!S.local) loadList(true); api('folders').then((f) => { S.folders = f; renderFolders(); }).catch(() => {}); loadShared(); };
@@ -684,7 +684,7 @@ async function runSearch(q) {
   if (!q && !Object.keys(filters).length) { clearSearch(); return; }
   const token = ++searchToken;
   S.search = q || ' '; S.local = null; S.filter = 'all'; S.multi.clear(); S.searchMore = null; S.open.clear(); renderSelection(); renderFolders();
-  $$('#filter-seg button').forEach((x) => x.classList.toggle('on', x.dataset.filter === 'all'));
+  $$('#filter-seg button[data-filter]').forEach((x) => x.classList.toggle('on', x.dataset.filter === 'all'));
   $('#list-title').textContent = '搜索结果';
   SF.renderChips();
   S.rows = await api('searchLocal', { query: q, filters }).catch(() => []);

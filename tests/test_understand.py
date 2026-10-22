@@ -49,6 +49,7 @@ class CardTest(unittest.TestCase):
         card = understand.parse(card_json())
         self.assertEqual((card['kind'], card['sure'], card['due'], card['project']), ('act', True, '2026-10-23', 'NG BI'))
         self.assertEqual(card['facts'], [{'project': 'NG BI', 'type': 'date', 'text': '联调定在下周'}])
+        self.assertEqual((card['tag'], len(understand.parse(card_json(tag='x' * 50))['tag'])), ('', understand.TAG))
         know = understand.parse(card_json(kind='know', ask='不该有', due='2026-10-23'))
         self.assertEqual((know['ask'], know['due']), ('', ''))  # Only 要我做 has something asked and a due date.
         odd = understand.parse(card_json(due='2026-02-30', sure=False, gist='x' * 100, facts=[{'type': 'gossip', 'text': 'x'}, 'x', {'type': 'status', 'text': ''}]))
@@ -287,11 +288,11 @@ class WiringTest(unittest.TestCase):
 
     def test_page_keeps_cards_plain(self):
         source = (WEB / 'understand.js').read_text(encoding='utf-8')
-        for field in ('c.gist', 'c.project', 'c.ask || c.gist', 'due.text', 'text'):
+        for field in ('short', 'c.project', 'c.ask || c.gist', 'due.text', 'text'):
             self.assertIn(f'esc({field})', source)
         self.assertNotIn('innerHTML = c.', source)
         page = (WEB / 'index.html').read_text(encoding='utf-8')
-        for anchor in ('id="nav-u-act"', 'id="nav-u-know"', 'id="uc-enc-allow"', 'id="uc-on"', 'src="understand.js"'):
+        for anchor in ('id="seg-u-act"', 'id="seg-u-know"', 'id="seg-u-wait"', 'id="uc-enc-allow"', 'id="uc-on"', 'src="understand.js"'):
             self.assertIn(anchor, page)
         app = (WEB / 'app.js').read_text(encoding='utf-8')
         self.assertIn('UC.row(r)', app)

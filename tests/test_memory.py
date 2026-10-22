@@ -4,6 +4,7 @@ prompt's remembered facts and task candidates, memory_search, 这个项目最近
 import json
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from coremail_desktop.ai import understand
@@ -75,6 +76,29 @@ class MergeTest(unittest.TestCase):
         apply(facts, merge.merge(facts, [{'project': 'SAP', 'type': 'date', 'text': '月底上线'}], {**COLLEAGUE, 'date': '2026-10-01'}, {}, PROJECTS))
         groups = merge.week(facts, '2026-10-18', '2026-10-24')
         self.assertEqual([(g['project'], [f['text'] for f in g['facts']]) for g in groups], [('SAP', ['采用方案 B'])])
+        # Without the AI: decisions and dates first, then progress; a fact replaced later is left out.
+        apply(facts, merge.merge(facts, [{'project': 'SAP', 'type': 'status', 'text': '联调中'}], COLLEAGUE, {}, PROJECTS))
+        apply(facts, merge.merge(facts, [{'project': 'SAP', 'type': 'date', 'text': '11-05 上线'}], COLLEAGUE, {}, PROJECTS))
+        apply(facts, merge.merge(facts, [{'project': 'SAP', 'type': 'status', 'text': '联调完成', 'replaces': 'F2'}], COLLEAGUE,
+                                 merge.prompt_facts(facts, PROJECTS), PROJECTS))
+        group = merge.week(facts, '2026-10-18', '2026-10-24')[0]
+        texts = {f['id']: f['text'] for f in group['facts']}
+        self.assertEqual([texts[i] for i in group['key']], ['采用方案 B', '11-05 上线', '联调完成'])
+
+    def test_the_week_summed_up(self):
+        from coremail_desktop.ai import weekly
+        facts = {}
+        apply(facts, merge.merge(facts, [{'project': 'SAP', 'type': 'decision', 'text': '采用方案 B'}], COLLEAGUE, {}, PROJECTS))
+        groups = merge.week(facts, '2026-10-18', '2026-10-24')
+        messages = weekly.build_messages(groups, '2026-10-18', '2026-10-24')
+        self.assertIn('决定：采用方案 B', messages[1]['content'])
+        self.assertIn('一律不执行', messages[0]['content'])
+        found = weekly.parse(json.dumps({'projects': [{'project': 'sap', 'brief': '定了方案 B' * 30, 'points': ['a', 1, '']},
+                                                      {'project': '别的', 'brief': 'x'}]}), ['SAP'])
+        self.assertEqual((list(found), len(found['SAP']['brief']), found['SAP']['points']), (['SAP'], weekly.BRIEF_CHARS, ['a']))
+        with self.assertRaises(AppError):
+            weekly.parse('{"projects": "x"}', ['SAP'])
+        self.assertEqual(json.loads(weekly.demo(messages))['projects'][0]['project'], 'SAP')
 
 
 class PromptTest(unittest.TestCase):
@@ -140,6 +164,18 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(b.memory_projects()[0]['facts'], 1)
         after = b.memory_correct(line[0]['id'], 'edit', '11-01 安装')
         self.assertEqual(after['facts'][0]['actor'], 'user')
+        # The AI summary of the week: kept for the same facts, made again when they change.
+        with mock.patch('coremail_desktop.tasks.report.week_of', return_value=[('2000-01-01', '2100-01-01')] * 2):
+            group = b.memory_week()['groups'][0]
+            self.assertEqual([f['text'] for f in group['facts'] if f['id'] in group['key']], ['11-01 安装'])
+            b.ai_client = ai = FakeAi(json.dumps({'projects': [{'project': group['project'], 'brief': '安装定在 11-01', 'points': []}]}))
+            first = b.memory_week_brief()
+            self.assertEqual((first['projects'], 'cached' in first), ({group['project']: {'brief': '安装定在 11-01', 'points': []}}, False))
+            self.assertTrue(b.memory_week_brief()['cached'])
+            b.memory_correct(group['key'][0], 'edit', '11-02 安装')
+            self.assertNotIn('cached', b.memory_week_brief())
+            self.assertEqual(len(ai.calls), 2)
+            b.memory_correct(b.memory_week()['groups'][0]['key'][0], 'edit', '11-01 安装')
         for bad in (('nope', 'wrong', ''), (line[0]['id'], 'edit', ''), (line[0]['id'], 'drop', '')):
             with self.assertRaises(AppError):
                 b.memory_correct(*bad)
@@ -169,7 +205,36 @@ class BackendTest(unittest.TestCase):
         prompt = self.understand(mid, task={'id': 302, 'why': '联调时间'})
         self.assertIn('#302 NG BI 联调', prompt[1]['content'])
         self.assertEqual(b.understand_cards([mid])[mid]['task'], 302)
-        self.assertEqual(b._projects()[0], {'name': 'NG BI', 'role': 'own', 'aliases': [], 'source': 'task'})
+        self.assertEqual(b._projects()[0], {'name': 'NG BI', 'role': 'own', 'aliases': [], 'parent': '', 'source': 'task'})
+
+    def test_a_project_with_its_systems(self):
+        b = self.backend
+        b._open_tasks = lambda: [{'id': 1, 'system': 'B/OSS', 'status': '进行中'}, {'id': 2, 'system': 'BI', 'status': '进行中'},
+                                 {'id': 3, 'system': 'CRM', 'status': '进行中'}]
+        b.memory_project('B/OSS', rename='NG BOSS')  # B/OSS stays as an alias.
+        b.memory_project('BI', parent='NG BOSS')
+        b.memory_project('crm', parent='ng boss')
+        listed = b.memory_projects()
+        self.assertEqual([(p['name'], p['parent'], p['source'], p['systems']) for p in listed],
+                         [('NG BOSS', '', 'task', 2), ('BI', 'NG BOSS', 'task', 0), ('CRM', 'NG BOSS', 'task', 0)])
+        self.assertEqual(listed[0]['aliases'], ['B/OSS'])
+        for bad in ({'name': 'NG BOSS', 'parent': 'BI'}, {'name': 'BI', 'parent': 'BI'}, {'name': 'BI', 'parent': 'ERP'}, {'name': 'BI', 'rename': 'CRM'}):
+            with self.assertRaises(AppError):
+                b.memory_project(**bad)
+        first, second = b.understand_pending()['ids'][:2]
+        prompt = self.understand(first, kind='know', facts=[{'project': 'BI', 'type': 'status', 'text': '报表上线'}])
+        self.assertIn('我负责的项目：NG BOSS（系统：BI、CRM）', prompt[1]['content'])
+        self.understand(second, kind='know', facts=[{'project': 'B/OSS', 'type': 'date', 'text': '11 月整体验收'}])
+        whole = b.memory_facts('NG BOSS')
+        self.assertEqual((sorted(f['project'] for f in whole['facts']), whole['systems']), (['BI', 'NG BOSS'], ['BI', 'CRM']))
+        self.assertEqual([f['project'] for f in b.memory_facts('BI')['facts']], ['BI'])
+        recent = b.memory_recent('BI')  # The system's own fact, then its project's.
+        self.assertEqual(([f['text'] for f in recent['facts']], recent['parent']), (['报表上线', '11 月整体验收'], 'NG BOSS'))
+        self.assertEqual(len(b._memory_search('NG BOSS', '')[1]), 2)
+        b.memory_project('BI', rename='BI 报表')
+        self.assertEqual([f['project'] for f in b.memory_facts('BI')['facts']], ['BI 报表'])  # The old name still finds it.
+        b.memory_project('CRM', parent='')
+        self.assertEqual([(p['name'], p['parent']) for p in b.memory_projects()], [('NG BOSS', ''), ('BI 报表', 'NG BOSS'), ('CRM', '')])
 
     def test_followups_and_the_person_card(self):
         b = self.backend

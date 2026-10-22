@@ -101,7 +101,7 @@ class TaskCenter:
         return {'task': {f: _shown(task[f]) if f in DATE_FIELDS else task[f] for f in FIELDS},
                 'rev': self.store.revs[task['id']], 'events': events, 'links': self.store.links(task['id']),
                 'missing': missing(task), 'overdue': overdue(task, self.today()), 'sheet': sheet_of(task['status']),
-                'labels': LABEL}
+                'labels': LABEL, 'undoable': self.undoable(task['id'])}
 
     def _task(self, task_id):
         try:
@@ -131,7 +131,7 @@ class TaskCenter:
         pending = [{'seq': seq, **{k: e.get(k) for k in ('kind', 'date', 'note', 'basis', 'changes', 'mails', 'action')}}
                    for seq, review, e in self.store.events(task['id']) if review == 'pending']
         return {'id': task['id'], 'status': task['status'], 'steps': steps, 'missing': missing, 'pending': pending[::-1],
-                'undo': last[0] if last and last[1].get('kind') in UNDOABLE else None}
+                'undo': last[0] if last and last[1].get('kind') in UNDOABLE else None, 'undoable': self.undoable(task['id'])}
 
     def keep_titles(self, titles):
         """AI step titles, kept (encrypted) so each step is named once; the newest 5000."""
@@ -144,7 +144,7 @@ class TaskCenter:
         return [{'seq': seq, **{k: v for k, v in e.items()}} for seq, _, e in self.store.events(review='pending')]
 
     # Changes -------------------------------------------------------------
-    def _write(self, kind, changed, rev, note='', on_day='', extra_events=()):
+    def _write(self, kind, changed, rev, note='', on_day='', extra_events=(), unlink=()):
         """changed: the new task dicts (one, or none for a new task's own event). Records the
         event, exports, verifies; returns the reply every change gets."""
         batch = uuid.uuid4().hex[:12]
@@ -177,7 +177,7 @@ class TaskCenter:
         for task in tasks:  # A change made from mail also links that mail to the task.
             known = {l['mid'] for l in self.store.links(task['id'])}
             links += [{**m, 'task': task['id'], 'at': time.time()} for m in mails if m['mid'] not in known]
-        self.store.commit(tasks=tasks, events=events, expect=expect, links=links)
+        self.store.commit(tasks=tasks, events=events, expect=expect, links=links, unlink=unlink)
         return self._reply(batch, kind, [t['id'] for t in tasks] or [tid for tid, _, _ in extra_events])
 
     def _reply(self, batch, kind='', ids=()):
@@ -365,35 +365,58 @@ class TaskCenter:
         from coremail_desktop.tasks.assistant import source_note
         return source_note((getattr(self._ctx, 'extra', None) or {}).get('mails'))
 
-    def undo(self, seq):
-        """撤销这次修改: only the task's latest change, and only while the changed fields still
-        hold what it wrote. A new task cannot be undone (its number stays); the undo is recorded.
-        A line it added to the history column stays there, followed by a line saying it was
-        undone; the 演进图 hides both (story.build)."""
-        self._writable()
-        found = self.store.events_by_seq([seq])
-        if not found or found[0][1] != 'confirmed' or found[0][2].get('kind') not in UNDOABLE:
-            raise AppError('TASK_UNDO_UNAVAILABLE')
-        seq, _, event = found[0]
-        latest = [s for s, review, e in self.store.events(event['task']) if review == 'confirmed' and e.get('changes')]
-        task = self.store.tasks.get(event['task'])
-        if task is None or not latest or latest[-1] != seq:
-            raise AppError('TASK_UNDO_UNAVAILABLE')
-        new = copy.deepcopy(task)
-        for field, (before, after) in event['changes'].items():
-            if task.get(field) != after:
-                raise AppError('TASK_UNDO_UNAVAILABLE')
-            new[field] = before
-        from coremail_desktop.tasks.story import added_line
+    def _undo_plan(self, task, seq, event, events):
+        """(the task as it was before the change, link ids to drop) or None. Any change not undone
+        yet, not only the latest (a wrong AI update found later): a field changed again since keeps
+        its newer value; a line it added to the history column stays, followed by a 撤销 line (the
+        演进图 hides both); mail it linked is unlinked unless another kept change came from it too."""
+        from coremail_desktop.tasks.story import added_line, undone_seqs
+        skip = undone_seqs(events)
+        if task is None or event.get('kind') not in UNDOABLE or seq in skip:
+            return None
+        new, restored = copy.deepcopy(task), False
         added = added_line(event['changes'].get('history'))
+        for field, (before, after) in event['changes'].items():
+            if field == 'history' and added:
+                continue
+            if task.get(field) == after:
+                new[field] = before
+                restored = restored or field != 'updated'
         if added:
             gist = (LINE_DATE.sub('', added) or added)[:60]
             new['history'] = append_history(task['history'], self.today(), f'撤销{KIND_TEXT.get(event["kind"], "修改")}：{gist}')
+        elif not restored:
+            return None
         if sheet_of(new['status']) != sheet_of(task['status']):
             new['order'] = self._next_order()
+        kept = {m['mid'] for s, review, e in events if review == 'confirmed' and s != seq and s not in skip for m in e.get('mails') or []}
+        gone = {m['mid'] for m in event.get('mails') or []} - kept
+        return new, [l['id'] for l in self.store.links(task['id']) if l['mid'] in gone]
+
+    def undoable(self, task_id):
+        """The changes of a task that 撤销这一步 can still take back (seqs)."""
+        task = self._task(task_id)
+        events = self.store.events(task['id'])
+        return [seq for seq, review, e in events if review == 'confirmed' and e.get('changes') and self._undo_plan(task, seq, e, events)]
+
+    def undo(self, seq):
+        """撤销这一步: a change made by mistake (often an AI update from mail that belonged to
+        another task), see _undo_plan. A new task cannot be undone (its number stays; 取消任务
+        instead); the undo is recorded."""
+        self._writable()
+        found = self.store.events_by_seq([seq])
+        if not found or found[0][1] != 'confirmed':
+            raise AppError('TASK_UNDO_UNAVAILABLE')
+        seq, _, event = found[0]
+        task = self.store.tasks.get(event['task'])
+        planned = self._undo_plan(task, seq, event, self.store.events(event['task']))
+        if planned is None:
+            raise AppError('TASK_UNDO_UNAVAILABLE')
+        new, unlink = planned
         self._ctx.extra = {'undoes': seq}
         try:
-            return self._write('undone', [new], self.store.revs[task['id']], note=f'撤销{KIND_TEXT.get(event["kind"], "修改")}（{event.get("date", "")}）')
+            return self._write('undone', [new], self.store.revs[task['id']], note=f'撤销{KIND_TEXT.get(event["kind"], "修改")}（{event.get("date", "")}）',
+                               unlink=unlink)
         finally:
             self._ctx.extra = None
 

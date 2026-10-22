@@ -1,7 +1,7 @@
 'use strict';
 /* 鸿雁 · 理解新邮件 (理解层 M1): the AI reads every received mail once in the background and
    keeps a card — 要我做 / 要我知道 / 可以忽略, a one-line 要点, what is asked and by when.
-   Here: the list's 要点 and marks, 待我处理 / 需要知道, the reader's strip, corrections and
+   Here: the list's 要点 and marks, the 要我做 / 知会 / 等回复 filters, the reader's strip, corrections and
    their rules, the background rounds and the settings. Cards are plain text only (esc).
    Uses app.js globals; app.js asks UC for a row's extras, its group, the empty text and
    menu items. */
@@ -19,6 +19,9 @@ function ucDue(due) {
 }
 
 // ---------------------------------------------------------------- the list
+// The list's second line: the card's few-word tag; cards read before tags existed show
+// their 要点 up to the first clause.
+function ucShort(gist) { return (gist || '').split(/[，,；;。]/)[0].slice(0, 16); }
 UC.row = (r) => {
   if (!ucOn()) return null;
   const c = UC.cards.get(r.id);
@@ -26,7 +29,8 @@ UC.row = (r) => {
   const due = c.kind === 'act' && c.sure && !c.done ? ucDue(c.due) : null;
   const lead = c.kind === 'act' && c.sure && !c.done ? `<span class="uc-dot" title="${esc('要我做：' + (c.ask || c.gist))}"></span>` +
     (due ? `<span class="uc-due${due.late ? ' late' : ''}">${esc(due.text)}</span>` : '') : '';
-  const prev = S.prefs.listGist !== false && c.gist ? `<div class="prev uc-gist" title="AI 要点">${esc(c.gist)}</div>` : '';
+  const short = c.tag || ucShort(c.gist);
+  const prev = S.prefs.listGist !== false && short ? `<div class="prev uc-gist" title="${esc('AI 要点：' + c.gist)}">${esc(short)}</div>` : '';
   return { lead, prev, cls: c.kind === 'ignore' && c.sure ? ' uc-ignore' : '' };
 };
 UC.group = (r) => {
@@ -39,7 +43,7 @@ UC.group = (r) => {
   if (S.local === 'u-wait') return (r.waiting || 0) >= 7 ? '一周以上没有回复' : '3 天以上没有回复';
   return null;
 };
-UC.empty = () => S.local === 'u-act' ? '没有需要你处理的邮件 🎉' : S.local === 'u-know' ? '最近 30 天没有只需要知道的邮件'
+UC.empty = () => S.local === 'u-act' ? '没有需要你处理的邮件 🎉' : S.local === 'u-know' ? '最近 30 天没有知会类的邮件'
   : S.local === 'u-wait' ? '没有等对方回复的邮件' : '';
 const ucLocal = () => S.local === 'u-act' || S.local === 'u-know' || S.local === 'u-wait';
 UC.menu = (r) => {
@@ -67,12 +71,13 @@ async function ucLoad() {
 const _ucRenderList = renderList;
 renderList = function (...args) { const r = _ucRenderList(...args); ucLoad(); return r; };
 
-// ---------------------------------------------------------------- 待我处理 / 需要知道
+// ---------------------------------------------------------------- 要我做 / 知会 / 等回复 (待我处理 / 需要知道 / 催办)
 async function showUnderstand(kind, quiet) {
   if (!quiet || S.local !== 'u-' + kind) {
-    S.local = 'u-' + kind; S.search = null; S.listToken++; S.multi.clear(); renderSelection();
+    S.local = 'u-' + kind; S.search = null; S.filter = 'all'; S.listToken++; S.multi.clear(); renderSelection();
     S.rows = []; S.more = false; S.total = null; $('#search').value = '';
-    $('#list-title').textContent = { act: '待我处理', know: '需要知道', wait: '等对方回复' }[kind];
+    const f = folderById(S.folderId);
+    $('#list-title').textContent = f ? folderTitle(f) : { act: '要我做', know: '知会', wait: '等回复' }[kind];
     $('#mail-list').innerHTML = '<div class="skeleton"></div>'.repeat(4);
   }
   const token = S.listToken;
@@ -96,22 +101,39 @@ async function showUnderstand(kind, quiet) {
     if (typeof memTop === 'function') memTop(kind);
   } catch (err) { if (token === S.listToken) $('#mail-list').innerHTML = `<div class="list-foot">${esc(err.message)}</div>`; }
 }
-$('#nav-u-act').onclick = () => showUnderstand('act');
-$('#nav-u-know').onclick = () => showUnderstand('know');
-$('#nav-u-wait').onclick = () => showUnderstand('wait');
+// No sidebar entries: they are filters of the list head beside 全部 / 未读 / 星标 — 要我做 and
+// 知会 in the account's own 收件箱, 等回复 in its 已发送. Choosing 全部 / 未读 / 星标 goes back.
+const UC_VIEWS = { act: ['要我做', 'flag', ['待我处理', '要我做', '待办']], know: ['知会', 'spark', ['需要知道', '知会', '周报']], wait: ['等回复', 'clock', ['等对方回复', '催办', '跟进']] };
+const ucRole = (kind) => (kind === 'wait' ? 'sent' : 'inbox');
+function ucViewsHere() {
+  const f = !S.search && folderById(S.folderId);
+  if (!ucOn() || (UC.status && !UC.status.available) || !f || f.mailbox) return [];
+  return Object.keys(UC_VIEWS).filter((k) => ucRole(k) === f.role).map((k) => [k, ...UC_VIEWS[k]]);
+}
+// From anywhere (命令框, the conversation): open the folder, then its filter.
+function ucOpen(kind) {
+  const f = S.folders.find((x) => x.role === ucRole(kind));
+  if (!f) return;
+  if (S.folderId !== f.id) { S.folderId = f.id; S.local = null; }
+  showUnderstand(kind);
+}
+$$('#filter-seg [data-uc-view]').forEach((b) => (b.onclick = () => showUnderstand(b.dataset.ucView)));
+$$('#filter-seg button[data-filter]').forEach((b) => b.addEventListener('click', () => { if (ucLocal()) selectFolder(S.folderId); }));
 
 function renderUcNav() {
-  const on = ucOn() && !(UC.status && !UC.status.available);
+  const here = ucViewsHere().map(([k]) => k);
   const counts = (UC.status && UC.status.counts) || {};
-  for (const kind of ['act', 'know', 'wait']) {
-    $('#nav-u-' + kind).classList.toggle('hidden', !on);
-    $('#nav-u-' + kind).classList.toggle('on', S.local === 'u-' + kind);
-    $(`#u-${kind}-count`).textContent = on && counts[kind] ? counts[kind] : '';
+  for (const kind of Object.keys(UC_VIEWS)) {
+    const b = $('#seg-u-' + kind);
+    b.classList.toggle('hidden', !here.includes(kind));
+    b.classList.toggle('on', S.local === 'u-' + kind);
+    $('.seg-count', b).textContent = counts[kind] ? ' ' + counts[kind] : '';
   }
+  $$('#filter-seg button[data-filter]').forEach((x) => x.classList.toggle('on', !ucLocal() && x.dataset.filter === S.filter));
   renderUcClear();
 }
 
-// 一键清理: 待我处理 → 全部标为已处理, 需要知道 → 全部标为已读; confirmed first, 撤销 in the toast.
+// 一键清理: 要我做 → 全部标为已处理, 知会 → 全部标为已读; confirmed first, 撤销 in the toast.
 $('#btn-threads').insertAdjacentHTML('beforebegin', '<button id="btn-uc-clear" class="icon-btn hidden"><i data-icon="checkall"></i></button>');
 renderIcons($('#btn-uc-clear'));
 const ucUnread = () => S.rows.filter((r) => !r.flags.read);
@@ -125,7 +147,7 @@ $('#btn-uc-clear').onclick = () => (S.local === 'u-act' ? ucDoneAll() : S.local 
 async function ucDoneAll() {
   const ids = S.rows.map((r) => r.id);
   if (!ids.length || !(await promptDialog({ title: `把 ${ids.length} 封邮件全部标为已处理？`, okText: '全部标为已处理', collect: () => true,
-    text: '它们会从「待我处理」中移除，邮件本身不变（不标已读、不移动）。之后可以撤销。' }))) return;
+    text: '它们会从「要我做」中移除，邮件本身不变（不标已读、不移动）。之后可以撤销。' }))) return;
   const set = async (list, done) => {
     const res = await api('understandSetDone', { ids: list, done });
     UC.status = res.status; UC.cards.clear(); ucAfterChange();
@@ -139,7 +161,7 @@ async function ucDoneAll() {
 async function ucReadAll() {
   const rows = ucUnread();
   if (!rows.length || !(await promptDialog({ title: `把 ${rows.length} 封邮件全部标为已读？`, okText: '全部标为已读', collect: () => true,
-    text: '只标记「需要知道」中的未读邮件，服务器上也会标为已读。之后可以撤销。' }))) return;
+    text: '只标记「知会」中的未读邮件，服务器上也会标为已读。之后可以撤销。' }))) return;
   const set = async (list, read) => {
     const done = [];
     for (let i = 0; i < list.length; i += 100) {
@@ -190,7 +212,7 @@ function renderUcStrip(m) {
     box.innerHTML = `<i data-icon="flag"></i><span class="uc-text"><b>要你做：</b>${esc(c.ask || c.gist)}</span>` +
       (due ? `<span class="uc-due${due.late ? ' late' : ''}">${esc(due.text)}</span>` : '') + project +
       (typeof mailToTask === 'function' ? '<button class="btn ghost" data-uc="task" title="交给任务中心（AI 判断新建还是更新哪条任务）">转为任务</button>' : '') +
-      '<button class="btn ghost" data-uc="done" title="从「待我处理」中移除">已处理</button>' + more;
+      '<button class="btn ghost" data-uc="done" title="从「要我做」中移除">已处理</button>' + more;
   } else {
     const text = act ? `已处理 · ${c.ask || c.gist}` : !c.sure ? `${c.gist}（AI 不确定）` : c.kind === 'know' ? `知会 · ${c.gist}` : `AI 判断：可以忽略${c.gist ? ' · ' + c.gist : ''}`;
     box.className = 'uc-strip';
@@ -285,7 +307,7 @@ async function ucAsk() {
   const ai = await api('aiSettings').catch(() => null);
   if (!ai || !ai.ready || S.prefs.understand) return;
   const value = await promptDialog({ title: '让 AI 先把新邮件读一遍？', okText: '开启',
-    body: '<p class="muted">鸿雁会把最近 30 天收到的邮件和以后的新邮件各读一次，分成「要我做」「要我知道」「可以忽略」，在列表里显示一句话要点，左侧增加「待我处理」「需要知道」「等对方回复」，并记下你的项目的进展。</p>' +
+    body: '<p class="muted">鸿雁会把最近 30 天收到的邮件和以后的新邮件各读一次，分成「要我做」「要我知道」「可以忽略」，在列表里显示一句话要点，收件箱上方增加「要我做」「知会」筛选、已发送上方增加「等回复」，并记下你的项目的进展。</p>' +
       '<p class="muted small">邮件内容会发送到「设置 → AI 助手」中配置的 AI 服务，每月约 45 万 tokens。不会标为已读，不会移动、删除或回复邮件。以后可以在设置中关闭。</p>' +
       '<label class="check"><input id="uc-ask-enc" type="checkbox" checked> 包括加密邮件（可以在设置中排除个别文件夹和发件人）</label>',
     collect: () => ({ encrypted: $('#uc-ask-enc').checked }) });
@@ -324,7 +346,7 @@ async function renderUcSettings() {
   $('#uc-on').checked = st.state === 'on';
   $('#uc-gist').checked = S.prefs.listGist !== false;
   $('#uc-status').textContent = !st.available ? '无法打开本机的理解数据，「理解新邮件」暂不可用。' : st.state !== 'on' ? '未开启。' :
-    `本月已理解 ${st.month} 封邮件；待我处理 ${st.counts.act} 封，需要知道 ${st.counts.know} 封未读，等对方回复 ${st.counts.wait || 0} 封` +
+    `本月已理解 ${st.month} 封邮件；要我做 ${st.counts.act} 封，知会 ${st.counts.know} 封未读，等回复 ${st.counts.wait || 0} 封` +
     (st.failed ? `；${st.failed} 封这次无法读取（例如证书未解锁），已跳过` : '') + '。';
   const rules = st.available ? await api('understandRules').catch(() => []) : [];
   const who = (r) => r.sender ? (r.sender.startsWith('@') ? `来自 ${r.sender}` : `发件人 ${r.sender}`) : '任何发件人';

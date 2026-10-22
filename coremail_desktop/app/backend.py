@@ -240,7 +240,7 @@ def _fact_view(fact):
 
 def _card_view(card):
     """What the page sees of a card (its facts go to 工作记忆 and are shown from there)."""
-    return {'kind': card.get('kind'), 'sure': bool(card.get('sure')), 'gist': card.get('gist') or '', 'ask': card.get('ask') or '',
+    return {'kind': card.get('kind'), 'sure': bool(card.get('sure')), 'gist': card.get('gist') or '', 'tag': card.get('tag') or '', 'ask': card.get('ask') or '',
             'due': card.get('due') or '', 'project': card.get('project') or '', 'done': bool(card.get('done')),
             'actor': card.get('actor') or 'ai', 'rule': bool(card.get('rule')), 'model': card.get('model') or '', 'at': card.get('at') or '',
             'task': (card.get('task') or {}).get('id') or 0, 'why': (card.get('task') or {}).get('why') or ''}
@@ -3280,8 +3280,9 @@ class MailBackend:
         return {**report.render(report.parse(content), material), 'from': start, 'to': end, 'active': len(material['active'])}
 
     def tasks_new_mail(self):
-        """New mail in the conversations of unfinished tasks not yet looked at by 自动更新:
-        [{task, mid, subject}] (the page downloads each one, then calls tasks_auto_mail)."""
+        """New mail in the conversations of unfinished tasks not yet looked at by 自动更新, one
+        item per task: [{task, mids, subject}], oldest first (the page downloads each mail, then
+        calls tasks_auto_mail once for the task, so a busy thread becomes one progress line)."""
         from coremail_desktop.tasks.rules import OPEN_STATUSES
         center = self._tasks()
         if center.status()['mode'] == 'off':
@@ -3299,45 +3300,64 @@ class MailBackend:
                 if row and mid not in seen and mid not in linked and mid not in queued and task_id in center.store.tasks \
                         and center.store.tasks[task_id]['status'] in OPEN_STATUSES and not card.get('done'):
                     found.append({'task': task_id, 'mid': mid, 'subject': row['subject']})
-        return found[:10]
+        grouped = {}
+        for item in found:
+            entry = grouped.setdefault(item['task'], {'task': item['task'], 'mids': [], 'subject': item['subject']})
+            entry['mids'].append(item['mid'])
+        return list(grouped.values())[:10]
 
-    def tasks_auto_mail(self, task, mid):
-        """自动更新 from one new mail of a task's conversation: progress that changes no status is
-        written at once (marked AI, can be undone); a status change, completion or cancel is
-        kept as a suggestion to accept. Encrypted mail, questions and doubt leave only the hint."""
+    def tasks_auto_mail(self, task, mids):
+        """自动更新 from the new mails of a task's conversation, read together so that a thread
+        with many replies gives one progress line. The AI first says whether the mail belongs to
+        the task: only when it is sure ("yes") and every mail is in the task's own conversation
+        (not a 理解层 guess) is progress that changes no status written at once (marked AI, can be
+        undone); doubt, questions, a status change, completion or cancel are kept as suggestions to
+        accept; mail about another matter ("no"), encrypted mail and nothing new leave only the hint.
+        More than five new mails: the newest five are read (each reply quotes the earlier ones)."""
+        from coremail_desktop.tasks.assistant import MAX_MAILS
         center = self._tasks()
         seen = center.store.get('autoMail') or {}
-        if mid in seen:
+        mids = [mids] if isinstance(mids, str) else list(mids) if isinstance(mids, list) else []
+        new = [m for m in dict.fromkeys(mids) if isinstance(m, str) and m and m not in seen]
+        if not new:
             return {'applied': [], 'suggested': [], 'skipped': 'seen'}
         outcome = {'applied': [], 'suggested': [], 'skipped': ''}
         try:
-            plan = self.tasks_from_mail([mid], target=int(task))
+            thread = {m['id'] for m in self._task_new_mail().get(int(task), [])}
+            plan = self.tasks_from_mail(new[-MAX_MAILS:], target=int(task), check=True)
         except AppError as error:
             if error.code not in ('AI_ENCRYPTED_CONFIRM', 'CERT_LOCKED', 'AI_MAIL_UNAVAILABLE', 'TASK_NOT_FOUND'):
                 raise  # AI unavailable: try again with the next new mail.
             outcome['skipped'] = error.code
             plan = None
-        if plan is not None:
+        if plan is not None and plan['fit'] == 'no':
+            outcome['skipped'] = 'unrelated'
+        elif plan is not None:
             subject = plan['mails'][0]['subject'] if plan['mails'] else ''
             basis = f'自动更新：新邮件「{subject}」'
             ready = [(a, p) for a, p in zip(plan['actions'], plan['preview']) if not p.get('error') and p.get('changes') and a.get('id') == int(task)]
-            if plan['questions'] or not ready:
+            sure = plan['fit'] == 'yes' and not plan['questions'] and all(m in thread for m in new[-MAX_MAILS:])
+            if not ready:
+                outcome['skipped'] = 'unsure' if plan['questions'] or plan['actions'] else 'nothing'
+            elif not sure:
                 outcome['skipped'] = 'unsure'
-            auto = [a for a, _ in ready if a['op'] == 'progress' and 'status' not in a.get('fields', {})]
-            if auto and not plan['questions']:
+            auto = [a for a, _ in ready if sure and a['op'] == 'progress' and 'status' not in a.get('fields', {})]
+            if auto:
                 result = center.run_plan(auto, basis)
                 outcome['applied'] = [d['id'] for d in result['done']]
             for action, item in ready:
-                if action not in auto and not plan['questions']:
-                    center.suggest(action, item, basis, plan['reply'])
+                if action not in auto:
+                    center.suggest(action, item, basis, plan['reply'] if sure else '拿不准这封邮件是否属于这条任务，请确认。' + plan['reply'])
                     outcome['suggested'].append(action['id'])
-        seen[mid] = int(task)
+        for mid in new:
+            seen[mid] = int(task)
         center.store.set('autoMail', dict(list(seen.items())[-3000:]))
         return outcome
 
-    def tasks_from_mail(self, mids, target='auto', text='', history=None, allow=()):
+    def tasks_from_mail(self, mids, target='auto', text='', history=None, allow=(), check=False):
         """转为任务（AI）: a plan from one to five selected mails, previewed like a sentence's.
-        target: 'auto' (the AI decides), 'new', or a task number to update."""
+        target: 'auto' (the AI decides), 'new', or a task number to update; check (自动更新 only,
+        not from the page): the AI first says whether the mail belongs to that task ('fit')."""
         from coremail_desktop.tasks import assistant
         from coremail_desktop.ui.messages import user_message
         if not isinstance(mids, list) or not 1 <= len(mids) <= assistant.MAX_MAILS or not all(isinstance(m, str) and m for m in mids):
@@ -3358,14 +3378,15 @@ class MailBackend:
             center.get(target)  # TASK_NOT_FOUND before any mail goes out.
         self._ai()  # Not configured: say so before reading the mail.
         mails = [self._task_mail(mid, {str(a) for a in allow}) for mid in dict.fromkeys(mids)]
-        messages = assistant.build_mail_messages(mails, target, text, history, list(center.store.tasks.values()), center.today())
+        messages = assistant.build_mail_messages(mails, target, text, history, list(center.store.tasks.values()), center.today(),
+                                                 check=check and isinstance(target, int))
         content, _ = self._ai_call(messages, max_tokens=assistant.PLAN_TOKENS, json_mode=True)
         plan = assistant.parse_plan(content)
         refs = [{k: m[k] for k in assistant.MAIL_KEYS} for m in mails]
         for action in plan['actions']:
             action['mails'] = refs
             if action['op'] == 'progress' and not action['date']:
-                action['date'] = mails[0]['day']  # The mail's date is the event's date.
+                action['date'] = max(m['day'] for m in mails)  # The (newest) mail's date is the event's date.
         preview = center.preview(plan['actions'])
         for item in preview:
             if item.get('error'):
@@ -3721,63 +3742,111 @@ class MailBackend:
 
     # 工作记忆 (M2) ----------------------------------------------------------------
     def memory_projects(self):
-        """The project list with each one's number of current facts and of facts waiting for the user."""
+        """The project list (projects, each followed by its systems) with each one's number of
+        current facts and of facts waiting for the user."""
         facts = self._memory().facts.values()
+        listed = self._projects()
+        order = [p for top in listed if not top['parent'] for p in [top] + [x for x in listed if x['parent'] == top['name']]]
         return [{**p, 'facts': sum(f['project'] == p['name'] and f['state'] == 'current' for f in facts),
-                 'pending': sum(f['project'] == p['name'] and f['state'] == 'pending' for f in facts)} for p in self._projects()]
+                 'pending': sum(f['project'] == p['name'] and f['state'] == 'pending' for f in facts),
+                 'systems': sum(x['parent'] == p['name'] for x in listed)} for p in order]
 
-    def memory_project(self, name, role=None, aliases=None, remove=False):
-        """Add or change a project of the list (role own / watch; aliases: other names of the same
-        project, whose facts move to it), or take a hand-added one off it."""
+    def memory_project(self, name, role=None, aliases=None, remove=False, parent=None, rename=None):
+        """Add or change an entry of the project list: role (own / watch, a project's), aliases
+        (other names of the same one, whose facts move to it), parent (the project a system
+        belongs to, '' for a project of its own), rename (the old name becomes an alias); or
+        take a hand-added one off the list. A 系统 from the task center is changed by keeping
+        a copy of it here (source 'task')."""
         from coremail_desktop.memory.merge import NAME, PROJECTS, ROLES, norm
         memory = self._memory()
-        name = name.strip() if isinstance(name, str) else ''
-        if not name or len(name) > NAME or (role is not None and role not in ROLES) or (aliases is not None and (
+        clean = lambda v: v.strip() if isinstance(v, str) else ''
+        name, rename = clean(name), clean(rename) if rename is not None else None
+        if not name or len(name) > NAME or (role is not None and role not in ROLES) or (rename is not None and not 0 < len(rename) <= NAME) or (
+                parent is not None and (not isinstance(parent, str) or len(parent) > NAME)) or (aliases is not None and (
                 not isinstance(aliases, list) or len(aliases) > 10 or not all(isinstance(a, str) and 0 < len(a.strip()) <= NAME for a in aliases))):
             raise AppError('MEMORY_INVALID')
+        listed = self._projects()
         manual = [p for p in memory.get('projects') or [] if isinstance(p, dict) and p.get('name')]
         found = next((p for p in manual if norm(p['name']) == norm(name)), None)
+        moved = set()  # Names whose facts now belong to found.
         if remove:
             manual = [p for p in manual if p is not found]
+            for p in manual:
+                if found and p.get('parent') == found['name']:
+                    p['parent'] = ''
         else:
             if found is None:
                 if len(manual) >= PROJECTS:
                     raise AppError('MEMORY_INVALID')
-                known = next((p for p in self._projects() if norm(p['name']) == norm(name)), None)
-                found = {'name': name, 'role': known['role'] if known else 'watch', 'aliases': []}
+                known = next((p for p in listed if norm(p['name']) == norm(name)), None)
+                found = {'name': known['name'] if known else name, 'role': known['role'] if known else 'watch', 'aliases': [],
+                         'parent': '', 'source': known['source'] if known else 'manual'}
                 manual.append(found)
             if role is not None:
                 found['role'] = role
+            if rename is not None and norm(rename) != norm(found['name']):
+                if any(norm(rename) in {norm(n) for n in [p['name'], *p['aliases']]} for p in listed if norm(p['name']) != norm(found['name'])):
+                    raise AppError('MEMORY_INVALID')  # Another entry has that name: merge with 别名 instead.
+                old = found['name']
+                found['aliases'] = [a for a in found.get('aliases') or [] if norm(a) != norm(rename)] + [old]
+                found['name'] = rename
+                moved.add(norm(old))
+                for p in manual:
+                    if p.get('parent') == old:
+                        p['parent'] = rename
             if aliases is not None:
                 found['aliases'] = [a.strip() for a in aliases if norm(a) != norm(found['name'])]
-                for p in manual:
-                    if p is not found and norm(p['name']) in {norm(a) for a in found['aliases']}:
-                        manual.remove(p)  # Merged into this one.
+                merged = {norm(a) for a in found['aliases']}
+                for p in [p for p in manual if p is not found and norm(p['name']) in merged]:
+                    manual.remove(p)  # Merged into this one; its systems come along.
+                    for q in manual:
+                        if q.get('parent') == p['name']:
+                            q['parent'] = found['name'] if not found.get('parent') else ''
+                moved |= merged
+            if parent is not None:
+                target = next((p for p in listed if norm(p['name']) == norm(parent)), None) if parent.strip() else None
+                if parent.strip() and (target is None or target['parent'] or norm(target['name']) == norm(found['name'])
+                                       or any(x['parent'] == found['name'] for x in listed)):
+                    raise AppError('MEMORY_INVALID')  # One level only: a project with systems stays a project.
+                if target and not any(norm(p['name']) == norm(target['name']) for p in manual):
+                    manual.append({'name': target['name'], 'role': target['role'], 'aliases': list(target['aliases']), 'parent': '', 'source': target['source']})
+                found['parent'] = target['name'] if target else ''
         memory.set('projects', manual)
-        if found and not remove:
-            names = {norm(a) for a in found['aliases']}
+        if found and not remove and moved:
             for fact in list(memory.facts.values()):
-                if norm(fact['project']) in names:
+                if norm(fact['project']) in moved:
                     memory.put_fact({**fact, 'project': found['name']})
         return self.memory_projects()
 
     def memory_facts(self, project):
-        """One project's memory, newest first, with what each fact replaced (the 时间线)."""
+        """One project's memory (a project with its systems'), newest first, with what each
+        fact replaced (the 时间线); 'parent' names the project of a system."""
         from coremail_desktop.memory.merge import resolve, timeline
-        name = resolve(project, self._projects()) if isinstance(project, str) else ''
+        listed = self._projects()
+        name = resolve(project, listed) if isinstance(project, str) else ''
         if not name:
             raise AppError('MEMORY_NOT_FOUND')
-        return {'project': name, 'facts': [_fact_view(f) for f in timeline(self._memory().facts, name)]}
+        entry = next(p for p in listed if p['name'] == name)
+        return {'project': name, 'parent': entry['parent'], 'systems': [p['name'] for p in listed if p['parent'] == name],
+                'facts': [_fact_view(f) for f in timeline(self._memory().facts, name, listed)]}
 
     def memory_recent(self, project):
         """这个项目最近 (the reader's strip): the newest two current facts and how many wait."""
-        from coremail_desktop.memory.merge import resolve, search
+        from coremail_desktop.memory.merge import family, resolve, search
         if not self._understand_on() or not isinstance(project, str):
             return {'project': '', 'facts': [], 'pending': 0}
-        name = resolve(project, self._projects())
-        facts = self.memory.facts.values()
-        return {'project': name, 'facts': [_fact_view(f) for f in search(self.memory.facts, name)[:2]] if name else [],
-                'pending': sum(f['project'] == name and f['state'] == 'pending' for f in facts) if name else 0}
+        listed = self._projects()
+        name = resolve(project, listed)
+        if not name:
+            return {'project': '', 'facts': [], 'pending': 0}
+        # A system's own facts first; its project's (and the other systems') fill up to two.
+        entry = next(p for p in listed if p['name'] == name)
+        rows = search(self.memory.facts, name, projects=listed)
+        if len(rows) < 2 and entry['parent']:
+            rows += [f for f in search(self.memory.facts, entry['parent'], projects=listed) if f not in rows]
+        names = family(entry['parent'] or name, listed)
+        return {'project': name, 'parent': entry['parent'], 'facts': [_fact_view(f) for f in rows[:2]],
+                'pending': sum(f['project'] in names and f['state'] == 'pending' for f in self.memory.facts.values())}
 
     def memory_correct(self, fact_id, action, text=''):
         """这条不对 (wrong), 已过时 (stale), 改成 (edit), or accept / reject a waiting replacement."""
@@ -3792,17 +3861,22 @@ class MailBackend:
             raise AppError('MEMORY_NOT_FOUND')
         for fact in changed:
             memory.put_fact(fact)
-        return self.memory_facts(changed[0]['project'])
+        return self.memory_facts(self._top(changed[0]['project']))
+
+    def _top(self, name):
+        from coremail_desktop.memory.merge import top
+        return top(name, self._projects())
 
     def _memory_search(self, project, text, history=False):
         """问邮箱's memory_search: (project as listed or '', facts with their source mail rows)."""
         from coremail_desktop.memory.merge import resolve, search
         if not self._understand_on():
             return None
-        name = resolve(project, self._projects()) if project else ''
+        listed = self._projects()
+        name = resolve(project, listed) if project else ''
         if project and not name:
             return '', []
-        rows = search(self.memory.facts, name, text, history)
+        rows = search(self.memory.facts, name, text, history, listed)
         return name, [{**_fact_view(f), 'rows': [r for r in (self.cache.summary(s['mid']) for s in f['sources'] if s.get('mid')) if r]} for f in rows]
 
     # 每周需要知道、人物卡片、催办 (M3) -------------------------------------------------
@@ -3815,8 +3889,36 @@ class MailBackend:
         if not self._understand_on():
             return {'from': '', 'to': '', 'groups': []}
         start, end = week_of(datetime.now().date().isoformat())[offset]
-        return {'from': start, 'to': end, 'groups': [{'project': g['project'], 'facts': [_fact_view(f) for f in g['facts']]}
-                                                     for g in week(self.memory.facts, start, end)]}
+        return {'from': start, 'to': end, 'groups': [{'project': g['project'], 'facts': [_fact_view(f) for f in g['facts']], 'key': g['key']}
+                                                     for g in week(self.memory.facts, start, end, self._projects())]}
+
+    def memory_week_brief(self, offset=0, refresh=False):
+        """本周你需要知道的, summed up by the AI: per project one sentence and up to 3 points.
+        Kept for the same facts of the same week; a new or changed fact makes it again."""
+        from coremail_desktop.ai.weekly import WEEK_TOKENS, build_messages, parse
+        from coremail_desktop.memory.merge import week
+        from coremail_desktop.tasks.report import week_of
+        if offset not in (0, 1):
+            raise AppError('MEMORY_INVALID')
+        if not self._understand_on():
+            return {'from': '', 'to': '', 'projects': {}}
+        start, end = week_of(datetime.now().date().isoformat())[offset]
+        groups = week(self.memory.facts, start, end, self._projects())
+        if not groups:
+            return {'from': start, 'to': end, 'projects': {}}
+        client = self._ai()
+        key = hashlib.sha256(json.dumps([start, end, [[g['project'], [(f['id'], f['state'], f['text']) for f in g['facts']]] for g in groups]],
+                                        ensure_ascii=False).encode()).hexdigest()[:24]
+        saved = self.cache.get('memoryBriefs') or {}
+        if not refresh and key in saved:
+            return {**saved[key], 'cached': True}
+        content, _ = self._ai_call(build_messages(groups, start, end), max_tokens=WEEK_TOKENS, json_mode=True)
+        result = {'from': start, 'to': end, 'projects': parse(content, [g['project'] for g in groups]),
+                  'model': getattr(client, 'model', ''), 'at': datetime.now().strftime('%Y-%m-%d %H:%M')}
+        saved.pop(key, None)
+        saved[key] = result
+        self.cache.set('memoryBriefs', dict(list(saved.items())[-8:]))
+        return result
 
     def _mine(self):
         return {a.casefold() for a in [self.account or '', *self.identities] if a}

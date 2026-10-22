@@ -319,7 +319,7 @@ MAIL_SPEC = {'type': 'function', 'function': {
         'summary': {'type': 'string', 'description': '一句话说明要做什么，显示在卡片上'}}, 'required': ['action']}}}
 PENDING_SPEC = {'type': 'function', 'function': {
     'name': 'pending_mail',
-    'description': '「待我处理」：AI 读过新邮件后认为需要用户本人做事的邮件（要做什么、截止日期、项目），已经关联到任务的不列出。',
+    'description': '「要我做」（原「待我处理」）：AI 读过新邮件后认为需要用户本人做事的邮件（要做什么、截止日期、项目），已经关联到任务的不列出。',
     'parameters': {'type': 'object', 'properties': {}}}}
 
 # 工作记忆 (M2) and 催办 (M3): read-only like pending_mail.
@@ -381,7 +381,7 @@ class AssistantTools(MailboxTools):
         if not isinstance(args, dict):
             return {'error': '参数不是有效的 JSON 对象'}, '工具参数无效'
         if name == 'pending_mail' and not self._pending:
-            return {'error': '没有开启「理解新邮件」，没有待我处理的列表'}, '待我处理（未开启）'
+            return {'error': '没有开启「理解新邮件」，没有要我做的列表'}, '要我做（未开启）'
         if name in ('memory_search', 'followups') and not (self._memory if name == 'memory_search' else self._followups):
             return {'error': '没有开启「理解新邮件」，没有工作记忆'}, '工作记忆（未开启）'
         if name == 'plan_tasks' and not self._plan:
@@ -454,7 +454,7 @@ class AssistantTools(MailboxTools):
         out = [{'ref': self._ref(r), 'subject': _clip(r.get('subject'), 120) or '（无主题）', 'from': _who(r.get('from'), 1),
                 'date': str(r.get('date') or '')[:16], 'ask': _clip(r['card'].get('ask'), 120), 'gist': _clip(r['card'].get('gist'), 120),
                 'due': r['card'].get('due') or '', 'project': _clip(r['card'].get('project'), 40)} for r in rows[:30]]
-        return {'total': len(rows), 'rows': out}, f'待我处理：{len(rows)} 封'
+        return {'total': len(rows), 'rows': out}, f'要我做：{len(rows)} 封'
 
     def memory_search(self, args):
         """callback(project, text, history) -> (project as listed, [fact with 'rows']) or None."""
@@ -476,7 +476,7 @@ class AssistantTools(MailboxTools):
         rows = self._followups()
         out = [{'ref': self._ref(r), 'subject': _clip(r.get('subject'), 120) or '（无主题）', 'to': _clip(r.get('toNames'), 120),
                 'date': str(r.get('date') or '')[:16], 'waiting_days': r.get('waiting', 0)} for r in rows[:20]]
-        return {'total': len(rows), 'rows': out}, f'等对方回复：{len(rows)} 封'
+        return {'total': len(rows), 'rows': out}, f'等回复：{len(rows)} 封'
 
     def plan_tasks(self, args):
         """A proposal only: checked like the task center's preview and kept for the page's

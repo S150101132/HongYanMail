@@ -94,7 +94,7 @@ class ToolsTest(unittest.TestCase):
         self.assertIn('error', off.run('pending_mail', '{}')[0])
         on = Board([], pending=[{**row(4), 'card': {'ask': '回复报价', 'gist': '', 'due': '2026-10-22', 'project': 'CRM'}}]).tools()
         result, step = on.run('pending_mail', '{}')
-        self.assertEqual((result['rows'][0]['ref'], result['rows'][0]['ask'], step), ('M1', '回复报价', '待我处理：1 封'))
+        self.assertEqual((result['rows'][0]['ref'], result['rows'][0]['ask'], step), ('M1', '回复报价', '要我做：1 封'))
         self.assertEqual(on.specs[:len(SPECS)], SPECS)
 
 

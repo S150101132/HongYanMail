@@ -494,6 +494,7 @@ button.side-section[aria-expanded="true"] i { transform: rotate(90deg); }
 .ct-actions .btn i { width: 15px; height: 15px; }
 .ct-art { background: var(--accent-soft) !important; }
 .list-title-row .seg button { white-space: nowrap; }
+.seg .seg-count { color: var(--accent); font-weight: 600; }
 .list-title-row #list-sub { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list-title-row #list-sub + .spacer { display: none; }
 
@@ -1119,8 +1120,19 @@ img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mem-week-project { font-weight: 600; font-size: 13px; cursor: pointer; }
 .mem-week-group ul { margin: 2px 0 0; padding-left: 4px; list-style: none; }
 .mem-week-group li { font-size: 13px; padding: 2px 0; }
+.mem-week-brief { margin: 2px 0; font-size: 13px; line-height: 1.6; }
+.mem-week-points { color: var(--text-2); }
+.mem-week-points li::before { content: '· '; color: var(--muted); }
+.mem-week-more, .mem-week-foot a { font-size: 12px; cursor: pointer; color: var(--accent); }
+.mem-week-all { border-left: 2px solid var(--line); padding-left: 8px !important; margin: 4px 0 !important; }
+.mem-week-foot { margin: 0; }
+.mem-week-foot a { margin-left: 8px; }
 .mem-projects select { height: 26px; width: auto; flex: none; }
 .mem-projects .btn { flex: none; white-space: nowrap; }
+.mem-projects li.mem-system { padding-left: 18px; }
+.mem-sys { display: inline-block; padding: 0 6px; margin-right: 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--accent); font-size: 11.5px; line-height: 17px; }
+.mem-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.mem-filter .btn.on { background: var(--accent-soft); color: var(--accent); }
 .mem-add { display: flex; gap: 8px; }
 .mem-add input { flex: 1; }
 .pp-mem-box { margin: 6px 0 2px; border-top: 1px solid var(--line-2); padding-top: 6px; max-height: 240px; overflow-y: auto; }

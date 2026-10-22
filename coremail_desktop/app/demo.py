@@ -625,6 +625,9 @@ class DemoAiClient:
         if '鸿雁发送前检查' in messages[0]['content']:
             return json.dumps({'issues': [] if '附件' not in text or '（没有附件）' not in text else
                                [{'kind': 'attachment', 'quote': '附件', 'advice': '正文提到附件，但没有添加附件（演示）。'}]}, ensure_ascii=False), 0
+        if '鸿雁每周概要助手' in messages[0]['content']:
+            from coremail_desktop.ai.weekly import demo
+            return demo(messages), 0
         if '会话（同一主题的多封往来邮件' in messages[0]['content']:
             count = len(re.findall(r'^邮件 \d+$', text, re.M))
             return json.dumps({'conclusion': f'这个会话共 {count} 封邮件（演示模式：由本机生成，没有联网）。',
@@ -634,16 +637,17 @@ class DemoAiClient:
             subject = (re.search(r'主题：(.*)', text) or [None, ''])[1].replace('（演示）', '').strip()
             topic = re.sub(r'^(?:Re|回复)\s*[:：]\s*|【[^】]*】', '', subject).strip() or '邮件'
             listed = re.search(r'我负责的项目：(.*)', text)
-            project = (listed.group(1).split('、')[0] if listed and '（无）' not in listed.group(1) else '') or '演示项目'
+            project = (re.split(r'[、（]', listed.group(1))[0] if listed and '（无）' not in listed.group(1) else '') or '演示项目'
+            system = (re.search(r'（系统：([^、）]+)', listed.group(1)) or [None, project])[1] if listed else project
             known = re.search(r'^(F\d+) \[' + re.escape(project) + r'\] .*本周进展', text, re.M)  # 工作记忆: a newer status replaces it.
             if re.search(r'周报|纪要|进展', subject):
                 card = {'kind': 'know', 'sure': True, 'gist': f'{topic}：本周进展和下周安排', 'ask': '', 'due': '',
                         'facts': [{'project': project, 'type': 'status', 'text': f'{topic}：本周进展已更新（演示）', 'replaces': known.group(1) if known else ''},
-                                  {'project': project, 'type': 'owner', 'text': '张晓明负责接口联调（演示）'}]}
+                                  {'project': system, 'type': 'owner', 'text': '张晓明负责接口联调（演示）'}]}
             elif re.search(r'请|确认|申请|评审', subject):
                 due = '2026-10-23' if '周五' in subject else ''
                 card = {'kind': 'act', 'sure': True, 'gist': f'{topic}，需要你反馈', 'ask': f'就「{topic[:16]}」回复意见', 'due': due,
-                        'facts': [{'project': project, 'type': 'date', 'text': f'{topic[:20]}：{due or "本周"}前反馈（演示）'}]}
+                        'facts': [{'project': system, 'type': 'date', 'text': f'{topic[:20]}：{due or "本周"}前反馈（演示）'}]}
                 task = re.search(r'^#(\d+) .*' + re.escape(topic[:2]), text, re.M) if len(topic) >= 2 else None
                 if task:
                     card['task'] = {'id': int(task.group(1)), 'why': '主题相同（演示）'}
@@ -671,11 +675,12 @@ class DemoAiClient:
         """转为任务 in demo mode: update the task the user named, else a new task from the subject."""
         import re
         subject = (re.search(r'主题：(.*)', mail) or [None, '（无主题）'])[1].strip()
-        named = re.search(r'用这些邮件更新任务 #(\d+)', rules)
+        named = re.search(r'用这些邮件更新任务 #(\d+)|与任务 #(\d+) 的已关联邮件', rules)
         note = '（演示模式：本机生成，没有联网。）'
         if named:
-            return {'reply': f'演示模式：用这封邮件更新 #{named.group(1)}。{note}', 'questions': [], 'candidates': [],
-                    'actions': [{'op': 'progress', 'id': int(named.group(1)), 'text': f'收到邮件「{subject}」。', 'date': '', 'latest': True, 'fields': {}}]}
+            named = re.search(r'\d+', named.group(0))
+            return {'reply': f'演示模式：用这封邮件更新 #{named.group(0)}。{note}', 'questions': [], 'candidates': [], 'fit': 'yes',
+                    'actions': [{'op': 'progress', 'id': int(named.group(0)), 'text': f'收到邮件「{subject}」。', 'date': '', 'latest': True, 'fields': {}}]}
         return {'reply': f'演示模式：根据邮件新建任务。{note}', 'questions': [], 'candidates': [],
                 'actions': [{'op': 'create', 'fields': {'content': subject, 'status': '未开始'}}]}
 

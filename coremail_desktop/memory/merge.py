@@ -1,7 +1,9 @@
 """工作记忆 (design 5): the facts of 理解卡片 merged into per-project memory.
 
 A fact is kept for a project of the user's list only (the 系统 of unfinished tasks plus the
-projects added by hand, with their aliases). A newer fact replaces an older one when the
+projects added by hand, with their aliases). The list has two levels: a project (NG BOSS)
+and its systems (BI, CRM…, parent = the project); a fact is kept under a system when it is
+about that one, under the project when about the whole. A newer fact replaces an older one when the
 model says so (replaces: one of the F refs it was shown) and its mail is not older; the old
 one stays as superseded,
 so the history shows how things changed. Replacing a fact the user wrote, or a colleague's
@@ -31,16 +33,38 @@ def norm(value):
 
 
 def project_list(manual, systems):
-    """[{name, role, aliases, source}]: the projects added by hand (kv 'projects') and the 系统
-    of unfinished tasks that no manual entry names (the user's own, so 我负责)."""
+    """[{name, role, aliases, parent, source}]: the projects added or changed by hand (kv
+    'projects') and the 系统 of unfinished tasks that no manual entry names (the user's own,
+    so 我负责). parent: the project a system belongs to ('' for a project); only one level,
+    and a system takes its project's role."""
     out = [{'name': p['name'], 'role': p.get('role') if p.get('role') in ROLES else 'watch', 'aliases': list(p.get('aliases') or []),
-            'source': 'manual'} for p in manual or () if isinstance(p, dict) and p.get('name')]
+            'parent': p.get('parent') or '', 'source': p.get('source') if p.get('source') in ('manual', 'task') else 'manual'}
+           for p in manual or () if isinstance(p, dict) and p.get('name')]
+    tops = {x['name']: x for x in out if not x['parent']}
+    for x in out:
+        if x['parent'] not in tops or x['parent'] == x['name']:
+            x['parent'] = ''  # Its project is gone: a project of its own.
+    tops = {x['name']: x for x in out if not x['parent']}
+    for x in out:
+        if x['parent']:
+            x['role'] = tops[x['parent']]['role']
     covered = {norm(n) for p in out for n in [p['name'], *p['aliases']]}
     for system in systems or ():
         if norm(system) and norm(system) not in covered:
-            out.append({'name': system, 'role': 'own', 'aliases': [], 'source': 'task'})
+            out.append({'name': system, 'role': 'own', 'aliases': [], 'parent': '', 'source': 'task'})
             covered.add(norm(system))
     return out[:PROJECTS]
+
+
+def family(name, projects):
+    """A project's own name and its systems' (a system: itself only)."""
+    return {name} | {p['name'] for p in projects if p.get('parent') == name}
+
+
+def top(name, projects):
+    """The project a name belongs to: its parent, or itself."""
+    found = next((p for p in projects if p['name'] == name), None)
+    return (found or {}).get('parent') or name
 
 
 def resolve(name, projects):
@@ -121,26 +145,43 @@ def correct(facts, fact_id, action, text=''):
     return None
 
 
-def timeline(facts, project):
-    """Every fact of a project except the wrong ones, newest first; the replaced text alongside."""
-    rows = sorted((f for f in facts.values() if f['project'] == project and f['state'] != 'wrong'),
+def timeline(facts, project, projects=()):
+    """Every fact of a project (with its systems') except the wrong ones, newest first; the
+    replaced text alongside."""
+    names = family(project, projects)
+    rows = sorted((f for f in facts.values() if f['project'] in names and f['state'] != 'wrong'),
                   key=lambda f: (f.get('date') or '', f.get('seq', 0)), reverse=True)
     return [{**f, 'was': (facts.get(f.get('replaces')) or {}).get('text', '')} for f in rows]
 
 
-def week(facts, start, end):
-    """本周你需要知道的: per project, the facts dated start..end (new, or changing an older one)."""
+def week(facts, start, end, projects=()):
+    """本周你需要知道的: per project (a system's facts under its project), the facts dated
+    start..end (new, or changing an older one)."""
     groups = {}
     for f in sorted(facts.values(), key=lambda f: (f.get('date') or '', f.get('seq', 0))):
         if f['state'] in ('current', 'superseded') and start <= (f.get('date') or '') <= end:
-            groups.setdefault(f['project'], []).append({**f, 'was': (facts.get(f.get('replaces')) or {}).get('text', '')})
-    return [{'project': p, 'facts': rows[::-1]} for p, rows in sorted(groups.items(), key=lambda kv: -max(f.get('seq', 0) for f in kv[1]))]
+            groups.setdefault(top(f['project'], projects), []).append({**f, 'was': (facts.get(f.get('replaces')) or {}).get('text', '')})
+    return [{'project': p, 'facts': rows[::-1], 'key': key_facts(rows[::-1])}
+            for p, rows in sorted(groups.items(), key=lambda kv: -max(f.get('seq', 0) for f in kv[1]))]
 
 
-def search(facts, project='', text='', history=False):
-    """memory_search: facts of a project (any of its names, given as resolved) whose text has
-    every word; current ones unless history."""
+KEY_ORDER = ('decision', 'date', 'owner', 'status', 'other')
+
+
+def key_facts(rows, count=3):
+    """The few facts of a week's project worth reading first when there is no AI brief:
+    current ones (not replaced later the same week), decisions and dates before progress,
+    newest first; ids."""
+    current = [f for f in rows if f['state'] == 'current']
+    rank = lambda f: KEY_ORDER.index(f['type']) if f['type'] in KEY_ORDER else len(KEY_ORDER)
+    return [f['id'] for f in sorted(current, key=rank)[:count]]  # sorted is stable: rows are newest first.
+
+
+def search(facts, project='', text='', history=False, projects=()):
+    """memory_search: facts of a project (as resolved; a project with its systems) whose text
+    has every word; current ones unless history."""
     words = [norm(w) for w in (text or '').split() if norm(w)]
+    names = family(project, projects) if project else None
     rows = [f for f in facts.values() if f['state'] != 'wrong' and (history or f['state'] == 'current')
-            and (not project or f['project'] == project) and all(w in norm(f['text']) + norm(f['project']) for w in words)]
+            and (names is None or f['project'] in names) and all(w in norm(f['text']) + norm(f['project']) for w in words)]
     return sorted(rows, key=lambda f: (f.get('date') or '', f.get('seq', 0)), reverse=True)

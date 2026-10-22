@@ -8,6 +8,7 @@ import unittest
 import zipfile
 from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from coremail_desktop.errors import AppError
 from coremail_desktop.tasks import transfer, xlsx
@@ -546,6 +547,30 @@ class CommandTests(unittest.TestCase):
         records = next(t for t in material['active'] if t['id'] == 302)['records']
         self.assertEqual([r['text'] for r in records], ['改由 LDAP 插件对接'])
 
+    def test_an_earlier_wrong_step_can_be_undone(self):
+        center = self.backend.tasks
+        center._ctx.extra = {'mails': [{'mid': 'wrong1', 'subject': 'LDAP 插件', 'date': '2026-10-20 09:00'}]}
+        try:
+            center.progress(302, center.get(302)['rev'], 'LDAP 插件任务已建', fields={'next': '开发插件'})
+        finally:
+            center._ctx.extra = None
+        wrong = center.get(302)['events'][0]['seq']
+        center.progress(302, center.get(302)['rev'], '客户已排期', latest=False)
+        center.update(302, center.get(302)['rev'], {'next': '复测'})
+        self.assertIn(wrong, self.backend.task_story(302)['undoable'])
+        self.backend.task_undo(wrong)
+        detail = self.backend.task_get(302)
+        self.assertEqual(detail['task']['next'], '复测')  # Changed again since: kept.
+        self.assertNotIn('LDAP', detail['task']['latest'])
+        self.assertEqual(detail['links'], [])
+        self.assertTrue(detail['task']['history'].endswith('撤销记录进展：LDAP 插件任务已建（邮件：LDAP 插件，10-20）'))
+        story = self.backend.task_story(302)
+        self.assertFalse(any('LDAP' in s['text'] or '撤销' in s['text'] for s in story['steps']))
+        self.assertIn('客户已排期', [s['text'] for s in story['steps']])
+        self.assertNotIn(wrong, story['undoable'])
+        with self.assertRaises(AppError):
+            self.backend.task_undo(wrong)
+
     def test_a_question_becomes_a_list_filter(self):
         self.reply = {'reply': '有 1 条受阻', 'questions': [], 'actions': [],
                       'show': {'view': 'bogus', 'query': '受阻', 'ids': [302, 'x', 302]}}
@@ -592,10 +617,15 @@ class CommandTests(unittest.TestCase):
         self.backend.ai_client = DemoAiClient()  # Demo mode names steps too (its prompt check follows the real prompt).
         self.assertEqual(self.backend.task_story_titles(330)['missing'], [])
 
+    def thread(self, *mids):
+        """The mails are new in #302's own conversation (自动更新 writes only those at once)."""
+        return patch.object(self.backend, '_task_new_mail', return_value={302: [{'id': m} for m in mids]})
+
     def test_new_mail_writes_progress_and_suggests_status(self):
         self.backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'demo', True)
         self.backend.open_message('demo1', mark_read=False)
-        self.reply = {'reply': '客户说已开通，建议改为待验收', 'questions': [], 'candidates': [], 'actions': [
+        self.enterContext(self.thread('demo1'))
+        self.reply = {'reply': '客户说已开通，建议改为待验收', 'questions': [], 'candidates': [], 'fit': 'yes', 'actions': [
             {'op': 'progress', 'id': 302, 'text': '客户回复网络已开通', 'fields': {'next': '复测'}},
             {'op': 'update', 'id': 302, 'fields': {'status': '待验收'}}]}
         outcome = self.backend.tasks_auto_mail(302, 'demo1')
@@ -619,8 +649,46 @@ class CommandTests(unittest.TestCase):
             {'op': 'progress', 'id': 302, 'text': '可能有进展', 'fields': {}}]}
         before = self.backend.task_get(302)['task']
         self.assertEqual(self.backend.tasks_auto_mail(302, 'demo1')['skipped'], 'unsure')
+        self.assertEqual(self.backend.task_get(302)['task'], before)  # Doubt: nothing written, a suggestion to accept.
+        self.assertEqual([p['kind'] for p in self.backend.task_story(302)['pending']], ['suggested'])
+
+    def test_auto_update_writes_only_mail_it_is_sure_belongs(self):
+        self.backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'demo', True)
+        for mid in ('demo1', 'demo2', 'demo3'):
+            self.backend.open_message(mid, mark_read=False)
+        before = self.backend.task_get(302)['task']
+        action = {'op': 'progress', 'id': 302, 'text': 'LDAP 插件任务已建', 'fields': {}}
+        self.reply = {'reply': '另一件事', 'questions': [], 'candidates': [], 'fit': 'no', 'actions': [action]}
+        self.assertEqual(self.backend.tasks_auto_mail(302, 'demo1')['skipped'], 'unrelated')
+        self.assertIn('"fit"', '\n'.join(m['content'] for m in self.seen[-1]))
+        self.reply = {'reply': '', 'questions': [], 'candidates': [], 'fit': 'unsure', 'actions': [action]}
+        self.assertEqual(self.backend.tasks_auto_mail(302, 'demo2')['suggested'], [302])
+        self.reply = {'reply': '', 'questions': [], 'candidates': [], 'fit': 'yes', 'actions': [action]}
+        with patch.object(self.backend, '_task_new_mail', return_value={}):  # A 理解层 guess, not the task's conversation.
+            self.assertEqual(self.backend.tasks_auto_mail(302, 'demo3')['suggested'], [302])
         self.assertEqual(self.backend.task_get(302)['task'], before)
-        self.assertEqual(self.backend.task_story(302)['pending'], [])
+        self.assertEqual(len(self.backend.task_story(302)['pending']), 2)
+
+    def test_a_busy_thread_is_read_together_as_one_progress(self):
+        self.backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'demo', True)
+        for mid in ('demo1', 'demo2'):
+            self.backend.open_message(mid, mark_read=False)
+        self.enterContext(self.thread('demo1', 'demo2', 'demo3'))
+        center = self.backend.tasks
+        center.progress(302, center.get(302)['rev'], 'TCP 通，PRELOGIN 超时', date='2026-10-19')
+        self.reply = {'reply': '合并两封回复', 'questions': [], 'candidates': [], 'fit': 'yes', 'actions': [
+            {'op': 'progress', 'id': 302, 'text': '客户称网络已就绪，待连通性测试', 'fields': {}}]}
+        events = len(self.backend.task_get(302)['events'])
+        self.assertEqual(self.backend.tasks_auto_mail(302, ['demo1', 'demo2'])['applied'], [302])
+        self.assertEqual(len(self.seen), 1)  # One AI call for the thread, both mails in it.
+        prompt = '\n'.join(m['content'] for m in self.seen[0])
+        self.assertEqual(prompt.count('\n邮件 '), 2)
+        self.assertIn('PRELOGIN 超时', prompt)  # The task's recent history, to leave out what is known.
+        self.assertEqual(len(self.backend.task_get(302)['events']), events + 1)
+        self.assertEqual(self.backend.tasks_auto_mail(302, ['demo2', 'demo1'])['skipped'], 'seen')
+        self.reply = {'reply': '没有新进展', 'questions': [], 'candidates': [], 'actions': []}
+        self.backend.open_message('demo3', mark_read=False)
+        self.assertEqual(self.backend.tasks_auto_mail(302, 'demo3')['skipped'], 'nothing')
 
     def test_weekly_report_uses_the_week_and_escapes_the_model(self):
         center = self.backend.tasks

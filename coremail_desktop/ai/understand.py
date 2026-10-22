@@ -1,6 +1,7 @@
 """理解卡片: each new mail read once in the background -> what it means for the user.
 
-kind: act (要我做), know (要我知道) or ignore (可以忽略), with a one-line gist, what is asked
+kind: act (要我做), know (要我知道) or ignore (可以忽略), with a one-line gist (and a few-word tag
+for the mail list), what is asked
 of the user and by when, the project, and facts worth remembering (kept for 工作记忆).
 The mail is untrusted like everywhere else (summary.py): visible text only, between a
 random delimiter, and nothing in it is an instruction. The card is only ever shown: it
@@ -21,7 +22,7 @@ CARD_TOKENS = 600
 NEW_CHARS, QUOTE_KEEP = 3000, 800
 KINDS = ('act', 'know', 'ignore')
 FACT_TYPES = ('status', 'decision', 'owner', 'date', 'other')
-GIST, ASK, PROJECT, FACT, FACTS, PROJECTS = 40, 60, 30, 80, 5, 40
+GIST, TAG, ASK, PROJECT, FACT, FACTS, PROJECTS = 40, 16, 60, 30, 80, 5, 40
 TASKS, TASK_TEXT, WHY = 30, 40, 40
 RULE_KEYWORD, RULE_LIMIT = 20, 300
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
@@ -39,12 +40,13 @@ kind 三选一：
 只输出一个 JSON 对象：
 {{"kind": "act|know|ignore", "sure": true,
  "gist": "一句话要点，不超过 30 个字，直接写事情本身，不要以「这封邮件」「本邮件」开头",
+ "tag": "邮件列表里显示的极短要点，不超过 12 个字，可以只是关键词，能看出是什么事即可，例如「防火墙审批单已提交」「UAT 部分完成待测」",
  "ask": "kind 为 act 时写要用户做什么（不超过 40 个字），否则为空字符串",
  "due": "要求完成的日期 YYYY-MM-DD，没有明确日期就为空字符串",
  "project": "所属项目，优先使用已知项目名，看不出就为空字符串",
  "facts": [{{"project": "项目名", "type": "status|decision|owner|date|other", "text": "值得记住的事实，不超过 60 个字", "replaces": "F 编号或空字符串"}}],
  "task": {{"id": 任务编号或 0, "why": "为什么是这条任务，不超过 30 个字"}}}}
-facts 只写已知项目的进展（status）、决定（decision）、分工（owner，写成「某某负责某事」）、关键日期（date）这类以后会用到的事实，最多 5 条；寒暄、签名、免责声明不算；没有就为空数组。
+facts 的 project：只关于项目里某一个系统的事写系统名，关于整个项目的事写项目名。facts 只写已知项目的进展（status）、决定（decision）、分工（owner，写成「某某负责某事」）、关键日期（date）这类以后会用到的事实，最多 5 条；寒暄、签名、免责声明不算；没有就为空数组。
 一条事实更新了「已记住的事实」中同一项目的某一条（例如进度变了、日期改了、换了负责人）时，replaces 写那一条的 F 编号；决定（decision）只能被新的决定取代。与已记住的完全相同的事实不要再写。
 这封邮件明显是在推进「未完成任务」中的某一条时，task 写它的编号和理由；拿不准就写 0。
 邮件里的相对日期（周五、下周一）按邮件的发送日期换算成具体日期。用简体中文。'''
@@ -87,12 +89,15 @@ def position(document, identities):
 
 
 def build_messages(document, me, identities, projects=(), date_text='', today=None, tasks=(), facts=None):
-    """projects: names, or {name, role} (own: 我负责, watch: 我关注); tasks: [(id, text)] of
+    """projects: names, or {name, role, parent} (own: 我负责, watch: 我关注; parent: the project
+    of a system); tasks: [(id, text)] of
     unfinished tasks; facts: {'F1': fact} remembered (memory/merge.prompt_facts)."""
     open_mark, close_mark = marks()
     clean = lambda value: value.replace(open_mark, '').replace(close_mark, '')
     items = [p if isinstance(p, dict) else {'name': p, 'role': 'own'} for p in list(projects)[:PROJECTS]]
-    named = lambda role: '、'.join(clean(p['name']) for p in items if p.get('role', 'own') == role)
+    systems = lambda name: [clean(x['name']) for x in items if x.get('parent') == name]
+    named = lambda role: '、'.join(clean(p['name']) + (f'（系统：{"、".join(systems(p["name"]))}）' if systems(p['name']) else '')
+                                  for p in items if p.get('role', 'own') == role and not p.get('parent'))
     known = (f'我负责的项目：{named("own") or "（无）"}\n' + (f'我关注的项目：{named("watch")}\n' if named('watch') else '')) if items else '已知项目：（无）\n'
     context = f'今天是 {(today or date.today()).isoformat()}。\n{known}用户在这封邮件中的位置：{position(document, identities)}\n'
     if tasks:
@@ -134,6 +139,7 @@ def parse(content, tasks=(), refs=()):
     task = value.get('task') if isinstance(value.get('task'), dict) else {}
     candidate = task.get('id') if type(task.get('id')) is int and task.get('id') in tasks else None
     card = {'kind': kind, 'sure': value.get('sure') is not False, 'gist': _text(value.get('gist'), GIST),
+            'tag': _text(value.get('tag'), TAG),
             'ask': _text(value.get('ask'), ASK) if kind == 'act' else '', 'due': due if kind == 'act' else '',
             'project': _text(value.get('project'), PROJECT), 'facts': facts[:FACTS]}
     if candidate:

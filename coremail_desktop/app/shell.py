@@ -92,7 +92,7 @@ BACKEND_METHODS = {
     'understandView': 'understand_view', 'understandCorrect': 'understand_correct', 'understandSetDone': 'understand_set_done', 'understandRules': 'understand_rules',
     'understandAddRule': 'understand_add_rule', 'understandDeleteRule': 'understand_delete_rule', 'understandClear': 'understand_clear',
     'memoryProjects': 'memory_projects', 'memoryProject': 'memory_project', 'memoryFacts': 'memory_facts', 'memoryRecent': 'memory_recent',
-    'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryPerson': 'memory_person', 'followups': 'followups',
+    'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryWeekBrief': 'memory_week_brief', 'memoryPerson': 'memory_person', 'followups': 'followups',
     'followupDismiss': 'followup_dismiss', 'tasksGantt': 'tasks_gantt',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
@@ -105,7 +105,8 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
                 'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
-              'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread', 'understandMail', 'assistantDraftWrite'}
+              'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
+              'memoryWeekBrief'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
 STREAM_METHODS = {'rewrite', 'draftReply', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.

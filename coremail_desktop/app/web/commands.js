@@ -109,9 +109,10 @@ if (typeof document !== 'undefined') {
     add('命令', 'template', '从模板新建', () => newFromTemplate(), ['模板', '用模板写信']);
     add('命令', 'refresh', '收信', () => $('#btn-refresh').click(), ['刷新', '同步', '收邮件'], 'F5');
     add('命令', 'filter', '高级搜索', () => SF.open(), ['筛选', '条件搜索', '搜索条件']);
-    if (!S.local) {
+    if (!S.local || S.local.startsWith('u-')) {
       add('命令', 'mail', '只看未读', () => $('#filter-seg [data-filter="unread"]').click(), ['未读']);
       add('命令', 'star', '只看星标', () => $('#filter-seg [data-filter="flagged"]').click(), ['星标']);
+      if (typeof ucViewsHere === 'function') for (const [kind, name, icon, words] of ucViewsHere()) add('命令', icon, `只看${name}`, () => ucOpen(kind), words);
       add('命令', 'inbox', '显示全部邮件', () => $('#filter-seg [data-filter="all"]').click(), ['全部', '取消筛选']);
       add('命令', 'thread', '按会话分组（开 / 关）', () => $('#btn-threads').click(), ['会话', '会话分组', '线索']);
       const f = folderById(S.folderId);

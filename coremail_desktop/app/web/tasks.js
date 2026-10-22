@@ -179,7 +179,7 @@ function storyHtml(story) {
           ${(s.mails || []).length ? `<div class="tk-mailrefs">${s.mails.map((m) => `<button class="tk-mailref" data-open="${esc(m.mid)}" title="打开邮件"><i data-icon="mail"></i>${esc(m.subject || '（无主题）')}<span>${esc(String(m.date || '').slice(5, 16))}</span></button>`).join('')}</div>` : ''}
           ${s.changes && Object.keys(s.changes).length ? changeRows(s.changes) : ''}
         </div>
-        ${story.undo && s.seq === story.undo ? `<div class="row-gap tk-step-undo"><button class="link-btn" data-undo="${s.seq}" title="恢复到这次修改之前，时间线上记一条撤销">撤销这次修改</button></div>` : ''}
+        ${(story.undoable || []).includes(s.seq) ? `<div class="row-gap tk-step-undo"><button class="link-btn" data-undo="${s.seq}" title="这一步记错了（例如 AI 把别的任务的邮件记到这里）：撤销它，变更记录里记一条撤销">撤销这一步</button></div>` : ''}
       </div></div>`).join('')}</div>`;
 }
 async function nameSteps(id, asked) {
@@ -235,9 +235,7 @@ function taskTimeline(d) {
   return items.map((i) => i.html).join('') || '<p class="muted">没有记录。</p>';
 }
 function eventHtml(e) {
-  const d = TK.detail;
-  const latest = d.events.find((x) => x.review === 'confirmed' && x.changes && Object.keys(x.changes).length);
-  const undoable = latest && latest.seq === e.seq && !['created', 'undone', 'imported'].includes(e.kind);
+  const undoable = (TK.detail.undoable || []).includes(e.seq);
   const when = e.at ? new Date(e.at * 1000).toLocaleString('zh-CN', { hour12: false }) : '';
   const state = e.review === 'pending' ? '<span class="tk-pending">待确认</span>' : e.review === 'rejected' ? '<span class="tk-tbd">已驳回</span>'
     : e.review === 'accepted' ? '<span class="tk-tbd">已采纳</span>' : '';
@@ -247,7 +245,7 @@ function eventHtml(e) {
   const note = e.kind === 'imported' ? `从 ${esc(e.note)} 导入` : e.note ? `${e.kind === 'canceled' ? '原因' : e.kind === 'linked' || e.kind === 'unlinked' ? '邮件' : '依据'}：${esc(e.note)}` : '';
   const actions = e.review === 'pending' ? `<div class="row-gap"><button class="btn sm" data-accept="${e.seq}">采纳</button><button class="btn ghost sm" data-reject="${e.seq}">驳回</button></div>` : '';
   return `<div class="tk-event"><div class="tk-ev-head"><b>${TK_KIND[e.kind] || esc(e.kind)}</b>${who}<span>${esc(e.date || '')}</span>${state}<span class="spacer"></span>
-    ${undoable ? `<button class="link-btn" data-undo="${e.seq}">撤销这次修改</button>` : ''}<span class="muted small">${esc(when)}</span></div>
+    ${undoable ? `<button class="link-btn" data-undo="${e.seq}">撤销这一步</button>` : ''}<span class="muted small">${esc(when)}</span></div>
     ${basis}${mails ? `<div class="tk-mailrefs">${mails}</div>` : ''}${note ? `<div class="tk-ev-note">${note}</div>` : ''}${changeRows(e.changes)}${actions}</div>`;
 }
 
@@ -333,7 +331,7 @@ $('#tk-detail').addEventListener('click', async (e) => {
   const use = e.target.closest('[data-use]'); if (use) { mailToTask([use.dataset.use], { target: TK.detail.task.id }); return; }
   const undo = e.target.closest('[data-undo]');
   if (undo) {
-    if (!(await confirmDialog('撤销这次修改', '把这条任务恢复到这次修改之前的样子。进展原文里保留原来的记录并注明已撤销，变更记录里记一条撤销；演进图里不再显示这一步。', '撤销'))) return;
+    if (!(await confirmDialog('撤销这一步', '把这一步改过的内容恢复原样（之后又被改过的字段保留新的值），并取消这一步带来的邮件关联。进展原文里保留原来的记录并注明已撤销，变更记录里记一条撤销；演进图里不再显示这一步。', '撤销'))) return;
     runChange(() => api('taskUndo', { seq: Number(undo.dataset.undo) }));
     return;
   }
@@ -1063,7 +1061,8 @@ $('#tasks-restore').onclick = async () => {
 
 // ---------------------------------------------------------------- 自动更新（新邮件）
 // New mail in the conversation of an unfinished task: its body is downloaded (not marked read),
-// then the AI reads it. Progress is written at once; status changes wait as suggestions.
+// then the AI reads it. Progress it is sure belongs to the task is written at once; doubt and
+// status changes wait as suggestions; mail about another matter is left alone.
 // Only after the user agreed to AI in the task center; nothing runs when the AI is not set up.
 let tkAutoBusy = false;
 async function autoMail() {
@@ -1075,17 +1074,17 @@ async function autoMail() {
   try {
     const ai = await api('aiSettings').catch(() => null);
     if (!ai || !ai.ready) return;
-    for (const item of await api('tasksNewMail')) {
-      await api('openMessage', { mid: item.mid, mark_read: false }).catch(() => {});
+    for (const item of await api('tasksNewMail')) {  // One item per task: its new mails are read together.
+      for (const mid of item.mids) await api('openMessage', { mid, mark_read: false }).catch(() => {});
       try {
-        const r = await api('tasksAutoMail', { task: item.task, mid: item.mid });
+        const r = await api('tasksAutoMail', { task: item.task, mids: item.mids });
         applied.push(...r.applied); suggested.push(...r.suggested);
       } catch (e) { break; }  // AI unavailable: the next round tries again.
     }
   } catch (e) { /* the next round tries again */ } finally { tkAutoBusy = false; }
   if (!applied.length && !suggested.length) return;
   const ids = [...new Set([...applied, ...suggested])];
-  toast(`根据新邮件：${applied.length ? `已更新 ${[...new Set(applied)].map((i) => '#' + i).join('、')} 的进展` : ''}${applied.length && suggested.length ? '；' : ''}${suggested.length ? `${suggested.length} 条状态修改待你确认` : ''}`,
+  toast(`根据新邮件：${applied.length ? `已更新 ${[...new Set(applied)].map((i) => '#' + i).join('、')} 的进展` : ''}${applied.length && suggested.length ? '；' : ''}${suggested.length ? `${suggested.length} 条修改待你确认` : ''}`,
     { ms: 10000, action: { label: '查看', run: () => { clearTaskFilter(); TK.view = 'all'; TK.selected = ids[0]; TK.tab = 'story'; openTasks(); } } });
   loadMailIndex();
   if (S.local === 'tasks') loadTasks(); else api('tasksStatus').then((st) => { TK.status = st; TK.counts = st.counts; renderTasksNav(); }).catch(() => {});

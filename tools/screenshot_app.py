@@ -258,8 +258,8 @@ STEPS += [
     (9000, "document.body.offsetWidth", 'uc-list'),
     (500, "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'act' && (UC.cards.get(r.id) || {}).due).id)", 'uc-reader-act'),
     (500, "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'know').id)", 'uc-reader-know'),
-    (500, "showUnderstand('act')", 'uc-act'),
-    (500, "showUnderstand('know')", 'uc-know'),
+    (500, "ucOpen('act')", 'uc-act'),
+    (500, "ucOpen('know')", 'uc-know'),
     (500, "selectFolder('1')", None),
     (900, "const r = $$('#mail-list .row')[1].getBoundingClientRect(); showMenu(r.left + 80, r.top + 20, UC.menu(rowOf($$('#mail-list .row')[1].dataset.id)))", 'uc-menu'),
     (500, "hideMenu(); ucRuleDialog({ sender: 'rd@example.invalid', subject: '研发周报 · 第 42 周' }, 'know')", 'uc-rule'),
@@ -288,20 +288,22 @@ def m2_setup():
     from tests.test_tasks import book, task_row
     folder = Path(shot_dir) / '任务'
     folder.mkdir(exist_ok=True)
-    rows = [task_row(401, '进行中', system='NG BI', content='NG BI 部署上线', start='2026-10-08', due='2026-11-06'),
-            task_row(402, '进行中', system='NG BI', content='服务器到货与上架', start='2026-10-10', due='2026-10-20', blockers='上级 #401'),
-            task_row(403, '受阻', system='NG BI', content='安装与接口联调', start='2026-10-21', due='2026-10-30', blockers='上级 #401；依赖 #402'),
-            task_row(404, '未开始', system='NG BI', content='用户培训', due='2026-11-04', blockers='上级 #401；依赖 #403'),
+    rows = [task_row(401, '进行中', system='B/OSS', content='NG BOSS 部署上线', start='2026-10-08', due='2026-11-06'),
+            task_row(402, '进行中', system='BI', content='服务器到货与上架', start='2026-10-10', due='2026-10-20', blockers='上级 #401'),
+            task_row(403, '受阻', system='BI', content='安装与接口联调', start='2026-10-21', due='2026-10-30', blockers='上级 #401；依赖 #402'),
+            task_row(404, '未开始', system='BI', content='用户培训', due='2026-11-04', blockers='上级 #401；依赖 #403'),
             task_row(405, '进行中', system='CRM', content='CRM 接口对接', start='2026-10-01', due='2026-10-27')]
     (folder / '未完成任务.xlsx').write_bytes(book({'未完成任务': rows}))
-    (folder / '已完成任务.xlsx').write_bytes(book({'已完成任务': [task_row(390, '已完成', system='NG BI', content='需求调研', start='2026-09-20', end='2026-10-05', blockers='上级 #401')],
+    (folder / '已完成任务.xlsx').write_bytes(book({'已完成任务': [task_row(390, '已完成', system='BI', content='需求调研', start='2026-09-20', end='2026-10-05', blockers='上级 #401')],
                                                 '已取消任务': []}))
     backend.tasks_set_folder(str(folder))
     backend.tasks_import('trial')
     backend.ai_client = DemoAiClient()
     backend.set_prefs({'undoSeconds': 0})
     backend.set_understand('on')
-    backend.memory_project('演示项目', role='own')
+    backend.memory_project('B/OSS', rename='NG BOSS')
+    backend.memory_project('BI', parent='NG BOSS')
+    backend.memory_project('CRM', parent='NG BOSS')
     backend.messages('3', 0, 50)
     sent = next(r for r in backend.cache.matching(lambda r: r['fid'] == '3'))
     backend.cache.update(sent['id'], ts=time.time() - 5 * 86400, subject='请确认接口文档 v2 的字段', to='"李华" <lihua@example.invalid>', preview='请在周五前确认')
@@ -315,8 +317,9 @@ STEPS += [
     (12000, "UC.cards.clear(); memReset(); renderList()", None),
     (1500, KNOW_MAIL, 'm2-reader'),
     (900, "memTimeline(UC.cards.get(S.message.id).project)", 'm2-timeline'),
-    (500, "$('#prompt [data-close]').click(); MEM.weekOpen = true; MEM.week = 1; showUnderstand('know')", 'm3-week'),
-    (900, "showUnderstand('wait')", None),
+    (500, "$('#prompt [data-close]').click(); MEM.weekOpen = true; MEM.week = 1; ucOpen('know')", None),
+    (1500, "document.body.offsetWidth", 'm3-week'),  # The AI brief of the week arrives after the facts.
+    (900, "ucOpen('wait')", None),
     (900, "selectMessage(S.rows[0].id)", 'm3-wait'),
     (500, "selectFolder('1')", None),
     (1200, KNOW_MAIL, None),
