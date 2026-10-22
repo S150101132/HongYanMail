@@ -41,7 +41,8 @@ powershell -File packaging\build.ps1                            # package + chec
 - Probe any new server API read-only first and save the shape to `analysis/`. Verified API facts live in the release notes; do not trust `docs/research/06-待验证问题.md` "unverified" labels without checking them.
 - Encryption: colleagues (account's own domain) encrypted by default, external recipients off by default; never downgrade to plaintext silently.
 - Errors cross to the UI only as fixed codes (`ui/messages.py`); never echo server or exception text.
-- Match the existing compact code style. Commit only when asked; never push.
+- Development order: always take the next item from the 「开发顺序」 table in `docs/roadmap/待实现功能.md` (top-most 待开发 with its dependencies done) and update its status as you go. A new request or a change of priority is recorded by editing that table and its 调整记录 — never keep a separate order.
+- Match the existing compact code style. Commit and push only when asked (remote: `origin` → github.com/S150101132/HongYanMail).
 
 ## Machine limits (this PC)
 

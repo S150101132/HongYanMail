@@ -14,6 +14,7 @@ const SF = {
     const p = $('#search-panel');
     const f = this.f;
     $$('#sp-scope button').forEach((b) => b.classList.toggle('on', b.dataset.scope === (f.scope || 'all')));
+    $('#sp-subject').checked = f.scope === 'subject'; $('#sp-quick-sel').value = '';  // 精简 (A4): the same choices, folded.
     $('#sp-from').value = f.from || ''; $('#sp-to').value = f.to || '';
     $('#sp-since').value = f.since || ''; $('#sp-until').value = f.until || '';
     $('#sp-folder').innerHTML = '<option value="">所有文件夹</option>' + S.folders.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
@@ -67,6 +68,8 @@ $$('#sp-quick button').forEach((b) => (b.onclick = () => {
   const d = new Date(); d.setDate(d.getDate() - Number(b.dataset.days) + 1);
   $('#sp-since').value = isoDay(d); $('#sp-until').value = '';
 }));
+$('#sp-subject').onchange = (e) => $(`#sp-scope [data-scope="${e.target.checked ? 'subject' : 'all'}"]`).click();
+$('#sp-quick-sel').onchange = (e) => { const b = $(`#sp-quick [data-days="${e.target.value}"]`); if (b) b.click(); };
 $('#sp-clear').onclick = () => { SF.set({}); SF.open(); };
 function applyPanel() {
   const values = SF.collect();
@@ -317,6 +320,7 @@ function personPopover(anchor, person) {
     $('[data-pp="write"]', pop).onclick = () => { closePersonPop(); writeTo(p); };
     $('[data-pp="mails"]', pop).onclick = () => { closePersonPop(); mailsWith(p); };
     place();
+    if (details !== undefined && window.personExtra) window.personExtra(pop, p).then(() => pop.isConnected && place());  // 人物卡片 (memory.js)
   };
   const place = () => {
     const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;

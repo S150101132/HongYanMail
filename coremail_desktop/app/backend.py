@@ -28,8 +28,11 @@ from coremail_desktop.mime.parser import parse_mime
 DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify': True,
                  'density': 'comfortable', 'markReadOnOpen': True, 'readingPane': 'right', 'threads': False,
                  'autostart': False, 'precheck': True, 'sidebarWidth': 232, 'listWidth': 400, 'undoSeconds': 10,
-                 'ctTreeWidth': 250, 'ctListWidth': 340, 'tkListWidth': 460, 'tagsOpen': False,
+                 'ctTreeWidth': 250, 'ctListWidth': 340, 'tkListWidth': 460, 'tagsOpen': False, 'sidebarHidden': False,
                  'closeAction': '',  # ✕ of the main window: '' asks, 'tray' keeps running, 'quit' exits.
+                 'understand': '',  # 理解层: '' not asked yet, 'on', 'off'.
+                 'listGist': True,  # The list's second line shows the card's 要点 instead of the body's start.
+                 'toolbar': 'lean',  # A4: 'lean' folds low-use buttons into ⋯ / 格式 / the send menu; 'full' shows them all.
                  'hiddenFolders': []}  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
 CLOSE_ACTIONS = ('', 'tray', 'quit')
 UNDO_CHOICES = (0, 5, 10, 20, 30)  # 撤销发送 delay in seconds; 0 sends at once.
@@ -219,6 +222,30 @@ def _summary_dict(item):
             'scheduleAt': _schedule_ms(getattr(item, 'schedule_at', None)), 'tags': list(getattr(item, 'tags', ()) or ())}
 
 
+# 理解层: which mail is read, how far back and how much per round (design 4.2 / 4.4).
+UNDERSTAND_SKIP = ('sent', 'drafts', 'trash', 'spam', 'virus')
+UNDERSTAND_DAYS, UNDERSTAND_ROUND = 30, 10
+# 催办 (M3): sent mail that asked something of its To recipients and got no reply.
+FOLLOWUP_DAYS, FOLLOWUP_KEEP = 3, 500
+ASKING = re.compile(r'[?？]|请|麻烦|能否|是否|可否|确认|please|could you|can you|kindly|let me know|advise', re.I)
+
+
+def _fact_view(fact):
+    """A memory fact for the page: its sources without message ids."""
+    return {'id': fact['id'], 'project': fact['project'], 'type': fact['type'], 'text': fact['text'], 'date': fact.get('date') or '',
+            'state': fact['state'], 'actor': fact.get('actor') or 'ai', 'was': fact.get('was', ''),
+            'sources': [{'mid': s.get('mid', ''), 'subject': s.get('subject', ''), 'date': s.get('date', ''), 'from': s.get('from', ''),
+                         'internal': bool(s.get('internal'))} for s in fact.get('sources') or ()]}
+
+
+def _card_view(card):
+    """What the page sees of a card (its facts go to 工作记忆 and are shown from there)."""
+    return {'kind': card.get('kind'), 'sure': bool(card.get('sure')), 'gist': card.get('gist') or '', 'ask': card.get('ask') or '',
+            'due': card.get('due') or '', 'project': card.get('project') or '', 'done': bool(card.get('done')),
+            'actor': card.get('actor') or 'ai', 'rule': bool(card.get('rule')), 'model': card.get('model') or '', 'at': card.get('at') or '',
+            'task': (card.get('task') or {}).get('id') or 0, 'why': (card.get('task') or {}).get('why') or ''}
+
+
 # Conversations: messages whose subjects match once reply/forward prefixes are gone.
 # The page groups its list with the same rule (threadKey in app.js).
 SUBJECT_PREFIX = re.compile(r'^\s*(?:re|fwd?|fw|回复|转发|答复)\s*(?:\[\d+\])?\s*[:：]\s*', re.I)
@@ -353,10 +380,13 @@ class MailBackend:
         self._archive_scan = None  # {'done', 'total'} while a scan runs.
         self._archive_key = ''
         self.tasks = None  # 任务中心 (tasks/center.py), opened on first use.
+        self.memory = None  # 理解层 (memory/store.py): cards and correction rules of this account.
+        self._understand_failed = {}  # mid -> code: mail the 理解层 could not read this session (not retried).
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
         self._ai_lock = threading.Lock()
         self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
         self._chats = {}  # 问邮箱 conversations, in memory only: id -> {'tools', 'turns', 'shown'}.
+        self._plans = {}  # 助理 plans waiting for 执行, in memory only: id -> {'kind', 'actions', 'chat', ...}.
         self._ai_cancel = threading.Event()  # Streamed AI text: set by the page's 停止.
 
     # Accounts --------------------------------------------------------------
@@ -418,9 +448,12 @@ class MailBackend:
             self.cache.close()
         if self.archive:
             self.archive.close()
-        self.cache = self.account = self.archive = None
+        if self.memory:
+            self.memory.close()
+        self.cache = self.account = self.archive = self.memory = None
         self._shared = {}
         self._chats.clear()
+        self._plans.clear()
         return True
 
     def _open_account(self, server, username, online=True):
@@ -433,6 +466,14 @@ class MailBackend:
                 self.archive.close()
             self.archive = None
             self._archive_key = account_key
+            if self.memory:
+                self.memory.close()
+            from coremail_desktop.memory.store import MemoryStore
+            try:
+                self.memory = MemoryStore(self.data_dir / 'cache' / (account_key + '.memory.db'), self.protector)
+            except AppError:
+                self.memory = None  # The 理解层 is optional; mail works without it.
+            self._understand_failed = {}
         self.account = username
         self.services = self._services_factory(self.adapter, self.data_dir, prepare_encrypted=self._prepare_encrypted)
         self._auto_unlock_certificate()
@@ -495,6 +536,10 @@ class MailBackend:
         _check_signature(prefs['signature'])
         if prefs['closeAction'] not in CLOSE_ACTIONS:
             prefs['closeAction'] = ''
+        if prefs['understand'] not in ('', 'on', 'off'):
+            prefs['understand'] = ''
+        if prefs['toolbar'] not in ('lean', 'full'):
+            prefs['toolbar'] = 'lean'
         if prefs['undoSeconds'] not in UNDO_CHOICES:
             prefs['undoSeconds'] = DEFAULT_PREFS['undoSeconds']
         for key, (low, high) in WIDTH_LIMITS.items():
@@ -712,6 +757,7 @@ class MailBackend:
                   'replyTo': _people(header('reply-to')), 'date': summary.get('date') or header('date'),
                   'html': body_html, 'text': document.text, 'hasRemoteImages': remote,
                   'encryption': document.encryption_state, 'signature': self._signature_view(document),
+                  'aiAllowed': document.encryption_state == 'decrypted' and self._encrypted_ok(mid),
                   'flags': summary.get('flags', {}),
                   'scheduled': bool(summary.get('flags', {}).get('scheduleDelivery')), 'scheduleAt': summary.get('scheduleAt'),
                   'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
@@ -2297,9 +2343,10 @@ class MailBackend:
             usage = {}
         return {'baseUrl': record.get('baseUrl') or DEFAULT_BASE_URL, 'model': record.get('model') or DEFAULT_MODEL,
                 'hasKey': bool(record.get('key')), 'ready': bool(record.get('key')) or self.ai_client is not None,
-                'demo': self.ai_client is not None, 'usage': {'tokens': usage.get('tokens', 0), 'calls': usage.get('calls', 0)}}
+                'demo': self.ai_client is not None, 'usage': {'tokens': usage.get('tokens', 0), 'calls': usage.get('calls', 0)},
+                'actions': record.get('actions') is not False}
 
-    def set_ai_settings(self, base_url=None, model=None, key=None, clear_key=False):
+    def set_ai_settings(self, base_url=None, model=None, key=None, clear_key=False, actions=None):
         from coremail_desktop.ai.client import check_base_url, check_key, check_model
         with self._ai_lock:
             record = self._ai_record()
@@ -2311,6 +2358,8 @@ class MailBackend:
                 record['key'] = ''
             elif key:
                 record['key'] = check_key(key)
+            if isinstance(actions, bool):
+                record['actions'] = actions
             self._save_ai(record)
         return self.ai_settings()
 
@@ -2351,7 +2400,7 @@ class MailBackend:
     def summarize(self, mid, allow_encrypted=False, refresh=False):
         """「总结这封」. Decrypted mail goes to the AI service only when the user agreed
         for this message (allow_encrypted), and its summary is never kept."""
-        from coremail_desktop.ai.summary import SUMMARY_TOKENS, build_messages, parse_summary
+        from coremail_desktop.ai.summary import SUMMARY_TOKENS, SUMMARY_VERSION, build_messages, parse_summary
         mid = str(mid)
         if self.cache is None:
             raise AppError('NOT_AUTHENTICATED')
@@ -2359,12 +2408,14 @@ class MailBackend:
         model = getattr(client, 'model', '')
         document, encrypted = self._ai_document(mid, allow_encrypted)
         saved = self.cache.get('aiSummaries') or {}
-        if not encrypted and not refresh and mid in saved:
+        if (not encrypted or self._encrypted_ok(mid)) and not refresh and saved.get(mid, {}).get('v') == SUMMARY_VERSION:
             return {**saved[mid], 'cached': True}
         summary = self.cache.summary(mid) or {}
-        content, _ = self._ai_call(build_messages(document, summary.get('date') or ''), max_tokens=SUMMARY_TOKENS, json_mode=True)
-        result = {**parse_summary(content), 'model': model, 'at': datetime.now().strftime('%Y-%m-%d %H:%M'), 'encrypted': encrypted}
-        if not encrypted:
+        messages = build_messages(document, summary.get('date') or '', self.display_name, [self.account or '', *self.identities])
+        content, _ = self._ai_call(messages, max_tokens=SUMMARY_TOKENS, json_mode=True)
+        result = {**parse_summary(content), 'model': model, 'at': datetime.now().strftime('%Y-%m-%d %H:%M'), 'encrypted': encrypted,
+                  'v': SUMMARY_VERSION}
+        if not encrypted or self._encrypted_ok(mid):  # Allowed once for all: kept like the decrypted body cache.
             saved.pop(mid, None)
             saved[mid] = result
             self.cache.set('aiSummaries', dict(list(saved.items())[-300:]))
@@ -2372,16 +2423,61 @@ class MailBackend:
 
     def _ai_document(self, mid, allow_encrypted):
         """The mail for an AI call -> (document, encrypted). Decrypted mail only when the
-        user agreed for this message; never downloads (the AI thread only reads)."""
+        user agreed for this message or once for all (ai_encrypted); never downloads (the
+        AI thread only reads)."""
         if not self._local_only(mid) and mid not in self._docs and self.cache.get_body(mid) is None:
             raise AppError('AI_MAIL_UNAVAILABLE')  # Opening the mail downloads it; this thread never does.
         document = self._document(mid)
         if document.encryption_state == 'locked':
             raise AppError('CERT_LOCKED')
         encrypted = document.encryption_state == 'decrypted'
-        if encrypted and not allow_encrypted:
+        if encrypted and not allow_encrypted and not self._encrypted_ok(mid):
             raise AppError('AI_ENCRYPTED_CONFIRM')
         return document, encrypted
+
+    # 加密邮件与 AI: the company sets no limit (user, 2026-10-21), so one setting replaces
+    # asking for every mail. Excluded folders and senders are still asked for each time.
+    def ai_encrypted(self):
+        value = (self.cache.get('aiEncrypted') if self.cache else None) or {}
+        return {'allow': bool(value.get('allow')), 'folders': list(value.get('folders') or []), 'senders': list(value.get('senders') or [])}
+
+    def set_ai_encrypted(self, allow=None, folders=None, senders=None):
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        setting = self.ai_encrypted()
+        if allow is not None:
+            setting['allow'] = bool(allow)
+        if folders is not None:
+            if not isinstance(folders, list) or len(folders) > 100 or not all(isinstance(f, str) and 0 < len(f) <= 200 for f in folders):
+                raise AppError('UNDERSTAND_INVALID')
+            setting['folders'] = list(dict.fromkeys(folders))
+        if senders is not None:
+            if not isinstance(senders, list) or len(senders) > 200 or not all(isinstance(s, str) for s in senders):
+                raise AppError('UNDERSTAND_INVALID')
+            clean = [s.strip().casefold() for s in senders if s.strip()]
+            if not all(len(s) <= 200 and re.match(r'^(?:[^\s@]+@|@)[^\s@]+$', s) for s in clean):
+                raise AppError('UNDERSTAND_INVALID')
+            setting['senders'] = list(dict.fromkeys(clean))
+        self.cache.set('aiEncrypted', setting)
+        return setting
+
+    def _encrypted_ok(self, mid):
+        """Encrypted mail may go to the AI service without asking: allowed, and neither its
+        folder (or a parent) nor its sender (address or @domain) is excluded."""
+        setting = self.ai_encrypted()
+        if not setting['allow']:
+            return False
+        row = (self.cache.summary(mid) if self.cache else None) or self._archive_summary(mid) or {}
+        parents = {f['id']: f.get('parent') for f in self._folders or (self.cache.get('folders') if self.cache else None) or []}
+        excluded, fid = set(setting['folders']), row.get('fid')
+        for _ in range(MAX_FOLDER_DEPTH + 1):
+            if not fid:
+                break
+            if fid in excluded:
+                return False
+            fid = parents.get(fid)
+        sender = (row.get('fromEmail') or parseaddr(row.get('from') or '')[1]).casefold()
+        return not any(sender == s or (s.startswith('@') and sender.endswith(s)) for s in setting['senders'])
 
     def _ai_stream(self, messages, progress, req, max_tokens):
         """A streamed call: text goes to progress({'req', 'delta'}) at most every 80 ms;
@@ -2478,7 +2574,8 @@ class MailBackend:
         rows, left_out = pick(rows)
         ids = [r['id'] for r in rows]
         missing = [m for m in ids if not self._local_only(m) and m not in self._docs and self.cache.get_body(m) is None]
-        encrypted = sum(1 for m in ids if m not in missing and self._document(m).encryption_state in ('decrypted', 'locked'))
+        state = lambda m: self._document(m).encryption_state
+        encrypted = sum(1 for m in ids if m not in missing and (state(m) == 'locked' or state(m) == 'decrypted' and not self._encrypted_ok(m)))
         return {'ids': ids, 'missing': missing, 'encrypted': encrypted, 'leftOut': left_out}
 
     def summarize_thread(self, mid, allow_encrypted=False, refresh=False):
@@ -2528,15 +2625,17 @@ class MailBackend:
     # can say "第二封"; the page only holds its id. Closing the app forgets it.
     CHATS = 3  # Conversations kept; the oldest goes first.
 
-    def ask_mailbox(self, question, allow=(), progress=None, chat='', current='', redo=False):
+    def ask_mailbox(self, question, allow=(), progress=None, chat='', current='', redo=False, current_task=0):
         """allow: ids of encrypted mail the user agreed, for this question, to send.
         chat: the conversation to continue ('' starts one); current: the mail open in
-        the reader; redo: answer the last question again (it replaces that turn)."""
+        the reader; current_task: the task selected in 任务 (0: none); redo: answer the
+        last question again (it replaces that turn)."""
         from coremail_desktop.ai.agent import ANSWER_TOKENS, ask
-        from coremail_desktop.ai.tools import MailboxTools
+        from coremail_desktop.ai.tools import AssistantTools
         question = question.strip() if isinstance(question, str) else ''
         if not question or len(question) > 500 or not isinstance(allow, (list, tuple)) or len(allow) > 20 \
-                or not isinstance(chat, str) or len(chat) > 40 or not isinstance(current, str) or len(current) > 200:
+                or not isinstance(chat, str) or len(chat) > 40 or not isinstance(current, str) or len(current) > 200 \
+                or type(current_task) is not int or not 0 <= current_task < 100000:
             raise AppError('INVALID_QUESTION')
         if self.cache is None:
             raise AppError('NOT_AUTHENTICATED')
@@ -2545,20 +2644,33 @@ class MailBackend:
         state = self._chats.get(chat) if chat else None
         restarted = bool(chat) and state is None
         if state is None:
-            known = self._folders or self.cache.get('folders') or []
-            roles = {f.get('role'): f['id'] for f in known if f.get('role') in ('inbox', 'sent')}
-            folders = {**roles, 'names': {f['id']: f['name'] for f in known}}
-            tools = MailboxTools(self._ask_search, self._document, self._ask_match, folders,
-                                 archive=self._ask_archive if self._archive_folder() else None)
+            tools = AssistantTools(self._ask_search, self._document, self._ask_match, {},  # Folders: below, each question.
+                                   archive=self._ask_archive if self._archive_folder() else None, auto_allow=self._encrypted_ok,
+                                   tasks=self._assist_tasks, task=self._assist_task, mine=self._assist_mine,
+                                   pending=self._assist_pending if self._understand_on() else None, plan=self._assist_preview,
+                                   thread=self._assist_thread, groups=self._assist_groups,
+                                   memory=self._memory_search if self._understand_on() else None,
+                                   followups=self.followups if self._understand_on() else None)
             chat, state = uuid.uuid4().hex[:16], {'tools': tools, 'turns': [], 'shown': []}
             while len(self._chats) >= self.CHATS:
                 self._chats.pop(next(iter(self._chats)))
             self._chats[chat] = state
         tools = state['tools']
         tools.begin({str(m) for m in allow})
+        tools.allow_actions(self._ai_record().get('actions') is not False)  # 设置 → 允许 AI 提议邮件操作 (A3), on by default.
+        known = self._folders or self.cache.get('folders') or []  # Folders made since the conversation began count too.
+        tools.folders.update(names={f['id']: f['name'] for f in known}, targets=[{'id': f['id'], 'name': f['name'], 'role': f.get('role')} for f in known],
+                             **{f['role']: f['id'] for f in known if f.get('role') in ('inbox', 'sent', 'trash')})
         turns = state['turns'][:-1] if redo else state['turns']
         row = self.cache.summary(current) if current else None
         here = tools.add(row) if row else None
+        task_here = None
+        if current_task:
+            try:
+                task_here = tools.add_task(self._assist_task(current_task)['task'])
+            except AppError as error:
+                if error.code != 'TASK_NOT_FOUND':
+                    raise
 
         def call(messages, specs):
             tokens = 0
@@ -2568,15 +2680,360 @@ class MailBackend:
             finally:
                 self._count_ai(tokens)
         result = ask(question, call, tools, progress or (lambda step: None), self._ask_cancel.is_set,
-                     today=datetime.now().strftime('%Y-%m-%d'), history=turns, known=state['shown'], current=here)
+                     today=datetime.now().strftime('%Y-%m-%d'), history=turns, known=state['shown'], current=here,
+                     current_task=task_here)
         state['turns'] = turns + [(question, result['answer'])]
-        refs = [s['ref'] for s in result['sources']]
+        refs = [s['ref'] for s in result['sources']] + [t['ref'] for t in result['tasks']]
         state['shown'] = ([r for r in state['shown'] if r not in refs] + refs)[-60:]
+        result['plans'] = [self._keep_plan(p, chat, question, len(state['turns'])) for p in result.get('plans', [])]
         return {**result, 'model': getattr(client, 'model', ''), 'chat': chat, 'turn': len(state['turns']), 'restarted': restarted}
+
+    # 助理 plans (W2): a proposal is kept here and runs only when the page sends its id back
+    # (执行). A newer plan of the same conversation for the same task replaces an older one.
+    PLAN_TTL = 30 * 60
+    PLANS = 20
+
+    def _keep_plan(self, plan, chat, question, turn):
+        """-> what the page sees of a plan: its id and preview (task operations) or the
+        draft's view (names and domains, never addresses)."""
+        now = time.monotonic()
+        kind = plan.get('kind', 'tasks')
+        ids = {a.get('id') for a in plan['actions'] if a.get('id')} if kind == 'tasks' else set()
+        for key, old in list(self._plans.items()):
+            if now - old['at'] > self.PLAN_TTL or old['chat'] == chat and old['ids'] & ids:
+                self._plans.pop(key)
+        while len(self._plans) >= self.PLANS:
+            self._plans.pop(next(iter(self._plans)))
+        key = uuid.uuid4().hex[:16]
+        self._plans[key] = {**plan, 'kind': kind, 'ids': ids, 'chat': chat, 'turn': turn, 'basis': question, 'at': now}
+        if kind == 'draft':
+            return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'], 'draft': self._draft_view(plan)}
+        if kind == 'link':
+            return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'],
+                    'link': {'task': plan['task'], 'mails': [{k: m[k] for k in ('mid', 'subject', 'fromName', 'date')} for m in plan['mails']]}}
+        if kind == 'mail':
+            return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'], 'basis': question[:200],
+                    'mail': {'op': plan['op'], 'what': plan['what'], 'count': len(plan['mids']), 'folder': plan['folderName'],
+                             'samples': plan['samples'], 'skipped': plan['skipped'], 'local': plan['local']}}
+        return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'], 'preview': plan['preview']}
+
+    def _chat_note(self, entry, note):
+        """The conversation learns what the user did with a plan of its turn."""
+        state = self._chats.get(entry['chat'])
+        if state and 0 < entry['turn'] <= len(state['turns']):
+            asked, answered = state['turns'][entry['turn'] - 1]
+            state['turns'][entry['turn'] - 1] = (asked, answered + note)
+
+    def _plan_entry(self, plan, kind):
+        entry = self._plans.get(plan) if isinstance(plan, str) else None
+        if entry is None or entry['kind'] != kind or time.monotonic() - entry['at'] > self.PLAN_TTL:
+            raise AppError('AI_PLAN_EXPIRED')
+        return entry
+
+    def assistant_plan_run(self, plan):
+        """执行 on a plan card: its operations through run_plan, as the task center's command
+        box does; the conversation learns it ran, so a follow-up does not propose it again."""
+        entry = self._plan_entry(plan, 'tasks')
+        self._plans.pop(plan)
+        result = self._tasks().run_plan(entry['actions'], entry['basis'])
+        done = '、'.join(f'#{d["id"]}' for d in result['done']) or '无'
+        self._chat_note(entry, f'\n（用户已确认执行计划 {entry["ref"]}：成功 {len(result["done"])} 项（{done}），失败 {len(result["failed"])} 项。）')
+        # 提醒回信 (W4): which done operations may deserve a reply; the page asks assistant_nudge.
+        actions = {a.get('id'): a for a in entry['actions']}
+        told = [(d['id'], what) for d in result['done'] if (what := self._nudge_what(actions.get(d['id'], d)))]
+        result['nudge'] = ''
+        if told:
+            result['nudge'] = uuid.uuid4().hex[:16]
+            self._plans[result['nudge']] = {'kind': 'nudge', 'ids': set(), 'chat': entry['chat'], 'turn': entry['turn'],
+                                            'ref': entry['ref'], 'basis': entry['basis'], 'told': dict(told), 'at': time.monotonic()}
+        return self._unblocked(result, [d['id'] for d in result['done']])
+
+    # 操作类工具 (A3): a mail plan runs through the list's batch methods (set_flags, move,
+    # delete); what each mail was before is kept for 撤销, once, for as long as a plan lives.
+    def assistant_mail_run(self, plan):
+        from coremail_desktop.ai.tools import MAIL_PLAN_LIMIT
+        entry = self._plan_entry(plan, 'mail')
+        if len(entry['mids']) > MAIL_PLAN_LIMIT:
+            raise AppError('AI_PLAN_TOO_LARGE')
+        self._plans.pop(plan)
+        mids, op = list(entry['mids']), entry['op']
+        before = {m: self.cache.summary(m) or {} for m in mids}
+        if op in ('read', 'unread'):
+            result = self.set_flags(mids, read=op == 'read')
+        elif op in ('flag', 'unflag'):
+            result = self.set_flags(mids, flagged=op == 'flag')
+        elif op == 'move':
+            result = self.move(mids, entry['folder'])
+        else:
+            result = self.delete(mids)
+        done = result['done']
+        self._chat_note(entry, f'\n（用户已执行计划 {entry["ref"]}：{entry["what"]} {len(done)} 封' +
+                        (f'，{len(result["failed"])} 封未完成' if result['failed'] else '') + '。）')
+        undo = ''
+        if done:
+            undo = uuid.uuid4().hex[:16]
+            key = 'flagged' if op in ('flag', 'unflag') else 'read'
+            was = {m: (str(before[m].get('fid') or '') if op in ('move', 'trash') else (before[m].get('flags') or {}).get(key)) for m in done}
+            self._plans[undo] = {'kind': 'undo', 'ids': set(), 'chat': entry['chat'], 'turn': entry['turn'], 'ref': entry['ref'],
+                                 'op': op, 'was': was, 'at': time.monotonic()}
+        return {'done': done, 'failed': result['failed'], 'folders': result['folders'], 'shared': result['shared'], 'undo': undo}
+
+    def assistant_mail_undo(self, undo):
+        """撤销: each mail back where it was (folder) or as it was (read, star); once."""
+        entry = self._plan_entry(undo, 'undo')
+        self._plans.pop(undo)
+        groups = {}
+        for mid, was in entry['was'].items():
+            if was is not None and was != '':
+                groups.setdefault(was, []).append(mid)
+        done, failed, result = [], [], {'folders': self._folders, 'shared': list(self._shared.values())}
+        for was, mids in groups.items():
+            if entry['op'] in ('move', 'trash'):
+                result = self.move(mids, was)
+            else:
+                result = self.set_flags(mids, **{'flagged' if entry['op'] in ('flag', 'unflag') else 'read': bool(was)})
+            done += result['done']
+            failed += result['failed']
+        self._chat_note(entry, f'\n（用户已撤销计划 {entry["ref"]}：{len(done)} 封已恢复。）')
+        return {'done': done, 'failed': failed, 'folders': result['folders'], 'shared': result['shared']}
+
+    # 提醒回信 (W4, 4.4): after a confirmed plan completes a task, changes its status or adds
+    # progress, one line asks whether to tell the other side — decided here, without the AI:
+    # the task's conversation ends with someone else's mail the user has not answered. 「不用」
+    # (or a reply sent from a draft card) holds until that conversation's last mail changes.
+    @staticmethod
+    def _nudge_what(action):
+        """-> (what to tell, the points) for a done operation, or None."""
+        op, fields = action.get('op'), action.get('fields') or {}
+        status = f'状态已改为「{fields["status"]}」' if fields.get('status') else ''
+        if op == 'complete':
+            return '已完成', [action['note']] if action.get('note') else []
+        if op == 'cancel':
+            return '已取消', [action['reason']] if action.get('reason') else []
+        if op == 'reopen':
+            return '已重新打开', [action['reason']] if action.get('reason') else []
+        if op == 'progress':
+            return status or '最新进展', [p for p in (action.get('text'), fields.get('blockers')) if p]
+        if op == 'update' and status:
+            return status, [fields['blockers']] if fields.get('blockers') else []
+        return None
+
+    def assistant_nudge(self, nudge):
+        """-> {'text', 'plan'} (a draft plan replying to the conversation's last mail) for the
+        first task of a run whose conversation waits on the user, or None. Asked once."""
+        entry = self._plan_entry(nudge, 'nudge')
+        self._plans.pop(nudge)
+        for task_id, (what, points) in entry['told'].items():
+            try:
+                rows = self._assist_thread(task_id)['rows']
+            except AppError:
+                continue
+            last = rows[-1] if rows else None
+            if not last or last['mine'] or self._tasks().store.get(f'assist_nudge:{int(task_id)}', '') == last['id']:
+                continue
+            state = self._chats.get(entry['chat'])
+            mref = state['tools'].add(last) if state else ''
+            sender = last.get('fromEmail') or parseaddr(last.get('from') or '')[1]
+            name = last.get('fromName') or parseaddr(last.get('from') or '')[0] or sender.partition('@')[0] or '对方'
+            people = sorted({p['email'].casefold() for r in rows for p in r['people']})
+            plan = {'ref': entry['ref'] + '·回信', 'kind': 'draft', 'summary': f'回复《{last.get("subject") or "（无主题）"}》', 'actions': [],
+                    'reply': True, 'mid': last['id'], 'mode': 'reply', 'group': '', 'task': task_id, 'people': people, 'nudge': True,
+                    'subject': last.get('subject') or '', 'purpose': f'告知{what}', 'points': [str(p)[:120] for p in points][:8],
+                    'mail': {'ref': mref, 'subject': last.get('subject') or '（无主题）', 'fromName': name,
+                             'domain': sender.rpartition('@')[2], 'date': str(last.get('date') or '')[:16]}}
+            self._chat_note(entry, f'\n（助理提醒：#{task_id} 的会话最后一封是{name}发的，用户还没回；已提议回一封告知{what}。）')
+            return {'text': f'最后一封是{name} {str(last.get("date") or "")[5:10]} 发的，你还没回。要回一封告诉对方{what}吗？',
+                    'task': task_id, 'plan': self._keep_plan(plan, entry['chat'], entry['basis'], entry['turn'])}
+        return None
+
+    def assistant_nudge_dismiss(self, plan):
+        """「不用」 on a reminder: not again for this task until its conversation's last mail changes."""
+        entry = self._plan_entry(plan, 'draft')
+        if not entry.get('nudge'):
+            raise AppError('AI_PLAN_EXPIRED')
+        self._plans.pop(plan)
+        self._tasks().store.set(f'assist_nudge:{int(entry["task"])}', entry['mid'])  # Only the mail's id.
+        return True
+
+    def assistant_link_run(self, plan, picks):
+        """关联 on a candidates card (W4): the picked mails linked to the task by hand's path."""
+        entry = self._plan_entry(plan, 'link')
+        if not isinstance(picks, list) or not picks or any(type(i) is not int or not 0 <= i < len(entry['mails']) for i in picks):
+            raise AppError('AI_INVALID_INPUT')
+        self._plans.pop(plan)
+        for i in dict.fromkeys(picks):
+            self.task_link(entry['task'], entry['mails'][i]['mid'])
+        refs = '、'.join(entry['mails'][i]['ref'] for i in dict.fromkeys(picks))
+        self._chat_note(entry, f'\n（用户已关联 {refs} 到任务 #{entry["task"]}。）')
+        return {'task': entry['task'], 'linked': len(set(picks))}
+
+    # 助理·起草 (W3): the task's conversation, recipient groups ranked by overlap with it,
+    # and a draft plan the page turns into a composer. The AI writes only the body; the
+    # recipients come from the ordinary reply, a group or contacts the tools returned.
+    def _assist_thread(self, task_id):
+        """The conversations of the task's linked mail, oldest first; each row with
+        'mine' (the user sent it) and 'people' (everyone on it but the user)."""
+        own = {a.casefold() for a in [self.account or '', *self.identities] if a}
+        rows = {}
+        for link in self._tasks().get(task_id)['links']:
+            mid = str(link.get('mid') or '')
+            if not mid or not self.cache.summary(mid):
+                continue
+            try:
+                found = self.thread(mid)['rows']
+            except AppError:
+                found = [self.cache.summary(mid)]
+            rows.update((r['id'], r) for r in found)
+        out = []
+        for r in sorted(rows.values(), key=lambda r: r.get('ts') or 0):
+            to = r.get('to')
+            to = ', '.join(map(str, to)) if isinstance(to, (list, tuple)) else str(to or '')
+            sender = (r.get('fromEmail') or parseaddr(r.get('from') or '')[1]).casefold()
+            people = [{'name': n.strip().strip('"\'') or a.partition('@')[0], 'email': a}
+                      for n, a in getaddresses([str(r.get('from') or ''), to]) if '@' in a and a.casefold() not in own]
+            out.append({**r, 'mine': sender in own, 'people': people})
+        return {'rows': out, 'internal': set(self.internal_domains())}
+
+    def _assist_groups(self, addresses=()):
+        """Recipient groups without addresses: name, size, 主送/抄送, domains, how many are
+        outside the company and how many are on the conversation; most overlap first."""
+        internal, near = set(self.internal_domains()), {a.casefold() for a in addresses}
+        out = []
+        for g in self.cache.get('recipient_groups', []):
+            emails = [m['email'].casefold() for m in g['members']]
+            out.append({'id': g['id'], 'name': g['name'], 'count': len(emails), 'to': sum(m['field'] == 'to' for m in g['members']),
+                        'cc': sum(m['field'] == 'cc' for m in g['members']),
+                        'domains': sorted({e.rpartition('@')[2] for e in emails})[:5],
+                        'external': sum(e.rpartition('@')[2] not in internal for e in emails), 'overlap': len(near & set(emails))})
+        return sorted(out, key=lambda g: (-g['overlap'], g['name'].casefold()))
+
+    def _remembered_group(self, task_id):
+        try:
+            return self._tasks().store.get(f'assist_group:{int(task_id)}', '') if task_id else ''
+        except AppError:
+            return ''
+
+    def _draft_view(self, plan):
+        internal = set(self.internal_domains())
+        groups = self._assist_groups(plan.get('people', ()))
+        known = {g['id'] for g in groups}
+        default = next((g for g in (plan.get('group'), self._remembered_group(plan.get('task'))) if g in known), '')
+        view = {'reply': plan['reply'], 'subject': plan['subject'], 'purpose': plan['purpose'], 'points': plan['points'],
+                'task': plan.get('task') or 0, 'group': default, 'groups': groups[:50], 'scheduleAt': plan.get('scheduleAt')}
+        if plan['reply']:
+            view.update(mail=plan['mail'], mode=plan['mode'])
+        else:
+            view['contacts'] = [{'name': c['name'], 'domain': c['email'].rpartition('@')[2],
+                                 'external': c['email'].rpartition('@')[2].casefold() not in internal} for c in plan['contacts']]
+        return view
+
+    def assistant_draft_compose(self, plan, target='reply', keep_sender=False, contacts=None):
+        """起草 on a draft card -> a composer value. target: 'reply' / 'reply_all' (a reply)
+        or '' (a new mail), or a group id; contacts: indexes of the plan's contacts kept
+        (new mail). With a group, 主送/抄送 are the group's (keep_sender: the original
+        sender stays in 主送); subject, quote and threading stay the reply's."""
+        entry = self._plan_entry(plan, 'draft')
+        groups = {g['id'] for g in self.cache.get('recipient_groups', [])}
+        group = target if isinstance(target, str) and target in groups else ''
+        if not group and target not in (('reply', 'reply_all') if entry['reply'] else ('',)):
+            raise AppError('GROUP_NOT_FOUND')
+        if entry['reply']:
+            value = self.compose('reply_all' if target == 'reply_all' else 'reply', entry['mid'])
+            if group:
+                lists = self.apply_recipient_groups([group], to=value['to'][:1] if keep_sender is True else [], cc=[])
+                value.update(to=lists['to'], cc=lists['cc'])
+        else:
+            if contacts is None:
+                contacts = list(range(len(entry['contacts'])))
+            if not isinstance(contacts, list) or any(type(i) is not int or not 0 <= i < len(entry['contacts']) for i in contacts):
+                raise AppError('AI_INVALID_INPUT')
+            named = lambda c: f'"{c["name"]}" <{c["email"]}>' if c['name'] else c['email']
+            value = {**self.compose('new'), 'to': [named(entry['contacts'][i]) for i in dict.fromkeys(contacts)], 'subject': entry['subject']}
+            if group:
+                lists = self.apply_recipient_groups([group], to=value['to'], cc=[])
+                value.update(to=lists['to'], cc=lists['cc'])
+        if entry.get('task') and (group or entry['reply']):
+            try:
+                self._tasks().store.set(f'assist_group:{int(entry["task"])}', group)  # Only the group's id.
+            except AppError:
+                pass
+        entry['sentTo'] = [parseaddr(a)[0] or parseaddr(a)[1].partition('@')[0] for a in value['to']][:3]
+        if entry.get('scheduleAt'):  # 定时 on the draft only (A3): the user still presses 发送.
+            value['scheduleAt'] = entry['scheduleAt']
+        return {**value, 'assist': True}
+
+    def assistant_draft_write(self, plan, points=None, allow_encrypted=False, req='', progress=None):
+        """The body of a draft plan, streamed: a reply to its mail, or a new mail from the
+        task. points: the card's edited points (else the plan's)."""
+        from coremail_desktop.ai.writing import WRITE_TOKENS, clean_points, draft_messages, new_messages, tidy_draft
+        entry = self._plan_entry(plan, 'draft')
+        points = clean_points(points) if points is not None else entry['points']
+        self._ai()
+        if entry['reply']:
+            document, _ = self._ai_document(entry['mid'], allow_encrypted)
+            messages = draft_messages(document, entry['purpose'], '', (self.cache.summary(entry['mid']) or {}).get('date') or '', points)
+        else:
+            task = self._tasks().store.tasks.get(entry.get('task')) if entry.get('task') else None
+            from coremail_desktop.tasks.center import _shown
+            fields = {k: str(_shown(task[k]))[:600] for k in ('system', 'content', 'latest', 'next') if task and task.get(k)}
+            messages = new_messages(entry['purpose'], points, [c['name'] for c in entry['contacts']], fields)
+        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
+
+    def assistant_sent(self, plan):
+        """A drafted mail went out (sent or queued): a progress line proposed for its task,
+        as a plan to confirm (Q5: never written by itself). None without a task."""
+        from coremail_desktop.tasks.assistant import check_actions
+        entry = self._plan_entry(plan, 'draft')
+        if entry.get('sent') or not entry.get('task'):
+            return None
+        entry['sent'] = True
+        self._chat_note(entry, f'\n（用户已发出按计划 {entry["ref"]} 起草的邮件。）')
+        if entry['reply']:  # Answered: no reminder about that mail (the sent copy may not be listed yet).
+            self._tasks().store.set(f'assist_nudge:{int(entry["task"])}', entry['mid'])
+        names = '、'.join(n for n in entry.get('sentTo') or [] if n) or '对方'
+        text = f'已发邮件给{names}：{entry["purpose"]}。' if entry['purpose'] else f'已发邮件给{names}。'
+        actions = check_actions([{'op': 'progress', 'id': int(entry['task']), 'text': text}])
+        return self._keep_plan({'ref': entry['ref'] + '′', 'summary': '记一条进展', 'actions': actions,
+                                'preview': self._assist_preview(actions)}, entry['chat'], entry['basis'], 0)
+
+    def _assist_preview(self, actions):
+        """plan_tasks: each operation checked like the task center's preview, nothing written."""
+        from coremail_desktop.ui.messages import user_message
+        preview = self._tasks().preview(actions)
+        for item in preview:
+            if item.get('error'):
+                item['message'] = user_message(item['error'])
+        return preview
 
     def cancel_ask(self):
         self._ask_cancel.set()
         return True
+
+    # 个人工作助理 (W1): what the conversation may read of the task center and 待我处理.
+    def _assist_tasks(self, view, query):
+        from coremail_desktop.tasks.center import _shown
+        from coremail_desktop.tasks.rules import FIELDS
+        center = self._tasks()
+        return [{**{f: _shown(center.store.tasks[r['id']][f]) for f in FIELDS}, 'overdue': r['overdue']}
+                for r in center.overview(view, query)['rows']]
+
+    def _assist_task(self, task_id):
+        d = self._tasks().get(task_id)
+        for link in d['links']:
+            link['row'] = self.cache.summary(str(link['mid'])) if link.get('mid') else None
+        return d
+
+    def _assist_mine(self, task):
+        """需要我做 (Q1): no owner, the default owner (the user), or the user's name in it."""
+        from coremail_desktop.tasks.rules import OWNER_DEFAULT
+        owner = str(task.get('owner') or '').strip()
+        names = [n for n in (self.display_name, (self.account or '').partition('@')[0]) if n]
+        return not owner or OWNER_DEFAULT in owner or any(n.casefold() in owner.casefold() for n in names)
+
+    def _assist_pending(self):
+        """待我处理, without the mail already linked to a task."""
+        linked = {str(link.get('mid')) for link in self._tasks().store.links() if link.get('mid')}
+        return [r for r in self.understand_view('act')['rows'] if str(r['id']) not in linked]
 
     def _ask_search(self, pattern, offset, limit, filters):
         found = self._online(self.adapter.search_messages, pattern, offset, limit, filters=filters, snippet=True)
@@ -2700,8 +3157,29 @@ class MailBackend:
         return result
 
     def task_get(self, id):
-        result = self._tasks().get(id)
+        from coremail_desktop.tasks import plan
+        center = self._tasks()
+        result = center.get(id)
         result['newMails'] = self._task_new_mail().get(result['task']['id'], [])
+        result['relations'] = plan.view(center.store.tasks, result['task']['id'])
+        return result
+
+    def tasks_gantt(self, view='open', query=''):
+        """甘特图 (P1) of the tasks in the list (same view and words as tasks_overview)."""
+        from coremail_desktop.tasks import plan
+        center = self._tasks()
+        ids = {r['id'] for r in center.overview(view, query)['rows']}
+        return plan.gantt(center.store.tasks, center.today(), ids)
+
+    def _unblocked(self, result, ids):
+        """前置任务完成 (P1): the 受阻 tasks now free to go on, for the page to offer."""
+        from coremail_desktop.tasks import plan
+        from coremail_desktop.tasks.rules import DONE
+        tasks = self._tasks().store.tasks
+        finished = [i for i in ids if i in tasks and tasks[i]['status'] == DONE]
+        result['unblocked'] = plan.unblocked(tasks, finished) if finished else []
+        for item in result['unblocked']:
+            item['rev'] = self._tasks().store.revs.get(item['id'])
         return result
 
     def task_undo(self, seq):
@@ -2770,7 +3248,7 @@ class MailBackend:
         document = self._document(mid)
         if document.encryption_state == 'locked':
             raise AppError('CERT_LOCKED')
-        if document.encryption_state == 'decrypted' and mid not in allow:
+        if document.encryption_state == 'decrypted' and mid not in allow and not self._encrypted_ok(mid):
             raise AppError('AI_ENCRYPTED_CONFIRM')
         header = lambda key: ', '.join(document.headers.get(key, ()))
         summary = (self.cache.summary(mid) if self.cache else None) or self._archive_summary(mid) or {}
@@ -2809,10 +3287,19 @@ class MailBackend:
         if center.status()['mode'] == 'off':
             return []
         seen = center.store.get('autoMail') or {}
-        return [{'task': task_id, 'mid': m['id'], 'subject': m['subject']}
-                for task_id, mails in self._task_new_mail().items()
-                if task_id in center.store.tasks and center.store.tasks[task_id]['status'] in OPEN_STATUSES
-                for m in mails if m['id'] not in seen][:10]
+        found = [{'task': task_id, 'mid': m['id'], 'subject': m['subject']}
+                 for task_id, mails in self._task_new_mail().items()
+                 if task_id in center.store.tasks and center.store.tasks[task_id]['status'] in OPEN_STATUSES
+                 for m in mails if m['id'] not in seen]
+        if self._understand_on():  # 任务候选 of the 理解层 (M2): one queue, each mail once.
+            linked, queued = {link['mid'] for link in center.store.links()}, {f['mid'] for f in found}
+            for mid, card in list(self.memory.cards.items()):
+                task_id = (card.get('task') or {}).get('id')
+                row = self.cache.summary(mid) if task_id else None
+                if row and mid not in seen and mid not in linked and mid not in queued and task_id in center.store.tasks \
+                        and center.store.tasks[task_id]['status'] in OPEN_STATUSES and not card.get('done'):
+                    found.append({'task': task_id, 'mid': mid, 'subject': row['subject']})
+        return found[:10]
 
     def tasks_auto_mail(self, task, mid):
         """自动更新 from one new mail of a task's conversation: progress that changes no status is
@@ -2899,7 +3386,7 @@ class MailBackend:
         return self._tasks().progress(id, rev, text, date, bool(latest), fields)
 
     def task_complete(self, id, rev, date='', note=''):
-        return self._tasks().complete(id, rev, date, note)
+        return self._unblocked(self._tasks().complete(id, rev, date, note), [int(id)])
 
     def task_cancel(self, id, rev, reason='', date=''):
         return self._tasks().cancel(id, rev, reason, date)
@@ -2973,9 +3460,435 @@ class MailBackend:
 
     def tasks_command_run(self, actions, text=''):
         from coremail_desktop.tasks import assistant
-        return self._tasks().run_plan(assistant.check_actions(actions), text)
+        result = self._tasks().run_plan(assistant.check_actions(actions), text)
+        return self._unblocked(result, [d['id'] for d in result['done']])
 
     # Background sync -------------------------------------------------------
+    # 理解层: every received mail read once in the background (ai/understand.py). The page
+    # drives it like 任务中心's 自动更新: understand_pending (fast) -> understand_fetch (mail
+    # thread, downloads without marking read) -> understand_mail (AI thread, one call each).
+    def _memory(self):
+        if self.memory is None:
+            raise AppError('MEMORY_UNAVAILABLE' if self.cache is not None else 'NOT_AUTHENTICATED')
+        return self.memory
+
+    def _understand_on(self):
+        return self.memory is not None and self.cache is not None and self.prefs()['understand'] == 'on'
+
+    def _understand_rows(self):
+        """Mail the 理解层 covers: received in the last UNDERSTAND_DAYS days, in the inbox and
+        the user's own folders (not sent, drafts, trash, spam; not shared mailboxes)."""
+        folders = self._folders or self.cache.get('folders') or []
+        roles = {f['id']: f.get('role') for f in folders}
+        cutoff = time.time() - UNDERSTAND_DAYS * 86400
+        return self.cache.matching(lambda r: not r.get('mailbox') and r['fid'] in roles and roles[r['fid']] not in UNDERSTAND_SKIP
+                                   and (r.get('ts') or 0) >= cutoff and not r['flags'].get('draft') and not r['flags'].get('scheduleDelivery'))
+
+    def understand_pending(self):
+        """The next round: {ids (newest first, at most UNDERSTAND_ROUND), missing (bodies to
+        download first), left (all not yet read)}. Encrypted mail the user has not allowed,
+        mail the user corrected and mail that failed this session are left out."""
+        from coremail_desktop.ai.understand import CARD_VERSION
+        if not self._understand_on():
+            return {'ids': [], 'missing': [], 'left': 0}
+        memory = self.memory
+        if not getattr(self, '_cards_tidied', False):
+            self._cards_tidied = True
+            memory.drop_cards(lambda mid: self.cache.summary(mid) is not None)
+
+        def todo(row):
+            card = memory.card(row['id']) or {}
+            if card.get('actor') == 'user' or card.get('done') or card.get('v') == CARD_VERSION or row['id'] in self._understand_failed:
+                return False
+            return not row['flags'].get('encrypted') or self._encrypted_ok(row['id'])
+        rows = sorted((r for r in self._understand_rows() if todo(r)), key=lambda r: r.get('ts') or 0, reverse=True)
+        ids = [r['id'] for r in rows[:UNDERSTAND_ROUND]]
+        return {'ids': ids, 'missing': [m for m in ids if self.cache.get_body(m) is None], 'left': len(rows)}
+
+    def understand_fetch(self, ids):
+        """Download the bodies of a round (mail thread; never marks read). -> how many failed."""
+        if not isinstance(ids, list) or len(ids) > UNDERSTAND_ROUND:
+            raise AppError('UNDERSTAND_INVALID')
+        failed = 0
+        for mid in ids:
+            try:
+                self._raw(str(mid))
+            except AppError as error:
+                if error.code in REAUTH_CODES + NETWORK_CODES:
+                    raise
+                self._understand_failed[str(mid)] = error.code
+                failed += 1
+        return failed
+
+    def _open_tasks(self):
+        """Unfinished tasks of the 任务中心 when it is already open (never opened for this)."""
+        if self.tasks is None:
+            return []
+        try:
+            from coremail_desktop.tasks.rules import OPEN_STATUSES
+            if self.tasks.status()['mode'] == 'off':
+                return []
+            return [t for t in self.tasks.store.tasks.values() if t.get('status') in OPEN_STATUSES]
+        except Exception:
+            return []
+
+    def _projects(self):
+        """The project list (工作记忆 5.3): projects added by hand, then the 系统 of unfinished tasks."""
+        from coremail_desktop.memory.merge import project_list
+        manual = (self.memory.get('projects') if self.memory else None) or []
+        return project_list(manual, sorted({t['system'].strip() for t in self._open_tasks() if str(t.get('system') or '').strip()}))
+
+    def understand_mail(self, mid):
+        """Read one mail and keep its card (AI thread). A matching 忽略 rule needs no AI call."""
+        from coremail_desktop.ai import understand
+        from coremail_desktop.memory import merge
+        mid = str(mid)
+        memory = self._memory()
+        refs = {}
+        row = self.cache.summary(mid) or {}
+        rule = understand.rule_for(list(memory.rules.values()), row)
+        if rule and rule['kind'] == 'ignore':
+            card = {'kind': 'ignore', 'sure': True, 'gist': '', 'ask': '', 'due': '', 'project': '', 'facts': [], 'rule': rule['id'], 'model': ''}
+        else:
+            client = self._ai()
+            try:
+                document, _ = self._ai_document(mid, False)
+            except AppError as error:
+                if error.code in ('AI_ENCRYPTED_CONFIRM', 'CERT_LOCKED', 'AI_MAIL_UNAVAILABLE'):
+                    self._understand_failed[mid] = error.code
+                raise
+            projects, tasks = self._projects(), self._open_tasks()
+            refs = merge.prompt_facts(memory.facts, projects)
+            brief = [(t['id'], ' '.join(filter(None, (t.get('system'), t.get('content'))))) for t in sorted(tasks, key=lambda t: t['id'])][-understand.TASKS:]
+            messages = understand.build_messages(document, self.display_name, [self.account or '', *self.identities], projects,
+                                                 row.get('date') or '', datetime.now().date(), tasks=brief, facts=refs)
+            content, _ = self._ai_call(messages, max_tokens=understand.CARD_TOKENS, json_mode=True)
+            try:
+                card = understand.apply_rule(understand.parse(content, {i for i, _ in brief}, refs), rule)
+            except AppError:
+                self._understand_failed[mid] = 'AI_BAD_RESPONSE'  # Not asked again this session.
+                raise
+            card['model'] = getattr(client, 'model', '')
+        card.update(v=understand.CARD_VERSION, at=datetime.now().strftime('%Y-%m-%d %H:%M'), actor='ai',
+                    messageId=(self._docs[mid].headers.get('message-id', ('',))[0].strip('<> ') if mid in self._docs else ''))
+        memory.put_card(mid, card)
+        if card.get('facts') and card['kind'] != 'ignore':
+            self._remember(mid, card, row, refs)
+        month = datetime.now().strftime('%Y-%m')
+        usage = memory.get('usage') or {}
+        memory.set('usage', {'month': month, 'mails': (usage.get('mails', 0) if usage.get('month') == month else 0) + 1})
+        return _card_view(card)
+
+    def _internal(self, address):
+        """A colleague: the account's own domain (or one of its identities')."""
+        domains = {a.rpartition('@')[2].casefold() for a in [self.account or '', *self.identities] if '@' in a}
+        return address.rpartition('@')[2].casefold() in domains if '@' in (address or '') else False
+
+    def _remember(self, mid, card, row, refs):
+        """工作记忆: the card's facts merged into the project memory (memory/merge.py)."""
+        from coremail_desktop.memory import merge
+        source = {'mid': mid, 'messageId': card.get('messageId', ''), 'subject': (row.get('subject') or '')[:120],
+                  'date': datetime.fromtimestamp(row['ts']).strftime('%Y-%m-%d') if row.get('ts') else '',
+                  'from': (row.get('fromName') or '')[:60], 'internal': self._internal(row.get('fromEmail') or '')}
+        for fact in merge.merge(self.memory.facts, card['facts'], source, refs, self._projects()):
+            self.memory.put_fact(fact)
+
+    def understand_cards(self, ids):
+        """{mid: card} for the rows on screen (fast thread); nothing while the 理解层 is off."""
+        if not isinstance(ids, list) or len(ids) > 1000:
+            raise AppError('UNDERSTAND_INVALID')
+        if not self._understand_on():
+            return {}
+        found = {}
+        for mid in ids:
+            card = self.memory.card(str(mid))
+            if card:
+                found[str(mid)] = _card_view(card)
+        return found
+
+    def understand_view(self, kind='act'):
+        """待我处理 (act: sure, not done; by due date, then newest) or 需要知道 (know: newest
+        first). Rows are the cached summaries with their card."""
+        if kind not in ('act', 'know'):
+            raise AppError('UNDERSTAND_INVALID')
+        if not self._understand_on():
+            return {'rows': [], 'total': 0}
+        rows = []
+        for row in self._understand_rows():
+            card = self.memory.card(row['id'])
+            if not card or card.get('kind') != kind or (kind == 'act' and (card.get('done') or not card.get('sure'))):
+                continue
+            rows.append({**row, 'card': _card_view(card)})
+        if kind == 'act':
+            rows.sort(key=lambda r: -(r.get('ts') or 0))
+            rows.sort(key=lambda r: r['card']['due'] or '9999')
+        else:
+            rows.sort(key=lambda r: r.get('ts') or 0, reverse=True)
+        return {'rows': rows, 'total': len(rows)}
+
+    def understand_status(self):
+        on = self._understand_on()
+        counts = {'act': 0, 'know': 0, 'wait': 0}
+        if on:
+            for row in self._understand_rows():
+                card = self.memory.card(row['id']) or {}
+                if card.get('kind') == 'act' and card.get('sure') and not card.get('done'):
+                    counts['act'] += 1
+                elif card.get('kind') == 'know' and not row['flags'].get('read'):
+                    counts['know'] += 1
+            counts['wait'] = len(self.followups())
+        usage = (self.memory.get('usage') if self.memory else None) or {}
+        month = datetime.now().strftime('%Y-%m')
+        return {'state': self.prefs()['understand'] if self.cache else '', 'available': self.memory is not None,
+                'encrypted': self.ai_encrypted(), 'counts': counts, 'rules': len(self.memory.rules) if self.memory else 0,
+                'month': usage.get('mails', 0) if usage.get('month') == month else 0, 'failed': len(self._understand_failed)}
+
+    def set_understand(self, state):
+        if state not in ('on', 'off'):
+            raise AppError('UNDERSTAND_INVALID')
+        self._memory()
+        self.set_prefs({'understand': state})
+        return self.understand_status()
+
+    def understand_correct(self, mid, kind=None, project=None, done=None):
+        """The user's own word on one card; the 理解层 never reads that mail again."""
+        from coremail_desktop.ai.understand import KINDS, PROJECT, _text
+        memory, mid = self._memory(), str(mid)
+        card = memory.card(mid)
+        if card is None:
+            raise AppError('UNDERSTAND_NOT_FOUND')
+        card = dict(card)
+        if kind is not None:
+            if kind not in KINDS:
+                raise AppError('UNDERSTAND_INVALID')
+            card.update(kind=kind, sure=True, actor='user')
+            if kind != 'act':
+                card.update(ask='', due='')
+        if project is not None:
+            if not isinstance(project, str) or len(project) > 200:
+                raise AppError('UNDERSTAND_INVALID')
+            card.update(project=_text(project, PROJECT), actor='user')
+        if done is not None:
+            card['done'] = bool(done)
+        memory.put_card(mid, card)
+        return _card_view(card)
+
+    def understand_set_done(self, ids, done=True):
+        """全部标为已处理 (and its 撤销): the 要我做 cards among ids set to done; returns the
+        ids that changed, so 撤销 puts back exactly those."""
+        if not isinstance(ids, list) or len(ids) > 1000:
+            raise AppError('UNDERSTAND_INVALID')
+        memory, changed = self._memory(), []
+        for mid in map(str, ids):
+            card = memory.card(mid)
+            if card and card.get('kind') == 'act' and bool(card.get('done')) != bool(done):
+                memory.put_card(mid, {**card, 'done': bool(done)})
+                changed.append(mid)
+        return {'changed': changed, 'status': self.understand_status()}
+
+    def understand_rules(self):
+        return sorted(self._memory().rules.values(), key=lambda r: (r['sender'], r['keyword']))
+
+    def understand_add_rule(self, sender='', keyword='', kind='know'):
+        """以后这样处理: a rule from a correction. It also applies at once to the cards it
+        matches that the user has not corrected by hand."""
+        from coremail_desktop.ai.understand import RULE_LIMIT, apply_rule, new_rule, rule_for
+        memory = self._memory()
+        rule = new_rule(sender, keyword, kind)
+        same = [r for r in memory.rules.values() if (r['sender'], r['keyword']) == (rule['sender'], rule['keyword'])]
+        if same:
+            rule['id'] = same[0]['id']
+        elif len(memory.rules) >= RULE_LIMIT:
+            raise AppError('UNDERSTAND_RULE_LIMIT')
+        memory.put_rule(rule)
+        changed = 0
+        for mid, card in list(memory.cards.items()):
+            row = self.cache.summary(mid)
+            if row and card.get('actor') != 'user' and rule_for([rule], row):
+                memory.put_card(mid, apply_rule(card, rule))
+                changed += 1
+        return {'rule': rule, 'changed': changed}
+
+    def understand_delete_rule(self, rule_id):
+        self._memory().delete_rule(str(rule_id))
+        return self.understand_rules()
+
+    def understand_clear(self):
+        """清除理解与记忆: cards, rules and counts of this account; the 理解层 stays as set."""
+        self._memory().clear()
+        self._understand_failed = {}
+        return self.understand_status()
+
+    # 工作记忆 (M2) ----------------------------------------------------------------
+    def memory_projects(self):
+        """The project list with each one's number of current facts and of facts waiting for the user."""
+        facts = self._memory().facts.values()
+        return [{**p, 'facts': sum(f['project'] == p['name'] and f['state'] == 'current' for f in facts),
+                 'pending': sum(f['project'] == p['name'] and f['state'] == 'pending' for f in facts)} for p in self._projects()]
+
+    def memory_project(self, name, role=None, aliases=None, remove=False):
+        """Add or change a project of the list (role own / watch; aliases: other names of the same
+        project, whose facts move to it), or take a hand-added one off it."""
+        from coremail_desktop.memory.merge import NAME, PROJECTS, ROLES, norm
+        memory = self._memory()
+        name = name.strip() if isinstance(name, str) else ''
+        if not name or len(name) > NAME or (role is not None and role not in ROLES) or (aliases is not None and (
+                not isinstance(aliases, list) or len(aliases) > 10 or not all(isinstance(a, str) and 0 < len(a.strip()) <= NAME for a in aliases))):
+            raise AppError('MEMORY_INVALID')
+        manual = [p for p in memory.get('projects') or [] if isinstance(p, dict) and p.get('name')]
+        found = next((p for p in manual if norm(p['name']) == norm(name)), None)
+        if remove:
+            manual = [p for p in manual if p is not found]
+        else:
+            if found is None:
+                if len(manual) >= PROJECTS:
+                    raise AppError('MEMORY_INVALID')
+                known = next((p for p in self._projects() if norm(p['name']) == norm(name)), None)
+                found = {'name': name, 'role': known['role'] if known else 'watch', 'aliases': []}
+                manual.append(found)
+            if role is not None:
+                found['role'] = role
+            if aliases is not None:
+                found['aliases'] = [a.strip() for a in aliases if norm(a) != norm(found['name'])]
+                for p in manual:
+                    if p is not found and norm(p['name']) in {norm(a) for a in found['aliases']}:
+                        manual.remove(p)  # Merged into this one.
+        memory.set('projects', manual)
+        if found and not remove:
+            names = {norm(a) for a in found['aliases']}
+            for fact in list(memory.facts.values()):
+                if norm(fact['project']) in names:
+                    memory.put_fact({**fact, 'project': found['name']})
+        return self.memory_projects()
+
+    def memory_facts(self, project):
+        """One project's memory, newest first, with what each fact replaced (the 时间线)."""
+        from coremail_desktop.memory.merge import resolve, timeline
+        name = resolve(project, self._projects()) if isinstance(project, str) else ''
+        if not name:
+            raise AppError('MEMORY_NOT_FOUND')
+        return {'project': name, 'facts': [_fact_view(f) for f in timeline(self._memory().facts, name)]}
+
+    def memory_recent(self, project):
+        """这个项目最近 (the reader's strip): the newest two current facts and how many wait."""
+        from coremail_desktop.memory.merge import resolve, search
+        if not self._understand_on() or not isinstance(project, str):
+            return {'project': '', 'facts': [], 'pending': 0}
+        name = resolve(project, self._projects())
+        facts = self.memory.facts.values()
+        return {'project': name, 'facts': [_fact_view(f) for f in search(self.memory.facts, name)[:2]] if name else [],
+                'pending': sum(f['project'] == name and f['state'] == 'pending' for f in facts) if name else 0}
+
+    def memory_correct(self, fact_id, action, text=''):
+        """这条不对 (wrong), 已过时 (stale), 改成 (edit), or accept / reject a waiting replacement."""
+        from coremail_desktop.ai.understand import FACT
+        from coremail_desktop.memory.merge import correct
+        memory = self._memory()
+        text = re.sub(r'\s+', ' ', text).strip() if isinstance(text, str) else ''
+        if action not in ('wrong', 'stale', 'edit', 'accept', 'reject') or (action == 'edit' and not 0 < len(text) <= FACT):
+            raise AppError('MEMORY_INVALID')
+        changed = correct(memory.facts, str(fact_id), action, text)
+        if changed is None:
+            raise AppError('MEMORY_NOT_FOUND')
+        for fact in changed:
+            memory.put_fact(fact)
+        return self.memory_facts(changed[0]['project'])
+
+    def _memory_search(self, project, text, history=False):
+        """问邮箱's memory_search: (project as listed or '', facts with their source mail rows)."""
+        from coremail_desktop.memory.merge import resolve, search
+        if not self._understand_on():
+            return None
+        name = resolve(project, self._projects()) if project else ''
+        if project and not name:
+            return '', []
+        rows = search(self.memory.facts, name, text, history)
+        return name, [{**_fact_view(f), 'rows': [r for r in (self.cache.summary(s['mid']) for s in f['sources'] if s.get('mid')) if r]} for f in rows]
+
+    # 每周需要知道、人物卡片、催办 (M3) -------------------------------------------------
+    def memory_week(self, offset=0):
+        """本周你需要知道的 (offset 1: last week): per project, the facts of the week."""
+        from coremail_desktop.memory.merge import week
+        from coremail_desktop.tasks.report import week_of
+        if offset not in (0, 1):
+            raise AppError('MEMORY_INVALID')
+        if not self._understand_on():
+            return {'from': '', 'to': '', 'groups': []}
+        start, end = week_of(datetime.now().date().isoformat())[offset]
+        return {'from': start, 'to': end, 'groups': [{'project': g['project'], 'facts': [_fact_view(f) for f in g['facts']]}
+                                                     for g in week(self.memory.facts, start, end)]}
+
+    def _mine(self):
+        return {a.casefold() for a in [self.account or '', *self.identities] if a}
+
+    def memory_person(self, email, name=''):
+        """人物卡片: what this person is in charge of (owner facts naming them), the latest mail
+        with them, their mail still waiting for me (待我处理) and mine waiting for them (催办)."""
+        from coremail_desktop.memory.merge import norm
+        email = email.strip().casefold() if isinstance(email, str) else ''
+        if not email or len(email) > 200 or '@' not in email or not isinstance(name, str) or len(name) > 100:
+            raise AppError('MEMORY_INVALID')
+        if not self._understand_on():
+            return {'on': False}
+        cutoff = time.time() - 90 * 86400
+        rows = self.cache.matching(lambda r: not r.get('mailbox') and (r.get('ts') or 0) >= cutoff and not r['flags'].get('draft') and (
+            (r.get('fromEmail') or '').casefold() == email or email in (r.get('to') or '').casefold()))
+        rows.sort(key=lambda r: r.get('ts') or 0, reverse=True)
+        names = {norm(n) for n in [name, *(r.get('fromName') for r in rows if (r.get('fromEmail') or '').casefold() == email)] if norm(n) and norm(n) != email}
+        names |= {norm(email.partition('@')[0])}
+        owner = [_fact_view(f) for f in self.memory.facts.values()
+                 if f['state'] == 'current' and f['type'] == 'owner' and any(n in norm(f['text']) for n in names if len(n) >= 2)]
+        light = lambda r: {'id': r['id'], 'subject': r.get('subject') or '', 'date': r.get('date') or ''}
+        waiting = []
+        for r in rows:
+            card = self.memory.card(r['id']) or {}
+            if (r.get('fromEmail') or '').casefold() == email and card.get('kind') == 'act' and card.get('sure') and not card.get('done'):
+                waiting.append({**light(r), 'ask': card.get('ask') or card.get('gist') or ''})
+        chase = [{**light(r), 'waiting': r['waiting']} for r in self.followups() if email in (r.get('to') or '').casefold()]
+        return {'on': True, 'owner': owner[:5], 'recent': [light(r) for r in rows[:5]], 'waiting': waiting[:5], 'chase': chase[:5]}
+
+    def followups(self):
+        """催办: mail I sent in the last 30 days, at least FOLLOWUP_DAYS ago, that asked
+        something (a question mark or a request word in the subject or preview) of its To
+        recipients, with no later mail from anyone else in its conversation and no later one
+        of mine. Mail the user said needs no follow-up is left out. Only cached mail counts."""
+        if not self._understand_on():
+            return []
+        folders = self._folders or self.cache.get('folders') or []
+        sent = {f['id'] for f in folders if f.get('role') == 'sent'}
+        now, mine = time.time(), self._mine()
+        cutoff, ready = now - UNDERSTAND_DAYS * 86400, now - FOLLOWUP_DAYS * 86400
+        dismissed = set(self.memory.get('followupDismissed') or [])
+        skip = {f['id'] for f in folders if f.get('role') in THREAD_SKIP}
+        mail = self.cache.matching(lambda r: not r.get('mailbox') and (r.get('ts') or 0) >= cutoff and r['fid'] not in skip
+                                   and not r['flags'].get('draft') and not r['flags'].get('scheduleDelivery'))
+        threads = {}
+        for r in mail:
+            threads.setdefault(thread_key(r.get('subject') or ''), []).append(r)
+        out = []
+        for r in mail:
+            if r['fid'] not in sent or r['ts'] > ready or r['id'] in dismissed or not ASKING.search(f"{r.get('subject') or ''} {r.get('preview') or ''}"):
+                continue
+            to = [(n, a) for n, a in getaddresses([r.get('to') or '']) if a and a.casefold() not in mine]
+            if not to:
+                continue
+            key = thread_key(r.get('subject') or '')
+            later = [x for x in threads.get(key, ()) if x['ts'] > r['ts'] and x['id'] != r['id']] if len(key) >= 4 else []
+            if any(x['fid'] in sent or (x.get('fromEmail') or '').casefold() not in mine for x in later):
+                continue  # Answered, or followed up already (the newest of mine is the one to chase).
+            out.append({**r, 'waiting': int((now - r['ts']) // 86400), 'toNames': '、'.join(n or a for n, a in to[:5])})
+        out.sort(key=lambda r: r['waiting'], reverse=True)
+        return out
+
+    def followup_dismiss(self, mid, undo=False):
+        """不用跟进 (or its 撤销) for one sent mail."""
+        if not isinstance(mid, str) or not mid or len(mid) > 200:
+            raise AppError('MEMORY_INVALID')
+        memory = self._memory()
+        kept = [m for m in memory.get('followupDismissed') or [] if m != mid]
+        memory.set('followupDismissed', kept[-FOLLOWUP_KEEP:] if undo else (kept + [mid])[-FOLLOWUP_KEEP:])
+        return len(self.followups())
+
     def poll(self):
         """Refresh folder counts and the newest inbox page; report new unread mail."""
         inbox = next((f['id'] for f in self._folders if f['role'] == 'inbox'), '1')

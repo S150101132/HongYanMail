@@ -115,6 +115,8 @@ def run_app(demo=False,minimized=False):
     sandboxed=os.environ.get('QTWEBENGINE_DISABLE_SANDBOX')!='1'
     from .app import shell  # Registers the private URL scheme before QApplication exists.
     from PySide6.QtWidgets import QApplication, QMessageBox
+    from .ui.branding import set_app_id
+    set_app_id()
     app=QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName('鸿雁'); app.setApplicationDisplayName('鸿雁 · 工作邮箱'); app.setOrganizationName('CoremailPreview')
     app.setQuitOnLastWindowClosed(False)

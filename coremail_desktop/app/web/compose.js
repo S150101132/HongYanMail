@@ -298,6 +298,35 @@ $('#cmp-table').onclick = (e) => {
   $('#menu').insertAdjacentHTML('afterbegin', '<button id="tbl-new"><i></i><span>插入新表格…</span></button><hr>');
   $('#tbl-new').onclick = () => { hideMenu(); tablePicker(b); };
 };
+// 精简工具栏 (A4): 格式 holds the formats folded off the bar; ▾ beside 发送 holds 定时发送 and
+// 模板. Each item does what its folded button does; the editor keeps its selection meanwhile.
+function formatMenu(button) {
+  const editor = $('#cmp-editor'), sel = getSelection();
+  const range = sel.rangeCount && editor.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
+  const keep = (run) => () => { editor.focus(); if (range) { sel.removeAllRanges(); sel.addRange(range); } run(); };
+  const cmd = (label, name, icon) => ({ label, icon, run: keep(() => execIn(editor, name)) });
+  const r = button.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 4, [
+    ...[['2', '小'], ['3', '正常'], ['4', '大'], ['5', '特大']].map(([v, n]) => ({ label: `字号：${n}`, run: keep(() => execIn(editor, 'fontSize', v)) })),
+    '-', cmd('下划线', 'underline'), cmd('删除线', 'strikeThrough'),
+    { label: '文字颜色…', run: keep(() => $('#fmt-color').click()) }, { label: '高亮…', run: keep(() => $('#fmt-hilite').click()) },
+    '-', cmd('减少缩进', 'outdent', 'outdent'), cmd('增加缩进', 'indent', 'indent'), cmd('分隔线', 'insertHorizontalRule'),
+    { label: '表格…', icon: 'table', run: keep(() => setTimeout(() => $('#cmp-table').onclick({ currentTarget: button }))) },
+    '-', cmd('清除格式', 'removeFormat', 'eraser'),
+  ]);
+  $$('#menu button').forEach((b) => (b.onmousedown = (e) => e.preventDefault()));
+}
+$('#cmp-format').onmousedown = (e) => e.preventDefault();
+$('#cmp-format').onclick = (e) => formatMenu(e.currentTarget);
+$('#cmp-send-more').onclick = (e) => {
+  const b = e.currentTarget, r = b.getBoundingClientRect();
+  showMenu(r.left, r.top, [
+    ...(C.draft && C.draft.scheduleAt ? [] : [{ label: '定时发送…', icon: 'clock', run: () => $('#cmp-schedule').click() }]),
+    { label: '模板…', icon: 'template', run: () => setTimeout(() => templateMenu(b)) },  // A menu of its own, after this click.
+  ]);
+  const m = $('#menu'), h = m.getBoundingClientRect().height;  // Above the button: the foot is at the window's bottom.
+  m.style.top = Math.max(8, r.top - h - 4) + 'px';
+};
 $('#cmp-editor').addEventListener('contextmenu', (e) => {
   const cell = e.target.closest && e.target.closest('td,th');
   if (!cell) return;

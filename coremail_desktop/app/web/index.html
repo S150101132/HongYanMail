@@ -33,6 +33,7 @@
   <aside class="sidebar">
     <div class="side-head">
       <span class="logo small"></span><span class="brand-name">鸿雁</span>
+      <span class="spacer"></span><button id="btn-side-hide" class="icon-btn side-toggle" title="隐藏左侧栏 (Ctrl+B)"><i data-icon="sidebar"></i></button>
     </div>
     <div class="compose-row">
       <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>
@@ -45,6 +46,9 @@
     <div class="side-section">本机</div>
     <nav class="folders">
       <a id="nav-tasks" class="folder" data-local="tasks" title="任务中心：Saudi-NG 任务清单"><i data-icon="tasks"></i><span class="fname">任务</span><span id="tasks-count" class="count"></span></a>
+      <a id="nav-u-act" class="folder hidden" data-local="u-act" title="AI 读过新邮件后，认为需要你本人做事的邮件（最近 30 天）"><i data-icon="flag"></i><span class="fname">待我处理</span><span id="u-act-count" class="count"></span></a>
+      <a id="nav-u-know" class="folder hidden" data-local="u-know" title="知会、周报、纪要等只需要知道的邮件（最近 30 天），按项目分组"><i data-icon="spark"></i><span class="fname">需要知道</span><span id="u-know-count" class="count"></span></a>
+      <a id="nav-u-wait" class="folder hidden" data-local="u-wait" title="你发出、在主送里提了问、3 天以上没人回复的邮件（最近 30 天）"><i data-icon="clock"></i><span class="fname">等对方回复</span><span id="u-wait-count" class="count"></span></a>
       <a id="nav-outbox" class="folder" data-local="outbox" title="网络不通时发送的邮件在这里等待，恢复连接后自动发出；发送结果待确认的邮件也在这里"><i data-icon="send"></i><span class="fname">发件箱</span><span id="outbox-count" class="count"></span></a>
       <a id="nav-drafts" class="folder" data-local="drafts"><i data-icon="draft"></i><span class="fname">本机草稿</span><span id="draft-count" class="count"></span></a>
       <a id="nav-archive" class="folder hidden" data-local="archive" title="官方客户端移到这台电脑上的邮件（只读）"><i data-icon="archive"></i><span class="fname">本地存档</span><span id="archive-count" class="count"></span></a>
@@ -60,6 +64,7 @@
     </div>
     <div id="split-side" class="splitter" title="拖动调整宽度，双击恢复默认"></div>
   </aside>
+  <button id="btn-side-show" class="icon-btn side-show" title="显示左侧栏 (Ctrl+B)"><i data-icon="sidebar"></i></button>
 
   <section class="list-pane">
     <header class="list-head">
@@ -70,16 +75,17 @@
         <button id="btn-ask" class="icon-btn sm" title="问邮箱：用一句话提问，AI 搜索并阅读邮件后回答"><i data-icon="spark"></i></button>
       </div>
       <div id="search-panel" class="search-panel hidden" role="dialog" aria-label="高级搜索">
-        <div class="sp-row"><label>关键词</label><div class="seg" id="sp-scope"><button data-scope="all" class="on">全文</button><button data-scope="subject">仅主题</button></div></div>
+        <div class="sp-row lean-hide"><label>关键词</label><div class="seg" id="sp-scope"><button data-scope="all" class="on">全文</button><button data-scope="subject">仅主题</button></div></div>
         <div class="sp-row"><label for="sp-from">发件人</label><input id="sp-from" type="text" placeholder="姓名或邮箱的一部分" spellcheck="false"></div>
         <div class="sp-row"><label for="sp-to">收件人</label><input id="sp-to" type="text" placeholder="姓名或邮箱的一部分" spellcheck="false"></div>
-        <div class="sp-row"><label>日期</label><div class="sp-dates"><input id="sp-since" type="date"><span class="muted">至</span><input id="sp-until" type="date"></div></div>
-        <div class="sp-row"><label></label><div class="sp-quick" id="sp-quick"><button data-days="7">近 7 天</button><button data-days="30">近 30 天</button><button data-days="90">近 3 个月</button><button data-days="365">近 1 年</button></div></div>
+        <div class="sp-row"><label>日期</label><div class="sp-dates"><input id="sp-since" type="date"><span class="muted">至</span><input id="sp-until" type="date"><select id="sp-quick-sel" class="lean-only" title="快速选择时间"><option value="">时间…</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 3 个月</option><option value="365">近 1 年</option></select></div></div>
+        <div class="sp-row lean-hide"><label></label><div class="sp-quick" id="sp-quick"><button data-days="7">近 7 天</button><button data-days="30">近 30 天</button><button data-days="90">近 3 个月</button><button data-days="365">近 1 年</button></div></div>
         <div class="sp-row"><label for="sp-folder">文件夹</label><select id="sp-folder"></select></div>
         <div class="sp-row"><label>条件</label><div class="sp-checks">
           <label class="check"><input type="checkbox" id="sp-attachment"> 有附件</label>
           <label class="check"><input type="checkbox" id="sp-unread"> 未读</label>
-          <label class="check"><input type="checkbox" id="sp-flagged"> 星标</label></div></div>
+          <label class="check"><input type="checkbox" id="sp-flagged"> 星标</label>
+          <label class="check lean-only"><input type="checkbox" id="sp-subject"> 关键词只搜主题</label></div></div>
         <p id="sp-note" class="muted small sp-note"></p>
         <div class="sp-foot"><button class="btn ghost" id="sp-clear">清除条件</button><span class="spacer"></span><button class="btn primary" id="sp-run">搜索</button></div>
       </div>
@@ -96,6 +102,7 @@
     </header>
     <div id="search-chips" class="search-chips hidden"></div>
     <div id="sync-bar" class="sync-bar hidden"></div>
+    <div id="uc-top" class="uc-top hidden"></div>
     <div id="mail-list" class="mail-list" tabindex="0" role="listbox" aria-label="邮件列表"></div>
     <div id="split-list" class="splitter" title="拖动调整宽度，双击恢复默认"></div>
   </section>
@@ -122,7 +129,9 @@
     <section class="tk-list-pane">
       <div class="list-head tk-list-head">
         <div class="list-title-row tk-title-row"><h2>任务</h2><span id="tk-sub" class="muted small"></span><span class="spacer"></span>
+          <button id="tk-gantt" class="btn ghost sm" title="甘特图：列表中有日期的任务，显示上级 / 子任务、前置关系和逾期"><i data-icon="route"></i>甘特图</button>
           <button id="tk-new" class="btn ghost sm" title="不用 AI，手动填写新建任务"><i data-icon="pen"></i>新建</button></div>
+        <div id="tk-thread" class="tk-thread hidden"></div>
         <div class="tk-ask" id="tk-ask"><i data-icon="spark"></i>
           <textarea id="tk-cmd" rows="1" spellcheck="false" placeholder="问问鸿雁，或让它更新任务…"
             title="例如：哪些任务受阻？ / 302 客户回复周四开通端口 / 333 今天完成了。只输入编号直接打开。Enter 发送，Shift+Enter 换行"></textarea>
@@ -173,21 +182,22 @@
         <button class="tb" data-act="forward" title="转发 (F)"><i data-icon="forward"></i><span>转发</span></button>
         <span class="tb-sep rw-only"></span>
         <button class="tb rw-only" data-act="delete" title="删除 (Delete)"><i data-icon="trash"></i></button>
-        <button class="tb rw-only" data-act="move" title="移动到…"><i data-icon="folder"></i></button>
-        <button class="tb rw-only" data-act="unread" title="标为未读 (U)"><i data-icon="mail"></i></button>
+        <button class="tb rw-only lean-hide" data-act="move" data-label="移动到…" data-menu-icon="folder" title="移动到…"><i data-icon="folder"></i></button>
+        <button class="tb rw-only lean-hide" data-act="unread" data-label="标为未读" data-menu-icon="mail" title="标为未读 (U)"><i data-icon="mail"></i></button>
         <button class="tb rw-only" data-act="flag" title="星标 (S)"><i data-icon="star"></i></button>
-        <span class="tb-sep sent-only hidden"></span>
-        <button class="tb sent-only hidden" data-act="recall" title="撤回这封已发送邮件"><i data-icon="undo"></i><span>撤回</span></button>
-        <button class="tb sent-only hidden" data-act="status" title="查看每位收件人的投递和阅读状态"><i data-icon="route"></i><span>投递状态</span></button>
-        <button class="tb sched-only hidden" data-act="unschedule" title="取消定时，邮件转为普通草稿"><i data-icon="clock"></i><span>取消定时</span></button>
+        <span class="tb-sep sent-only lean-hide hidden"></span>
+        <button class="tb sent-only lean-hide hidden" data-act="recall" data-label="撤回…" data-menu-icon="undo" title="撤回这封已发送邮件"><i data-icon="undo"></i><span>撤回</span></button>
+        <button class="tb sent-only lean-hide hidden" data-act="status" data-label="投递状态" data-menu-icon="route" title="查看每位收件人的投递和阅读状态"><i data-icon="route"></i><span>投递状态</span></button>
+        <button class="tb sched-only lean-hide hidden" data-act="unschedule" data-label="取消定时" data-menu-icon="clock" title="取消定时，邮件转为普通草稿"><i data-icon="clock"></i><span>取消定时</span></button>
         <span class="tb-sep"></span>
-        <button class="tb" data-act="summarize" title="AI 总结这封邮件或整个会话（正文会发送到 AI 服务）"><i data-icon="spark"></i><span>总结</span></button>
-        <button class="tb" data-act="aireply" title="AI 给出回复方向并起草回复（正文会发送到 AI 服务）"><i data-icon="reply"></i><span>AI 回复</span></button>
+        <button class="tb main-only" data-act="ask" title="问 AI：打开右侧对话并带上这封邮件 (Ctrl+J)"><i data-icon="spark"></i><span>AI</span></button>
+        <button class="tb lean-hide" data-act="summarize" data-label="AI 总结" data-menu-icon="spark" title="AI 总结这封邮件或整个会话（正文会发送到 AI 服务）"><i data-icon="spark"></i><span>总结</span></button>
+        <button class="tb lean-hide" data-act="aireply" data-label="AI 回复" data-menu-icon="reply" title="AI 给出回复方向并起草回复（正文会发送到 AI 服务）"><i data-icon="reply"></i><span>AI 回复</span></button>
         <span class="spacer"></span>
-        <button class="tb" data-act="find" title="在正文中查找"><i data-icon="search"></i></button>
-        <button class="tb" data-act="print" title="打印 (Ctrl+P)"><i data-icon="print"></i></button>
-        <button class="tb main-only" data-act="popout" title="在新窗口中打开 (Enter / 双击)"><i data-icon="popout"></i></button>
-        <button class="tb" data-act="more" title="更多：导出为 PDF、导出为 .eml"><i data-icon="more"></i></button>
+        <button class="tb lean-hide" data-act="find" data-label="在正文中查找" data-menu-icon="search" title="在正文中查找"><i data-icon="search"></i></button>
+        <button class="tb lean-hide" data-act="print" title="打印 (Ctrl+P)"><i data-icon="print"></i></button>
+        <button class="tb main-only lean-hide" data-act="popout" title="在新窗口中打开 (Enter / 双击)"><i data-icon="popout"></i></button>
+        <button class="tb" data-act="more" title="更多：移动、标为未读、查找、打印、导出等"><i data-icon="more"></i></button>
       </div>
       <div class="reader-scroll">
         <h1 id="r-subject"></h1>
@@ -198,6 +208,7 @@
             <div><b id="r-from-name"></b> <span id="r-from-mail" class="muted"></span></div>
             <div id="r-to" class="muted small r-recipients"></div>
           </div>
+          <div id="r-sec" class="r-sec"></div>
           <div id="r-date" class="muted small r-date"></div>
         </div>
         <div id="r-banners"></div>
@@ -252,23 +263,24 @@
     <div class="cmp-row"><label>主题</label><input id="cmp-subject" type="text" spellcheck="false"></div>
   </div>
   <div class="cmp-toolbar" id="cmp-toolbar">
-    <select id="fmt-size" title="字号"><option value="">字号</option><option value="2">小</option><option value="3">正常</option><option value="4">大</option><option value="5">特大</option></select>
+    <select id="fmt-size" class="lean-hide" title="字号"><option value="">字号</option><option value="2">小</option><option value="3">正常</option><option value="4">大</option><option value="5">特大</option></select>
     <button data-cmd="bold" title="加粗 (Ctrl+B)"><b>B</b></button>
     <button data-cmd="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
-    <button data-cmd="underline" title="下划线 (Ctrl+U)"><u>U</u></button>
-    <button data-cmd="strikeThrough" title="删除线"><s>S</s></button>
-    <label class="color-btn" title="文字颜色">A<input type="color" id="fmt-color" value="#d92d20"></label>
-    <label class="color-btn hl" title="高亮">H<input type="color" id="fmt-hilite" value="#fde68a"></label>
+    <button data-cmd="underline" class="lean-hide" title="下划线 (Ctrl+U)"><u>U</u></button>
+    <button data-cmd="strikeThrough" class="lean-hide" title="删除线"><s>S</s></button>
+    <label class="color-btn lean-hide" title="文字颜色">A<input type="color" id="fmt-color" value="#d92d20"></label>
+    <label class="color-btn hl lean-hide" title="高亮">H<input type="color" id="fmt-hilite" value="#fde68a"></label>
     <span class="tb-sep"></span>
     <button data-cmd="insertUnorderedList" title="项目符号"><i data-icon="ul"></i></button>
     <button data-cmd="insertOrderedList" title="编号"><i data-icon="ol"></i></button>
-    <button data-cmd="outdent" title="减少缩进"><i data-icon="outdent"></i></button>
-    <button data-cmd="indent" title="增加缩进"><i data-icon="indent"></i></button>
+    <button data-cmd="outdent" class="lean-hide" title="减少缩进"><i data-icon="outdent"></i></button>
+    <button data-cmd="indent" class="lean-hide" title="增加缩进"><i data-icon="indent"></i></button>
     <button data-cmd="link" title="插入链接"><i data-icon="link"></i></button>
-    <button data-cmd="insertHorizontalRule" title="分隔线">—</button>
+    <button data-cmd="insertHorizontalRule" class="lean-hide" title="分隔线">—</button>
     <button id="cmp-image" title="插入图片（也可以直接粘贴截图或拖入图片）"><i data-icon="image"></i></button>
-    <button id="cmp-table" title="表格：插入表格；光标在表格中时可增删行列、合并单元格、设置边框（Tab 跳到下一格）"><i data-icon="table"></i></button>
-    <button data-cmd="removeFormat" title="清除格式"><i data-icon="eraser"></i></button>
+    <button id="cmp-table" class="lean-hide" title="表格：插入表格；光标在表格中时可增删行列、合并单元格、设置边框（Tab 跳到下一格）"><i data-icon="table"></i></button>
+    <button data-cmd="removeFormat" class="lean-hide" title="清除格式"><i data-icon="eraser"></i></button>
+    <button id="cmp-format" class="lean-only" title="更多格式：字号、下划线、删除线、颜色、缩进、分隔线、表格、清除格式"><span>格式</span><i data-icon="caret"></i></button>
     <span class="tb-sep"></span>
     <button id="cmp-ai" title="AI 写信助手：润色、改语气、翻译、发送前检查（文字会发送到 AI 服务）"><i data-icon="spark"></i><span>AI</span></button>
     <span class="spacer"></span>
@@ -278,10 +290,10 @@
   <div id="cmp-ai-panel" class="cmp-ai-panel hidden"></div>
   <div id="cmp-atts" class="cmp-atts"></div>
   <div class="cmp-foot">
-    <button id="cmp-send" class="btn primary" title="发送 (Ctrl+Enter)"><i data-icon="send"></i>发送</button>
+    <span class="send-split"><button id="cmp-send" class="btn primary" title="发送 (Ctrl+Enter)"><i data-icon="send"></i>发送</button><button id="cmp-send-more" class="btn primary lean-only" title="定时发送、模板"><i data-icon="caret"></i></button></span>
     <button id="cmp-save" class="btn ghost" title="保存草稿 (Ctrl+S)">保存草稿</button>
-    <button id="cmp-schedule" class="btn ghost" title="定时发送"><i data-icon="clock"></i><span>定时发送</span></button>
-    <button id="cmp-template" class="btn ghost" title="使用模板，或把当前邮件存为模板"><i data-icon="template"></i><span>模板</span></button>
+    <button id="cmp-schedule" class="btn ghost lean-hide" title="定时发送"><i data-icon="clock"></i><span>定时发送</span></button>
+    <button id="cmp-template" class="btn ghost lean-hide" title="使用模板，或把当前邮件存为模板"><i data-icon="template"></i><span>模板</span></button>
     <span id="cmp-schedule-chip" class="sched-chip hidden"><i data-icon="clock"></i><span></span><button title="取消定时">×</button></span>
     <label class="check small" title="收件人打开邮件时，请求对方回复已读回执"><input type="checkbox" id="cmp-receipt"> 请求已读回执</label>
     <span class="spacer"></span>
@@ -317,6 +329,9 @@
           <div class="seg" id="theme-seg"><button data-theme="system">跟随系统</button><button data-theme="light">浅色</button><button data-theme="dark">深色</button></div>
           <h3>列表密度</h3>
           <div class="seg" id="density-seg"><button data-density="comfortable">舒适</button><button data-density="compact">紧凑</button></div>
+          <h3>工具栏</h3>
+          <div class="seg" id="toolbar-seg"><button data-toolbar="lean">精简</button><button data-toolbar="full">完整</button></div>
+          <p class="muted small">精简时，阅读栏只留回复、转发、删除、星标和 AI，其余在「⋯」里；写信时少用的格式在「格式」里，定时发送和模板在「发送」旁的 ▾ 里；高级搜索的时间改为下拉。快捷键不变；也可以按 Ctrl+K 用命令找到每个功能。</p>
           <h3>收信与提醒</h3>
           <label class="pref-row">自动收信间隔
             <select id="pref-poll"><option value="30">30 秒</option><option value="60">1 分钟</option><option value="120">2 分钟</option><option value="300">5 分钟</option><option value="900">15 分钟</option></select></label>
@@ -370,13 +385,32 @@
         </div>
         <div class="modal-body st-pane st-page hidden" data-pane="ai">
           <h3 id="ai-section">AI 助手</h3>
-          <p class="muted small">阅读邮件时点「总结」，由 AI 生成摘要；点搜索框旁的 ✦「问邮箱」，用一句话提问，由 AI 搜索并阅读邮件后回答。邮件内容会发送到下面的 AI 服务（默认 DeepSeek）；加密邮件每次都会先征求你的同意。API Key 由 Windows 加密保存在本机，界面上无法查看。</p>
+          <p class="muted small">阅读邮件时点「总结」，由 AI 生成摘要；点搜索框旁的 ✦「问邮箱」，用一句话提问，由 AI 搜索并阅读邮件后回答。邮件内容会发送到下面的 AI 服务（默认 DeepSeek）；加密邮件按下面「加密邮件」的设置处理。API Key 由 Windows 加密保存在本机，界面上无法查看。</p>
           <label class="pref-row">接口地址<input id="ai-base" type="text" spellcheck="false"></label>
           <label class="pref-row">模型<input id="ai-model" type="text" spellcheck="false"></label>
           <label class="pref-row">API Key<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
           <p class="muted small" id="ai-status"></p>
           <div class="row-gap"><button class="btn ghost" id="ai-save">保存 AI 设置</button><button class="btn ghost" id="ai-test">测试连接</button>
             <button class="btn ghost danger hidden" id="ai-clear">清除 Key</button></div>
+          <label class="check"><input id="ai-actions" type="checkbox"> 允许 AI 在对话里提议邮件操作（标为已读、星标、移动、移到已删除）</label>
+          <p class="muted small">AI 只提出计划，在对话里点「执行」才会操作，执行后可以撤销；不会彻底删除，也不会发信。</p>
+          <h3>加密邮件</h3>
+          <label class="check"><input id="uc-enc-allow" type="checkbox"> 允许 AI 读取加密邮件（不再逐封询问）</label>
+          <p class="muted small">打开后，总结、AI 回复、问邮箱、任务中心和「理解新邮件」都可以读取加密邮件解密后的正文，正文会发送到上面的 AI 服务。下面排除的文件夹和发件人仍然每封先询问，「理解新邮件」会跳过它们。</p>
+          <div id="uc-enc-folders" class="uc-folders"></div>
+          <label class="pref-row">排除发件人<textarea id="uc-enc-senders" rows="2" spellcheck="false" placeholder="每行一个邮箱地址，或 @域名"></textarea></label>
+          <div class="row-gap"><button class="btn ghost" id="uc-enc-save">保存加密邮件设置</button></div>
+          <h3>理解新邮件</h3>
+          <p class="muted small">AI 在后台把最近 30 天收到的每封邮件读一遍（只读一次）：分成「要我做」「要我知道」「可以忽略」，写出一句话要点、要你做什么和截止日期。列表、左侧「待我处理」「需要知道」和阅读窗格会用到这些结果。不会标为已读，不会移动、删除或回复邮件。每月约处理 150 封邮件。</p>
+          <label class="check"><input id="uc-on" type="checkbox"> 理解新邮件</label>
+          <label class="check"><input id="uc-gist" type="checkbox"> 列表第二行显示要点（不显示正文开头）</label>
+          <p class="muted small" id="uc-status"></p>
+          <div id="uc-rules"></div>
+          <div class="row-gap"><button class="btn ghost danger" id="uc-clear">清除理解结果和规则</button></div>
+          <h3>工作记忆</h3>
+          <p class="muted small">理解邮件时，鸿雁把名单里项目的进展、决定、分工和关键日期记下来：同一件事有了新消息就更新，旧的留作历史；外部邮件不能自动改同事说过的，你写的 AI 也不能改，这两种会等你确认。任务中心未完成任务的「系统」自动列入（我负责）；也可以手动添加只想了解的项目（我关注），或把别名合并到一个项目。</p>
+          <div id="mem-projects" class="mem-projects"></div>
+          <div class="row-gap mem-add"><input id="mem-new" type="text" maxlength="30" spellcheck="false" placeholder="项目名，例如 NG BI"><button class="btn ghost" id="mem-add">添加项目</button></div>
         </div>
         <div class="modal-body st-pane st-page hidden" data-pane="archive">
           <h3 id="archive-section">本地存档</h3>
@@ -440,6 +474,8 @@
 <script src="ai.js"></script>
 <script src="archive.js"></script>
 <script src="tasks.js"></script>
+<script src="understand.js"></script>
+<script src="memory.js"></script>
 <script src="commands.js"></script>
 </body>
 </html>

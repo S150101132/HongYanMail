@@ -93,7 +93,9 @@ if (typeof document !== 'undefined') {
     if (hasMail()) {
       const m = S.message;
       // The reader's own buttons as they stand, so a command does what its button does.
-      for (const b of $$('#reader-body .reader-toolbar [data-act]')) if (visible(b) && b.dataset.act !== 'more') list.push(fromButton('这封邮件', b));
+      // Buttons folded by 精简 (A4) count too, unless they do not apply to this mail.
+      const folded = (b) => b.classList.contains('lean-hide') && !b.closest('.hidden');
+      for (const b of $$('#reader-body .reader-toolbar [data-act]')) if ((visible(b) || folded(b)) && b.dataset.act !== 'more') list.push(fromButton('这封邮件', b));
       add('这封邮件', 'clip', '作为附件转发', () => startCompose('forward_attach', m.id));
       add('这封邮件', 'file', '导出为 PDF', () => exportPdf(m), ['pdf']);
       add('这封邮件', 'download', '导出为 .eml', () => exportEml(m), ['eml', '导出原件']);
@@ -130,6 +132,11 @@ if (typeof document !== 'undefined') {
     }, names);
     density('compact', '紧凑模式', ['紧凑', '密集']);
     density('comfortable', '舒适模式', ['舒适', '宽松']);
+    const bars = (t, label, names) => add('外观', 'settings', label, async () => {
+      try { S.prefs = await api('setPrefs', { values: { toolbar: t } }); applyTheme(S.prefs.theme, S.prefs.density); } catch (err) { fail(err); }
+    }, names);
+    bars('lean', '精简工具栏', ['精简', '收起按钮']);
+    bars('full', '完整工具栏', ['完整', '显示全部按钮']);
     add('命令', 'settings', '设置', () => openSettings(), ['选项', '偏好']);
     for (const b of $$('#st-nav [data-tab]')) add('设置', 'settings', '设置：' + b.textContent.trim(), () => openSettings(b.dataset.tab), [b.textContent.trim()]);
     for (const f of S.folders) add('前往', ROLE_ICON[f.role] || 'folder', folderTitle(f), () => selectFolder(f.id), [f.name, '打开' + f.name]);

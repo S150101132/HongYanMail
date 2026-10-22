@@ -156,6 +156,7 @@ function applyTheme(theme, density) {
   const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   if (density) document.documentElement.dataset.density = density;
+  document.documentElement.classList.toggle('tb-lean', (S.prefs || {}).toolbar !== 'full');  // A4: 精简 unless 完整 was chosen.
   try { localStorage.setItem('hy-theme', theme); if (density) localStorage.setItem('hy-density', density); } catch (e) { /* optional */ }
   if (S.message) renderBody(S.message);
 }
@@ -287,7 +288,15 @@ const SPLITS = { sidebarWidth: { el: '#split-side', prop: '--side-w', min: 180, 
   tkListWidth: { el: '#split-tk-list', prop: '--tk-list-w', min: 320, max: 900, def: 460, others: ['.sidebar'], rest: 420 } };
 function applyWidths() {
   for (const [key, sp] of Object.entries(SPLITS)) $('#app').style.setProperty(sp.prop, (S.prefs[key] || sp.def) + 'px');
+  $('#app').classList.toggle('side-hidden', !!S.prefs.sidebarHidden);
+  if (S.prefs.sidebarHidden) $('#app').style.setProperty('--side-w', '0px');
 }
+function toggleSidebar() {
+  S.prefs.sidebarHidden = !S.prefs.sidebarHidden; applyWidths();
+  api('setPrefs', { values: { sidebarHidden: S.prefs.sidebarHidden } }).catch(() => {});
+}
+$('#btn-side-hide').onclick = toggleSidebar;
+$('#btn-side-show').onclick = toggleSidebar;
 function saveWidths() {
   const values = Object.fromEntries(Object.keys(SPLITS).map((k) => [k, S.prefs[k]]).filter(([, v]) => v != null));
   api('setPrefs', { values }).then((p) => { S.prefs = p; applyWidths(); }).catch(() => {});
@@ -318,7 +327,8 @@ for (const [key, sp] of Object.entries(SPLITS)) {
 const ROLE_ICON = { inbox: 'inbox', drafts: 'drafts', sent: 'sent', trash: 'trash', spam: 'spam', virus: 'virus' };
 // 设置 › 左侧栏显示: hidden folders (and their subfolders) stay out of the sidebar unless open.
 const LOCAL_NAV = [['scheduled', '定时发送', '#nav-scheduled'], ['outbox', '发件箱', '#nav-outbox'], ['drafts', '本机草稿', '#nav-drafts'],
-  ['archive', '本地存档', '#nav-archive'], ['tasks', '任务', '#nav-tasks'], ['contacts', '通讯录', '#nav-contacts']];
+  ['archive', '本地存档', '#nav-archive'], ['tasks', '任务', '#nav-tasks'], ['u-act', '待我处理', '#nav-u-act'], ['u-know', '需要知道', '#nav-u-know'], ['u-wait', '等对方回复', '#nav-u-wait'],
+  ['contacts', '通讯录', '#nav-contacts']];
 function folderShown(f) {
   const hidden = S.prefs.hiddenFolders || [];
   if (f.role === 'inbox' || f.id === S.folderId && !S.local) return true;
@@ -526,15 +536,16 @@ function rowHtml(r, item = { ids: [r.id], rows: [r] }) {
   const badge = r.flags.scheduleDelivery ? `<span class="row-badge" title="定时发送">${r.scheduleAt ? '定时 ' + esc(scheduleText(r.scheduleAt)) : '定时'}</span>`
     : role === 'sent' && r.flags.rcptRead ? '<span class="row-badge" title="收件人已阅读（服务器投递记录）">已读</span>' : '';
   const unread = item.rows.some((x) => !x.flags.read);
+  const uc = (window.UC && UC.row(r)) || {};  // 理解层 (understand.js): the 要点, a mark, a due date.
   const msel = S.multi.size && item.ids.every((id) => S.multi.has(id));
   const twisty = item.key ? `<button class="twisty${open ? ' open' : ''}${thread ? '' : ' none'}" data-twisty="${esc(item.id)}" tabindex="-1"
     title="${open ? '收起会话 (←)' : '展开会话：收到和发出的往来邮件 (→)'}"><i data-icon="chevron"></i></button>` : '';
-  return `<div class="row${item.key ? ' conv' : ''}${open ? ' open' : ''}${unread ? ' unread' : ''}${!open && item.ids.includes(S.selected) ? ' sel' : ''}${msel ? ' msel' : ''}" data-id="${esc(r.id)}" draggable="true" role="option">
+  return `<div class="row${item.key ? ' conv' : ''}${open ? ' open' : ''}${unread ? ' unread' : ''}${!open && item.ids.includes(S.selected) ? ' sel' : ''}${msel ? ' msel' : ''}${uc.cls || ''}" data-id="${esc(r.id)}" draggable="true" role="option">
     ${twisty}${avatarHtml(r.fromName, sentLike ? r.to : r.fromEmail)}
     <div class="main">
       <div class="line1"><span class="who">${esc(who)}</span>${thread ? `<span class="tcount" title="${size} 封邮件">${size}</span>` : ''}${folderTag}<span class="marks">${marks}</span><span class="when">${esc(shortDate(d))}</span></div>
-      <div class="subj">${badge}${esc(r.subject || '（无主题）')}${window.TG ? TG.chips(r.tags) : ''}</div>
-      ${r.preview ? `<div class="prev">${esc(r.preview)}</div>` : ''}
+      <div class="subj">${uc.lead || ''}${badge}${esc(r.subject || '（无主题）')}${window.TG ? TG.chips(r.tags) : ''}</div>
+      ${uc.prev || (r.preview ? `<div class="prev">${esc(r.preview)}</div>` : '')}
     </div></div>`;
 }
 
@@ -558,7 +569,7 @@ function renderList() {
   let group = null;
   for (const it of S.items) {
     const r = it.rows[0];
-    const g = S.search ? null : groupOf(parseTs(r));
+    const g = S.search ? null : (window.UC && UC.group(r)) || groupOf(parseTs(r));
     if (g && g !== group) { group = g; html += `<div class="group-head">${g}</div>`; }
     html += rowHtml(r, it);
     if (it.key && S.open.has(it.key) && threadSize(it) > 1) {
@@ -567,7 +578,7 @@ function renderList() {
     }
   }
   if (!rows.length) {
-    html = `<div class="list-foot">${S.local === 'scheduled' ? '没有等待发出的定时邮件' : S.search ? '没有找到匹配的邮件' : S.filter === 'unread' ? '没有未读邮件 🎉' : S.filter === 'flagged' ? '没有星标邮件' : '这个文件夹是空的'}</div>`;
+    html = `<div class="list-foot">${S.local === 'scheduled' ? '没有等待发出的定时邮件' : window.UC && UC.empty() ? UC.empty() : S.search ? '没有找到匹配的邮件' : S.filter === 'unread' ? '没有未读邮件 🎉' : S.filter === 'flagged' ? '没有星标邮件' : '这个文件夹是空的'}</div>`;
   } else if (S.more && !S.search) {
     // A button, not just a note: a page that failed or was skipped can always be asked for again.
     const shown = `已显示 ${S.rows.length} 封` + (S.total != null ? ` / 共 ${S.total} 封` : '');
@@ -653,6 +664,7 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
     { label: r.flags.flagged ? '取消星标' : '添加星标', icon: 'star', run: () => setFlags(r.id, { flagged: !r.flags.flagged }), write: true },
     { label: '移动到…', icon: 'folder', run: () => pickFolder(r.id), write: true },
     ...(typeof mailTaskItems === 'function' ? mailTaskItems([r.id], r) : []),
+    ...(window.UC ? UC.menu(r) : []),
     '-',
     { label: '删除', icon: 'trash', run: () => deleteMessage(r.id), write: true },
   ]));
@@ -742,10 +754,21 @@ async function selectMessage(id, opts = {}) {
     $('#r-from-name').textContent = summary.fromName; $('#r-from-mail').textContent = summary.fromEmail ? `<${summary.fromEmail}>` : '';
     avatar($('#r-avatar'), summary.fromName, summary.fromEmail);
     $('#r-date').textContent = longDate(parseTs(summary)); $('#r-to').textContent = '';
-    $('#r-attachments').classList.add('hidden'); $('#r-banners').innerHTML = '';
+    $('#r-attachments').classList.add('hidden'); $('#r-banners').innerHTML = ''; $('#r-sec').innerHTML = '';
     writeFrame('<div style="color:#98a2b3">正在加载…</div>');
   }
   api('allowRemoteImages', { allow: S.allowRemote.has(id) });
+  const showRead = (read) => {
+    summary.flags.read = read;
+    row && row.classList.toggle('unread', row.dataset.child ? !read : itemOf(id).rows.some((r) => !r.flags.read));
+    if (row && row.dataset.child) renderList();  // The conversation's own row may change too.
+    const f = folderById(summary.fid); if (f) { f.unread = Math.max(0, (f.unread || 0) + (read ? -1 : 1)); renderFolders(); }
+  };
+  // Shown read at once: the server is told after the body has loaded, which can take a
+  // while; if the backend does not mark it after all, the unread mark comes back.
+  const box = currentBox();
+  const early = !!(summary && !summary.flags.read && S.prefs && S.prefs.markReadOnOpen && (!box || box.rw));
+  if (early) showRead(true);
   try {
     const m = await api('openMessage', { mid: id });
     if (token !== openToken) return;
@@ -753,14 +776,11 @@ async function selectMessage(id, opts = {}) {
     renderMessage(m);
     if (typeof chatMailChanged === 'function') chatMailChanged();
     if (READER_MID) { document.title = (m.subject || '（无主题）') + ' · 鸿雁'; if (m.markedRead) notifyMain({ kind: 'flags', id, flags: { read: true } }); }
-    if (m.markedRead && summary) {
-      summary.flags.read = true;
-      row && row.classList.toggle('unread', row.dataset.child ? false : itemOf(id).rows.some((r) => !r.flags.read));
-      if (row && row.dataset.child) renderList();  // The conversation's own row may now be read too.
-      const f = folderById(summary.fid); if (f && f.unread > 0) { f.unread--; renderFolders(); }
-    }
+    if (m.markedRead && summary && !early) showRead(true);
+    else if (early && !m.markedRead && !(m.flags || {}).read) showRead(false);
   } catch (err) {
     if (token !== openToken) return;
+    if (early) showRead(false);
     S.message = null;
     writeFrame(`<div style="color:#d92d20">${esc(err.message)}</div>`);
   }
@@ -809,8 +829,14 @@ function renderMessage(m) {
     : '<div class="banner info"><i data-icon="open"></i><span>这是从本机 .eml 文件打开的邮件（只读，不在服务器上）。可以回复或转发。</span></div>');
   if (m.serverDraft) banners.push('<div class="banner info"><i data-icon="draft"></i><span>这是服务器草稿箱中的草稿（网页版、手机或其他客户端保存）。</span><span class="spacer"></span><button class="btn primary" id="b-edit-draft">继续编辑</button></div>');
   if (m.encryption === 'locked') banners.push(`<div class="banner"><i data-icon="lock"></i><span>这是一封证书加密邮件，解锁个人证书后即可阅读。</span><span class="spacer"></span><button class="btn primary" id="b-unlock">解锁证书</button></div>`);
-  if (m.encryption === 'decrypted') banners.push(`<div class="banner info"><i data-icon="lock"></i><span>此邮件已使用你的证书在本机解密。</span></div>`);
-  const sig = signatureBanner(m.signature); if (sig) banners.push(sig);
+  // Decrypted / valid signature: a quiet icon beside the date (hover for detail); problems stay as banners.
+  const sec = [];
+  if (m.encryption === 'decrypted') sec.push('<span class="r-sec-ic" title="此邮件已使用你的证书在本机解密"><i data-icon="lock"></i></span>');
+  const sig = signatureBanner(m.signature);
+  if (sig && sig.startsWith('<div class="banner ok"')) sec.push(sig.replace(/^<div class="banner ok" title="([^"]*)"><i data-icon="seal"><\/i><span>([^<]*)<\/span><\/div>$/,
+    (_, t, x) => `<span class="r-sec-ic ok" title="${x}${t ? '&#10;' + t : ''}"><i data-icon="seal"></i></span>`));
+  else if (sig) banners.push(sig);
+  $('#r-sec').innerHTML = sec.join(''); renderIcons($('#r-sec'));
   if (m.hasRemoteImages && !S.allowRemote.has(m.id)) banners.push(`<div class="banner"><i data-icon="image"></i><span>为保护隐私，已阻止远程图片。</span><span class="spacer"></span><button class="btn ghost" id="b-images">显示图片</button></div>`);
   $('#r-banners').innerHTML = banners.join('');
   renderIcons($('#r-banners'));
@@ -959,7 +985,8 @@ $('#reader-body').addEventListener('click', async (e) => {
     delete: () => deleteMessage(m.id), move: () => pickFolder(m.id), unread: () => setFlags(m.id, { read: false }),
     flag: () => setFlags(m.id, { flagged: !m.flags.flagged }), find: openFind,
     recall: () => recallMessage(m), status: () => loadDeliveryStatus(m, true), unschedule: () => unscheduleMessage(m),
-    print: () => printMessage(m), popout: () => popOut(m.id), more: () => moreMenu(b, m), summarize: () => aiMenu(b, m), aireply: () => replyAssist(m),
+    print: () => printMessage(m), popout: () => popOut(m.id), more: () => moreMenu(b, m), summarize: () => aiMenu(b.offsetParent ? b : $('#reader-body [data-act="more"]'), m), aireply: () => replyAssist(m),
+    ask: () => { const here = chatHere(); if (here) S.chat.attach = here.key; showAsk(); },
   }[b.dataset.act] || (() => {}))();
 });
 
@@ -988,9 +1015,20 @@ async function exportEml(m) {
   }
   try { if (await api('exportEml', { mid: m.id, decrypted })) toast(decrypted ? '已导出解密副本' : '邮件已导出'); } catch (err) { fail(err); }
 }
+// 精简工具栏 (A4): the buttons folded away in scope, as they stand for this mail (sent, scheduled,
+// read-only), offered as menu items that click them — the same handlers and checks as on the bar
+// (总结 opens its menu at ⋯ when its own button is folded).
+const leanBars = () => document.documentElement.classList.contains('tb-lean');
+function foldedItems(scope) {
+  if (!leanBars()) return [];
+  return $$('.lean-hide[data-label]', scope).filter((b) => !b.classList.contains('hidden') && !b.disabled && !(READER_MID && b.classList.contains('main-only')))
+    .map((b) => ({ label: b.dataset.label, icon: b.dataset.menuIcon, run: () => setTimeout(() => b.click()) }));  // After this click: 总结 opens a menu.
+}
 function moreMenu(button, m) {
   const r = button.getBoundingClientRect();
+  const folded = foldedItems($('#reader-body .reader-toolbar'));
   showMenu(r.left, r.bottom + 4, [
+    ...folded, ...(folded.length ? ['-'] : []),
     { label: '作为附件转发', icon: 'clip', run: () => startCompose('forward_attach', m.id) },
     ...(m.imported ? [] : [{ label: '将收件人存为收件人组…', icon: 'contacts', run: () => groupFromMessage(m) }]),
     ...(typeof mailTaskItems === 'function' ? mailTaskItems([m.id], m).slice(1) : []),
@@ -1755,6 +1793,7 @@ function openSettings() {
   const d = $('#settings'); d.classList.remove('hidden'); renderIcons(d);
   $$('#theme-seg button').forEach((b) => b.classList.toggle('on', b.dataset.theme === p.theme));
   $$('#density-seg button').forEach((b) => b.classList.toggle('on', b.dataset.density === p.density));
+  $$('#toolbar-seg button').forEach((b) => b.classList.toggle('on', b.dataset.toolbar === (p.toolbar === 'full' ? 'full' : 'lean')));
   $('#pref-poll').value = String(p.pollSeconds);
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-autostart').checked = !!p.autostart;
@@ -1786,10 +1825,11 @@ function renderCertStatus() {
 $('#btn-cert-forget').onclick = async () => { S.profile.certificate = await api('forgetCertificate').catch(() => S.profile.certificate); renderCertStatus(); toast('已忘记证书'); };
 $$('#theme-seg button').forEach((b) => (b.onclick = () => { $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); applyTheme(b.dataset.theme); }));
 $$('#density-seg button').forEach((b) => (b.onclick = () => { $$('#density-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.dataset.density = b.dataset.density; }));
+$$('#toolbar-seg button').forEach((b) => (b.onclick = () => { $$('#toolbar-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.classList.toggle('tb-lean', b.dataset.toolbar !== 'full'); }));
 $('#btn-account').onclick = () => openSettings();  // Through the wrappers the other files add.
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
-  const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, pollSeconds: +$('#pref-poll').value,
+  const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, toolbar: $('#toolbar-seg .on').dataset.toolbar, pollSeconds: +$('#pref-poll').value,
     notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, precheck: $('#pref-precheck').checked, signature: signatureHtml(),
     closeAction: $('#pref-close').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
   try {
@@ -1829,6 +1869,7 @@ function handleKey(e) {
   if (e.ctrlKey && (e.key === 'a' || e.key === 'A') && !isTyping(t) && t.ownerDocument === document && !(t.closest && t.closest('.reader-scroll, #composer'))
       && !$('#app').classList.contains('hidden') && !S.local) { e.preventDefault(); selectAll(); return; }
   if (e.ctrlKey && (e.key === 'n' || e.key === 'N')) { e.preventDefault(); startCompose('new'); return; }
+  if (e.ctrlKey && (e.key === 'b' || e.key === 'B') && !isTyping(t) && !$('#app').classList.contains('hidden')) { e.preventDefault(); toggleSidebar(); return; }
   if (e.ctrlKey && (e.key === 'j' || e.key === 'J') && !$('#app').classList.contains('hidden')) { e.preventDefault(); toggleChat(); return; }
   if (e.ctrlKey && (e.key === 'k' || e.key === 'K') && !$('#app').classList.contains('hidden') && window.CP) { e.preventDefault(); CP.open(); return; }
   if (e.key === 'F5') { e.preventDefault(); $('#btn-refresh').click(); return; }

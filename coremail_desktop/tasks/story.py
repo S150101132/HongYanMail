@@ -9,6 +9,7 @@ short title, a one-line summary and a kind (for its icon): from the AI when it i
 import hashlib
 import json
 import re
+from collections import Counter
 
 from coremail_desktop.errors import AppError
 
@@ -50,20 +51,48 @@ def _changes_text(changes):
     return '修改了' + '、'.join(names) if names else ''
 
 
-def build(task, events, links):
-    """The steps of one task, newest first. events: [(seq, review, event)] oldest first."""
+def added_line(change):
+    """The first line a change appended to the history column, or '' when it did not append."""
+    if change and isinstance(change[1], str) and isinstance(change[0], str) and change[1].startswith(change[0]):
+        return change[1][len(change[0]):].lstrip('\n').split('\n')[0].strip()
+    return ''
+
+
+def undone_seqs(events):
+    """Events that were undone, and the undo events themselves (both left out of the story and the report)."""
     undone = {e.get('undoes') for _, _, e in events if e.get('undoes')}
+    return undone | {seq for seq, _, e in events if e.get('kind') == 'undone'}
+
+
+def visible_lines(history, events):
+    """[(order, (day, text, first line))] of the history column without the lines an undone
+    change added and the 撤销 lines (they stay in the column). events: this task's, oldest first."""
+    lines = history_steps(history)
+    skip = undone_seqs(events)
+    hidden = Counter(added for added in (added_line((e.get('changes') or {}).get('history')) for seq, _, e in events if seq in skip) if added)
+    kept = []
+    for order in reversed(range(len(lines))):  # The latest copy of a hidden line is the undone one.
+        if hidden[lines[order][2]]:
+            hidden[lines[order][2]] -= 1
+        else:
+            kept.append(order)
+    return [(order, lines[order]) for order in sorted(kept)]
+
+
+def build(task, events, links):
+    """The steps of one task, newest first. events: [(seq, review, event)] oldest first.
+    An undone change and the undo itself stay in 变更记录 and the history column, not here."""
+    skip = undone_seqs(events)
     lines = history_steps(task.get('history'))
     by_line = {}
     extra = []
     for seq, review, e in events:
-        if seq in undone or e.get('kind') in ('imported', 'linked', 'unlinked') or review == 'rejected':
+        added = added_line((e.get('changes') or {}).get('history'))
+        if seq in skip or e.get('kind') in ('imported', 'linked', 'unlinked') or review == 'rejected':
             continue
-        change = (e.get('changes') or {}).get('history')
         info = {'seq': seq, 'event': e.get('kind'), 'actor': e.get('actor'), 'review': review, 'mails': e.get('mails') or [],
                 'basis': e.get('basis') or '', 'changes': e.get('changes') or {}, 'note': e.get('note') or '', 'at': e.get('at') or 0}
-        if change and isinstance(change[1], str) and isinstance(change[0], str) and change[1].startswith(change[0]):
-            added = change[1][len(change[0]):].lstrip('\n').split('\n')[0].strip()
+        if added:
             by_line.setdefault(added, info)
             continue
         if review != 'confirmed':
@@ -73,7 +102,7 @@ def build(task, events, links):
             text = '新建任务：' + str((e.get('changes') or {}).get('content', ['', task.get('content', '')])[1])[:200]
         extra.append({'day': e.get('date') or '', 'text': text, 'source': 'event', 'kind': EVENT_KIND.get(e.get('kind'), 'change'), **info})
     steps = []
-    for order, (day, text, first) in enumerate(lines):
+    for order, (day, text, first) in visible_lines(task.get('history'), events):
         info = by_line.get(first, {})
         kind = EVENT_KIND.get(info.get('event'), 'progress') if info else 'progress'
         steps.append({'day': day, 'text': text, 'source': 'history', 'kind': kind, 'order': order, **info})

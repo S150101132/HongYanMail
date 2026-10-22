@@ -42,7 +42,8 @@ async function loadTasks() {
     if (token !== TK.token) return;
     TK.rows = TK.ids ? view.rows.filter((r) => TK.ids.includes(r.id)) : view.rows; TK.counts = view.counts; TK.status = status;
     renderTaskList(); renderTasksNav();
-    if (TK.selected && TK.rows.some((r) => r.id === TK.selected)) showTask(TK.selected);
+    if (TK.gantt) showGantt();
+    else if (TK.selected && TK.rows.some((r) => r.id === TK.selected)) showTask(TK.selected);
     else if (TK.selected == null || !TK.detail) renderTaskEmpty();
   } catch (err) { $('#tk-list').innerHTML = `<div class="list-foot">${esc(err.message)}</div>`; }
 }
@@ -53,6 +54,7 @@ function renderTaskList() {
   $$('#tk-tabs button').forEach((b) => { b.classList.toggle('on', b.dataset.view === TK.view); b.textContent = `${TK_TABS[b.dataset.view]} ${n[b.dataset.view]}`; });
   $('#tk-sub').textContent = st.mode === 'trial' ? '演练模式' : '';
   $('#tk-new').classList.toggle('hidden', st.mode === 'off');
+  $('#tk-gantt').classList.toggle('hidden', st.mode === 'off');
   $('#tk-ask').classList.toggle('hidden', st.mode === 'off');
   if (st.mode === 'off') $('#tk-ask-hint').classList.add('hidden'); else fitCmd();
   renderTaskBanner();
@@ -130,13 +132,14 @@ function renderTaskEmpty() {
 }
 
 async function showTask(id) {
-  TK.selected = id;
+  TK.selected = id; TK.gantt = false;
   $$('#tk-list .tk-row').forEach((el) => el.classList.toggle('sel', Number(el.dataset.id) === id));
   const el = $(`#tk-list .tk-row[data-id="${id}"]`); if (el) el.scrollIntoView({ block: 'nearest' });
   try {
     const [d, story] = await Promise.all([api('taskGet', { id }), api('taskStory', { id }).catch(() => null)]);
     if (TK.selected !== id) return;
     TK.detail = d; TK.story = story; renderTaskDetail();
+    if (typeof chatMailChanged === 'function') chatMailChanged();  // 问邮箱 (ai.js) can take the selected task along.
     nameSteps(id);
   } catch (err) { fail(err); }
 }
@@ -175,8 +178,9 @@ function storyHtml(story) {
           ${s.basis ? `<div class="tk-ev-note">${s.mails && s.mails.length ? '依据' : '指令'}：「${esc(s.basis)}」</div>` : ''}
           ${(s.mails || []).length ? `<div class="tk-mailrefs">${s.mails.map((m) => `<button class="tk-mailref" data-open="${esc(m.mid)}" title="打开邮件"><i data-icon="mail"></i>${esc(m.subject || '（无主题）')}<span>${esc(String(m.date || '').slice(5, 16))}</span></button>`).join('')}</div>` : ''}
           ${s.changes && Object.keys(s.changes).length ? changeRows(s.changes) : ''}
-          ${story.undo && s.seq === story.undo ? `<div class="row-gap"><button class="link-btn" data-undo="${s.seq}">撤销这次修改</button></div>` : ''}
-        </div></div></div>`).join('')}</div>`;
+        </div>
+        ${story.undo && s.seq === story.undo ? `<div class="row-gap tk-step-undo"><button class="link-btn" data-undo="${s.seq}" title="恢复到这次修改之前，时间线上记一条撤销">撤销这次修改</button></div>` : ''}
+      </div></div>`).join('')}</div>`;
 }
 async function nameSteps(id, asked) {
   const story = TK.story;
@@ -267,6 +271,7 @@ function renderTaskDetail() {
     </div>
     <div class="tk-facts"><span>${[['start', '开始'], ['due', '计划完成'], ['end', '结束'], ['updated', '更新']].filter(([k]) => t[k]).map(([k, n]) => `${n} ${esc(tkText(t[k]))}`).join(' · ') || '没有日期'}</span>
       <button class="link-btn" id="tk-fields-toggle">${tkFieldsOpen() ? '收起详细信息' : '详细信息'}</button></div>
+    ${relationsHtml(d.relations)}
     <dl class="tk-fields${tkFieldsOpen() ? '' : ' hidden'}">${field('latest', true)}${field('owner', true)}${field('start')}${field('due')}${field('end')}${field('updated')}
       ${field('blockers', true)}${field('next', true)}${field('acceptance', true)}</dl>
     <div class="seg tk-dtabs"><button data-tab="story">演进图</button><button data-tab="timeline">变更记录 ${d.events.length}</button><button data-tab="history">进展原文</button><button data-tab="mail">关联邮件 ${d.links.length}</button></div>
@@ -316,6 +321,8 @@ function changeRows(changes) {
 $('#tk-detail').addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { renderTaskTab(tab.dataset.tab); return; }
   const act = e.target.closest('[data-act]'); if (act) { taskAction(act.dataset.act); return; }
+  const goto = e.target.closest('[data-goto]'); if (goto) { showTask(Number(goto.dataset.goto)); return; }
+  if (e.target.closest('#tk-rel-edit')) { editRelations(); return; }
   if (e.target.closest('#tk-name-steps')) { nameSteps(TK.detail.task.id, true); return; }
   if (e.target.closest('#tk-fields-toggle')) {
     try { localStorage.setItem('hy-tk-fields', tkFieldsOpen() ? '0' : '1'); } catch (err) { /* optional */ }
@@ -326,7 +333,7 @@ $('#tk-detail').addEventListener('click', async (e) => {
   const use = e.target.closest('[data-use]'); if (use) { mailToTask([use.dataset.use], { target: TK.detail.task.id }); return; }
   const undo = e.target.closest('[data-undo]');
   if (undo) {
-    if (!(await confirmDialog('撤销这次修改', '把这条任务恢复到这次修改之前的样子，并在时间线上记录一条撤销。', '撤销'))) return;
+    if (!(await confirmDialog('撤销这次修改', '把这条任务恢复到这次修改之前的样子。进展原文里保留原来的记录并注明已撤销，变更记录里记一条撤销；演进图里不再显示这一步。', '撤销'))) return;
     runChange(() => api('taskUndo', { seq: Number(undo.dataset.undo) }));
     return;
   }
@@ -341,6 +348,104 @@ $('#tk-detail').addEventListener('click', async (e) => {
     }
   } catch (err) { fail(err); if (err.code === 'TASK_CONFLICT') loadTasks(); }
 });
+
+// ---------------------------------------------------------------- 任务关系与甘特图 (P1)
+// 上级 / 依赖 #N live in 阻塞与依赖 (the backend reads them, tasks/plan.py): no extra column.
+const REL_PARENT = /(?:上级|属于|父任务|母任务)\s*[:：]?\s*#\s*\d{1,5}/g;
+const REL_DEPS = /(?:依赖|前置|等待|先完成)\s*[:：]?\s*(?:#\s*\d{1,5}\s*[、,，和及/]?\s*)+/g;
+function relationsHtml(rel) {
+  if (!rel) return '';
+  const chip = (t) => `<a class="tk-rel-chip" data-goto="${t.id}" title="${esc(t.content)}">#${t.id}<span class="tk-rel-status s-${tkStatusClass(t.status)}">${esc(t.status)}</span></a>`;
+  const line = (label, items, extra = '') => items.length ? `<div class="tk-rel-line"><span class="tk-rel-label">${label}</span>${items.map(chip).join('')}${extra}</div>` : '';
+  const roll = rel.rollup && rel.rollup.total ? `<span class="tk-rel-roll"><span style="width:${Math.round(100 * rel.rollup.done / rel.rollup.total)}%"></span></span><span class="muted small">${rel.rollup.done}/${rel.rollup.total} 完成</span>` : '';
+  const body = line('上级', rel.parent ? [rel.parent] : []) + line('子任务', rel.children, roll) +
+    line('前置', rel.deps, rel.waiting.length ? `<span class="muted small">还有 ${rel.waiting.length} 条未完成</span>` : '') + line('后续', rel.next) +
+    (rel.missing.length ? `<div class="tk-rel-line"><span class="tk-rel-label">无效</span><span class="muted small">阻塞与依赖里写的 ${rel.missing.map((n) => '#' + n).join('、')} 不存在</span></div>` : '');
+  return `<div class="tk-rel">${body || '<span class="muted small">没有上级、子任务或前置任务。</span>'}<button class="link-btn" id="tk-rel-edit">设置关系</button></div>`;
+}
+async function editRelations() {
+  const d = TK.detail, t = d.task, rel = d.relations || {};
+  const v = await promptDialog({ title: `设置关系 · #${t.id}`, okText: '检查修改',
+    text: '关系写在「阻塞与依赖」里（如「上级 #8」「依赖 #12、#13」），Excel 中同样可见。前置任务完成后，鸿雁会提示把受阻的后续任务改回进行中。',
+    body: `<div class="tk-form">${tkRow('上级任务', `<input data-f="parent" type="text" value="${rel.parent ? '#' + rel.parent.id : ''}" placeholder="例如 #8，没有就留空" spellcheck="false">`)}
+      ${tkRow('前置任务', `<input data-f="deps" type="text" value="${(rel.deps || []).map((x) => '#' + x.id).join('、')}" placeholder="例如 #12、#13：它们完成后才能开始" spellcheck="false">`)}</div>`,
+    collect: () => tkCollect($('#prompt')) });
+  if (!v) return;
+  const num = (s) => [...String(s).matchAll(/\d{1,5}/g)].map((m) => Number(m[0])).filter((n) => n !== t.id);
+  const parent = num(v.parent)[0], deps = [...new Set(num(v.deps))];
+  const rest = tkText(t.blockers).replace(REL_PARENT, '').replace(REL_DEPS, '').replace(/^[\s；;，,。]+|[\s；;，,]+$/g, '').replace(/([；;，,])\s*[；;，,]+/g, '$1');
+  const blockers = [rest, parent ? `上级 #${parent}` : '', deps.length ? `依赖 ${deps.map((n) => '#' + n).join('、')}` : ''].filter(Boolean).join('；');
+  if (blockers === tkText(t.blockers)) { toast('没有修改'); return; }
+  if (!(await confirmChanges(`设置关系 · #${t.id}`, { blockers: [t.blockers, blockers] }))) return;
+  runChange(() => api('taskUpdate', { id: t.id, rev: d.rev, fields: { blockers }, note: '设置任务关系' }));
+}
+function offerUnblock(items) {
+  const names = items.map((u) => `#${u.id}`).join('、');
+  toast(`前置任务已完成：${names} 不再受阻`, { ms: 15000, action: { label: '改为进行中', run: async () => {
+    for (const u of items) {
+      try { await api('taskUpdate', { id: u.id, rev: u.rev, fields: { status: '进行中' }, note: '前置任务已完成' }); }
+      catch (err) { fail(err); }
+    }
+    toast(`${names} 已改为进行中`); loadTasks();
+  } } });
+}
+
+$('#tk-gantt').onclick = () => { TK.gantt = true; showGantt(); };
+async function showGantt() {
+  TK.gantt = true; TK.selected = null; TK.detail = null;
+  $$('#tk-list .tk-row').forEach((el) => el.classList.remove('sel'));
+  let g;
+  try { g = await api('tasksGantt', { view: TK.view, query: TK.query }); } catch (err) { fail(err); return; }
+  if (!TK.gantt) return;
+  if (TK.ids) g.rows = g.rows.filter((r) => TK.ids.includes(r.id));
+  renderGantt(g);
+}
+function renderGantt(g) {
+  const pane = $('#tk-detail');
+  const head = `<div class="tk-gantt-head"><b>甘特图</b><span class="muted small">${g.rows.length} 条有日期的任务 · ${TK_TABS[TK.view]}${TK.query ? ' · ' + esc(TK.query) : ''}</span><span class="spacer"></span>
+    <span class="tk-gl"><i class="gl-bar"></i>计划</span><span class="tk-gl"><i class="gl-bar late"></i>逾期</span><span class="tk-gl"><i class="gl-bar wait"></i>等前置</span><span class="tk-gl"><i class="gl-bar done"></i>已完成</span></div>`;
+  if (!g.rows.length) {
+    pane.innerHTML = `<div class="tk-gantt">${head}<div class="empty"><p>列表里的任务都没有开始日期或计划完成日期。</p><p class="muted small">在任务的「编辑」中填写日期后就会出现在这里。</p></div></div>`;
+    return;
+  }
+  const ms = (s) => Date.parse(s + 'T00:00:00Z'), day = (s) => Math.round((ms(s) - ms(g.from)) / 864e5);
+  const days = day(g.to) + 1, LABEL = 250, H = 30;
+  const W = Math.max(4, Math.min(30, Math.floor(((pane.clientWidth || 800) - LABEL - 24) / days)));
+  const width = days * W;
+  // The scale: a tick per month, and per week when there is room.
+  let scale = '', last = -99;
+  for (let i = 0; i < days; i++) {
+    const d = new Date(ms(g.from) + i * 864e5), date = d.getUTCDate(), x = i * W;
+    if (date === 1 || i === 0) { scale += `<span class="tk-gm" style="left:${x}px">${d.getUTCFullYear() !== new Date().getFullYear() ? d.getUTCFullYear() + '-' : ''}${d.getUTCMonth() + 1} 月</span>`; last = x + 30; }
+    else if (d.getUTCDay() === 0 && W * 7 >= 28 && x > last + 6) { scale += `<span class="tk-gw" style="left:${x}px">${date}</span>`; last = x + 16; }
+  }
+  const index = new Map(g.rows.map((r, i) => [r.id, i]));
+  const bars = g.rows.map((r) => {
+    const x = day(r.start) * W, w = Math.max(W, (day(r.end) - day(r.start) + 1) * W);
+    const cls = r.status === '已完成' ? 'done' : r.status === '已取消' ? 'canceled' : r.late ? 'late' : r.waiting ? 'wait' : r.status === '受阻' ? 'blocked' : '';
+    const roll = r.rollup && r.rollup.total ? `<span class="tk-groll" style="width:${Math.round(100 * r.rollup.done / r.rollup.total)}%"></span>` : '';
+    const tip = `#${r.id} ${r.content}\n${r.start}${r.end !== r.start ? ' → ' + r.end : ''} · ${r.status}${r.late ? ' · 已逾期' : ''}${r.waiting ? ' · 等前置任务' : ''}` +
+      (r.rollup && r.rollup.total ? `\n子任务 ${r.rollup.done}/${r.rollup.total} 完成` : '');
+    return `<div class="tk-grow" data-goto="${r.id}"><div class="tk-glabel" style="padding-left:${10 + r.depth * 16}px" title="${esc(tip)}">
+        <b>#${r.id}</b><span>${esc(r.content)}</span></div>
+      <div class="tk-gtrack" style="width:${width}px"><div class="tk-gbar ${cls}${r.rollup ? ' parent' : ''}" style="left:${x}px;width:${w}px" title="${esc(tip)}">${roll}</div></div></div>`;
+  }).join('');
+  const lines = g.rows.flatMap((r) => r.deps.filter((dep) => index.has(dep)).map((dep) => {
+    const from = g.rows[index.get(dep)], y1 = index.get(dep) * H + H / 2, y2 = index.get(r.id) * H + H / 2;
+    const x1 = (day(from.end) + 1) * W, x2 = day(r.start) * W;
+    return `<path d="M${x1} ${y1} h6 V${y2} H${Math.max(x2, x1 + 6)}" />`;
+  })).join('');
+  const today = (day(g.today) + 0.5) * W;
+  pane.innerHTML = `<div class="tk-gantt">${head}<div class="tk-gscroll"><div class="tk-gbody" style="width:${LABEL + width}px">
+      <div class="tk-gscale"><div class="tk-glabel"></div><div class="tk-gtrack" style="width:${width}px">${scale}</div></div>
+      <div class="tk-grows">${bars}
+        <svg class="tk-glines" style="left:${LABEL}px" width="${width}" height="${g.rows.length * H}"><defs><marker id="tk-arrow" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L6 3L0 6z"/></marker></defs>${lines}</svg>
+        <div class="tk-gtoday" style="left:${LABEL + today}px" title="今天 ${esc(g.today)}"></div></div></div></div>
+    <p class="muted small tk-gnote">点击一行打开任务。条形从开始日期到计划完成日期（已完成的到结束日期）；只有一个日期的任务显示为一天。箭头表示前置关系。</p></div>`;
+  $$('.tk-glines path', pane).forEach((p) => p.setAttribute('marker-end', 'url(#tk-arrow)'));
+  const scroller = $('.tk-gscroll', pane);
+  scroller.scrollLeft = Math.max(0, today - (scroller.clientWidth - LABEL) / 2);
+}
 
 // ---------------------------------------------------------------- forms
 function tkInput(k, value, opts = {}) {
@@ -371,6 +476,7 @@ async function confirmChanges(title, changes, okText = '保存') {
 
 function afterSave(result, quiet) {
   loadMailIndex();
+  if (result && result.unblocked && result.unblocked.length) offerUnblock(result.unblocked);
   TK.story = null;
   if (!quiet && result && result.verify) showVerify(result);
   else if (result && result.export && result.export.state && result.export.state !== 'ok') toast('已保存；导出未完成，见任务列表上方的提示', { error: true });
@@ -501,21 +607,48 @@ async function reviewPending() {
 
 // ---------------------------------------------------------------- 自然语言操作
 // One sentence -> a plan from the AI (tasks/assistant.py), each operation previewed with its
-// changes; nothing runs before 确认执行. When the AI asks back, the next sentence continues
-// the same conversation (TK.chat, at most four exchanges).
+// changes; nothing runs before 确认执行. The exchange shows above the box (TK.thread); while
+// the AI is asking back or a plan waits, the next sentence continues the same conversation
+// (TK.chat, at most four exchanges, sent to the AI).
 TK.chat = [];
+TK.thread = [];
 const TK_OP = { progress: '记录进展', update: '修改', complete: '标记完成', cancel: '取消任务', reopen: '重新打开', create: '新建任务' };
+const tkOpName = (p) => `${TK_OP[p.op] || p.op}${p.id ? ' #' + p.id : ''}`;
 
 function setCmdState(text, busy) {
   const box = $('#tk-cmd-state');
-  const chat = !busy && TK.asking && TK.chat.length ? '接着上一条对话（回答上面的问题即可）· <button class="link-btn" id="tk-cmd-reset">重新开始</button>' : '';
   const filter = !busy && (TK.query || TK.ids) ? `<span class="tk-answer">${esc(TK.answer || '已筛选')}</span> · <button class="link-btn" id="tk-filter-clear">显示全部</button>` : '';
-  box.innerHTML = busy ? `<span class="tk-spin"></span>${esc(text)}` : text ? esc(text) : chat || filter;
+  box.innerHTML = busy && text ? `<span class="tk-spin"></span>${esc(text)}` : text ? esc(text) : filter;
   const clear = $('#tk-filter-clear'); if (clear) clear.onclick = () => { clearTaskFilter(); loadTasks(); };
   box.classList.toggle('hidden', !box.innerHTML);
   if (typeof fitCmd === 'function') fitCmd();
   $('#tk-cmd-go').disabled = !!busy; $('#tk-cmd').disabled = !!busy;
-  const reset = $('#tk-cmd-reset'); if (reset) reset.onclick = () => { TK.chat = []; TK.asking = false; setCmdState(''); };
+}
+
+// The conversation above the box: what the user said, the AI's answer and questions, the plan
+// waiting for confirmation (reopened from here) and what ran.
+function renderThread() {
+  const el = $('#tk-thread'), live = TK.chat.length > 0;
+  $('#tk-cmd').placeholder = live && TK.asking ? '回答鸿雁的问题…' : live ? '接着说，或让它改一下计划…' : '问问鸿雁，或让它更新任务…';
+  if (!TK.thread.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+  const turns = TK.thread.map((t, i) => {
+    if (t.role === 'user') return `<div class="chat-q">${esc(t.text)}</div>`;
+    if (t.role === 'wait') return `<div class="tk-th-a tk-th-wait"><span class="tk-spin"></span>${esc(t.text)}</div>`;
+    if (t.role === 'note') return `<div class="tk-th-note${t.bad ? ' bad' : ''}"><i data-icon="${t.bad ? 'alert' : 'check'}"></i>${esc(t.text)}</div>`;
+    const qs = t.questions.length ? `<ul class="tk-th-qs">${t.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ul>` : '';
+    const bad = t.blocked.length ? `<ul class="tk-th-qs bad">${t.blocked.map((q) => `<li>${esc(q)}</li>`).join('')}</ul>` : '';
+    const ops = t.ops.length ? `<div class="tk-th-ops">${t.ops.map((o) => `<span class="tk-th-op">${esc(o)}</span>`).join('')}
+      ${t.plan ? `<button class="btn sm primary" data-plan="${i}">查看并确认</button>` : ''}</div>` : '';
+    return `<div class="tk-th-a">${t.reply ? `<p>${esc(t.reply)}</p>` : ''}${qs}${bad}${ops}</div>`;
+  }).join('');
+  el.innerHTML = `<div class="tk-th-head"><i data-icon="spark"></i><b>${live ? '与鸿雁的对话' : '上一次对话'}</b>
+    <span class="muted">${live ? (TK.asking ? '在下面回答，鸿雁会接着处理' : '可以接着说') : '已结束，再输入会开始新的对话'}</span>
+    <button class="link-btn" id="tk-th-reset">${live ? '重新开始' : '收起'}</button></div><div class="tk-th-body">${turns}</div>`;
+  el.classList.remove('hidden');
+  renderIcons(el);
+  const body = $('.tk-th-body', el); body.scrollTop = body.scrollHeight;
+  $('#tk-th-reset').onclick = () => { TK.chat = []; TK.asking = false; TK.thread = []; renderThread(); };
+  $$('[data-plan]', el).forEach((b) => (b.onclick = () => { const t = TK.thread[Number(b.dataset.plan)]; showPlan(t.plan, t); }));
 }
 
 async function tkAiConsent() {
@@ -549,17 +682,42 @@ async function runCommand() {
   // 「周报」「上周周报」: straight to the report; other wordings (a date range) go through the AI.
   const weekly = text.match(/^(?:帮我)?(?:生成|写|出|做)?(?:一份|一下)?(本周|这周|上周)?的?(?:工作)?周报[。.!！]?$/);
   if (weekly) { box.value = ''; fitCmd(); writeReport(weekly[1] === '上周' ? 'last' : ''); return; }
-  setCmdState('正在理解你的指令…', true);
+  await askAssistant(text);
+}
+
+// One turn of the conversation: from the box, or an answer typed in the plan dialog.
+async function askAssistant(text) {
+  const box = $('#tk-cmd');
+  if (!TK.chat.length) TK.thread = [];
+  TK.thread.forEach((t) => { t.plan = null; });  // A newer answer replaces any plan still waiting.
+  TK.thread.push({ role: 'user', text }, { role: 'wait', text: '正在理解…' });
+  box.value = ''; setCmdState('', true); renderThread();
   try {
     const plan = await api('tasksCommand', { text, history: TK.chat });
+    TK.thread.pop();
     TK.chat = [...TK.chat, { role: 'user', content: text }, { role: 'assistant', content: plan.raw }].slice(-8);
-    box.value = '';
     TK.asking = plan.questions.length > 0;
+    const runnable = plan.preview.filter((p) => !p.error && p.changes && Object.keys(p.changes).length);
+    const turn = { role: 'assistant', reply: plan.reply, questions: plan.questions, ops: runnable.map(tkOpName),
+      blocked: plan.preview.filter((p) => p.error).map((p) => `${tkOpName(p)} 不会执行：${p.message || '这项操作不符合任务规则。'}`),
+      plan: runnable.length ? plan : null };
+    if (!turn.reply && !turn.questions.length && !turn.ops.length && !turn.blocked.length) turn.reply = '没有需要执行的操作。';
+    TK.thread.push(turn);
     setCmdState('');
-    if (plan.show && !plan.actions.length && !plan.questions.length) { TK.chat = []; applyShow(plan.show, plan.reply); return; }
-    if (plan.report && !plan.actions.length && !plan.questions.length) { TK.chat = []; writeReport(plan.report); return; }
-    await showPlan(plan);
+    const answerOnly = !plan.actions.length && !plan.questions.length;
+    if (answerOnly && (plan.show || plan.report)) {
+      TK.chat = []; TK.asking = false;
+      TK.thread.push({ role: 'note', text: plan.show ? '已在下面的任务列表中筛选出来' : '已打开周报' });
+      renderThread();
+      if (plan.show) applyShow(plan.show, plan.reply); else writeReport(plan.report);
+      return;
+    }
+    if (!turn.plan && !TK.asking) TK.chat = [];
+    renderThread();
+    if (turn.plan) await showPlan(plan, turn);
   } catch (err) {
+    TK.thread.splice(-2);
+    box.value = text; renderThread();
     setCmdState('');
     if (err.code === 'AI_NOT_CONFIGURED') {  // Without AI the box still finds tasks by keyword.
       box.value = ''; applyShow({ view: 'all', query: text }, `关键词：${text}（AI 未设置，按关键词查找）`);
@@ -574,13 +732,15 @@ function fitCmd() {
   box.style.height = 'auto';
   box.style.height = Math.min(box.scrollHeight, 6 * 21 + 8) + 'px';
   box.style.overflowY = box.scrollHeight > 6 * 21 + 8 ? 'auto' : 'hidden';
-  $('#tk-ask-hint').classList.toggle('hidden', !!box.value || !$('#tk-cmd-state').classList.contains('hidden'));
+  $('#tk-ask-hint').classList.toggle('hidden', !!box.value || !$('#tk-cmd-state').classList.contains('hidden') || TK.thread.length > 0);
 }
 $('#tk-cmd').addEventListener('input', fitCmd);
 $('#tk-cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); runCommand(); } });
 
-function planItem(p) {
-  const head = `<div class="tk-ev-head"><b>${TK_OP[p.op] || esc(p.op)}</b><span>${p.id ? '#' + p.id : ''}</span>
+// pick: the action's index when it gets a checkbox (each operation confirmed on its own).
+function planItem(p, pick) {
+  const box = pick === undefined ? '' : `<input type="checkbox" class="tk-pick" data-pick="${pick}" checked title="执行这一项">`;
+  const head = `<div class="tk-ev-head">${box}<b>${TK_OP[p.op] || esc(p.op)}</b><span>${p.id ? '#' + p.id : ''}</span>
     ${p.op !== 'create' && p.content ? `<span class="tk-plan-what">${esc(p.content)}</span>` : ''}${p.status ? tkStatus(p.status) : ''}</div>`;
   const changes = p.changes && Object.keys(p.changes).length;
   const body = p.error ? `<div class="tk-bad">不会执行：${esc(p.message || '这项操作不符合任务规则。')}</div>`
@@ -588,27 +748,58 @@ function planItem(p) {
   return `<div class="tk-plan-item${p.error || !changes ? ' off' : ''}">${head}${body}</div>`;
 }
 
-async function showPlan(plan) {
+async function showPlan(plan, turn) {
   const runnable = plan.preview.map((p) => !p.error && p.changes && Object.keys(p.changes).length > 0);
   const count = runnable.filter(Boolean).length;
   const questions = plan.questions.length ? `<div class="tk-questions"><b>需要你补充：</b><ul>${plan.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ul>
-    <p class="muted small">关掉这个窗口后，直接在任务页的输入框里回答，鸿雁会接着这次对话。</p></div>` : '';
-  const go = await promptDialog({ title: count ? '确认任务操作' : '还不能执行', okText: count > 1 ? `确认执行 ${count} 项` : '确认执行',
-    body: `<div class="tk-plan">${plan.reply ? `<p>${esc(plan.reply)}</p>` : ''}${questions}${plan.preview.map(planItem).join('')}</div>`,
-    collect: count ? () => true : null });
-  if (!go) { if (!plan.questions.length) TK.chat = []; setCmdState(''); return; }
-  TK.asking = false;
-  const actions = plan.actions.filter((_, i) => runnable[i]);
+    <textarea id="tk-answer" rows="2" spellcheck="false" placeholder="在这里回答，鸿雁接着这次对话"></textarea>
+    <div class="row-gap"><button class="btn sm primary" id="tk-answer-go">回答并重新生成</button></div>
+    <p class="muted small">也可以先执行下面的操作，再在任务页的对话里回答。</p></div>` : '';
+  const go = await promptDialog({ title: '确认任务操作', okText: count > 1 ? `确认执行 ${count} 项` : '确认执行',
+    body: `<div class="tk-plan">${plan.reply ? `<p>${esc(plan.reply)}</p>` : ''}${questions}
+      ${count > 1 ? '<p class="muted small">取消勾选的项不会执行；依赖新任务的项要和新任务一起执行。</p>' : ''}
+      ${plan.preview.map((p, i) => planItem(p, count > 1 && runnable[i] ? i : undefined)).join('')}</div>`,
+    collect: count ? () => ({ picked: count > 1 ? $$('#prompt [data-pick]').filter((b) => b.checked).map((b) => Number(b.dataset.pick)) : runnable.indexOf(true) === -1 ? [] : [runnable.indexOf(true)] }) : null,
+    onOpen: (dlg, done) => {
+      const answer = $('#tk-answer-go', dlg);
+      if (answer) answer.onclick = () => { const a = $('#tk-answer', dlg).value.trim(); if (a) done({ answer: a }); };
+      const ok = $('#prompt-ok');
+      $$('[data-pick]', dlg).forEach((b) => (b.onchange = () => {
+        const n = $$('[data-pick]', dlg).filter((x) => x.checked).length;
+        b.closest('.tk-plan-item').classList.toggle('off', !b.checked);
+        ok.textContent = n > 1 ? `确认执行 ${n} 项` : '确认执行'; ok.disabled = !n;
+      }));
+      ok.disabled = false;
+    } });
+  $('#prompt-ok').disabled = false;
+  if (go && go.answer) { await askAssistant(go.answer); return; }
+  if (!go) return;  // Closed: the plan waits in the conversation (查看并确认), and the user can keep talking.
+  const actions = plan.actions.filter((_, i) => runnable[i] && go.picked.includes(i));
+  if (!actions.length) return;
   const basis = TK.chat.filter((t) => t.role === 'user').map((t) => t.content).join(' / ');
-  setCmdState('正在执行…', true);
+  turn.plan = null;
+  TK.thread.push({ role: 'wait', text: '正在执行…' });
+  setCmdState('', true); renderThread();
   try {
     const result = await api('tasksCommandRun', { actions, text: basis });
-    TK.chat = [];
-    setCmdState('');
-    if (result.failed.length) toast(`${result.failed.length} 项没有执行：${result.failed.map((f) => (f.id ? '#' + f.id + ' ' : '') + (TK_OP[f.op] || f.op)).join('、')}`, { error: true, ms: 8000 });
+    TK.thread.pop();
+    // Questions still open: keep the conversation (the next answer continues it) and tell the
+    // assistant what already ran, so it is not proposed again.
+    const failed = result.failed.map(tkOpName);
+    const ran = actions.map(tkOpName).filter((name) => !failed.includes(name));
+    const last = TK.chat[TK.chat.length - 1];
+    if (plan.questions.length && last && last.role === 'assistant') {
+      last.content += `\n（用户已执行：${ran.join('、') || '无'}，不要重复提出；其余操作没有执行。接下来只处理 questions 中尚未解决的部分。）`;
+    } else { TK.chat = []; TK.asking = false; }
+    if (ran.length) TK.thread.push({ role: 'note', text: '已执行：' + ran.join('、') });
+    if (failed.length) TK.thread.push({ role: 'note', bad: true, text: '没有执行：' + failed.join('、') });
+    setCmdState(''); renderThread();
     if (result.ids.length) TK.selected = result.ids[result.ids.length - 1];
     afterSave(result);
-  } catch (err) { setCmdState(''); fail(err); }
+  } catch (err) {
+    TK.thread.pop(); turn.plan = plan;
+    setCmdState(''); renderThread(); fail(err);
+  }
 }
 
 // ---------------------------------------------------------------- 邮件 → 任务（AI）

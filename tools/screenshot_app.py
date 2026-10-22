@@ -37,8 +37,15 @@ window.show()
 STEPS = [
     (2500, None, None),
     (600, "selectMessage(visibleRows()[0].id)", 'main'),
+    # 精简工具栏 (A4): the folded buttons in ⋯, then the same screen with 完整.
+    (600, "$('#reader-body [data-act=\"more\"]').click()", 'lean-more'),
+    (500, "hideMenu(); document.documentElement.classList.remove('tb-lean')", 'full-main'),
+    (300, "document.documentElement.classList.add('tb-lean')", None),
     (900, "startCompose('reply', S.selected)", None),
     (900, "(() => { const i=$('.chips[data-field=\"to\"] input'); i.value='zh'; i.dispatchEvent(new Event('input')); })()", 'composer'),
+    (500, "$('#suggest').classList.add('hidden'); $('#cmp-format').click()", 'lean-format'),
+    (500, "hideMenu(); $('#cmp-send-more').click()", 'lean-send'),
+    (300, "hideMenu()", None),
     (700, "closeComposer(true); openSettings()", "settings"),
     (600, "$('#settings').classList.add('hidden'); startCompose('new')", "compose-new"),
     (600, "$('#settings').classList.add('hidden'); runSearch('预算')", 'search'),
@@ -242,6 +249,84 @@ STEPS += [
     (1500, "document.body.offsetWidth", 'ai-check'),
     (500, "$('#prompt').classList.add('hidden'); closeComposer(true)", None),
 ]
+# 理解层 M1: 要点, 待我处理 / 需要知道, the reader's strip, corrections (HONGYAN_WALK_U1=1 runs only these; demo AI).
+U1 = len(STEPS)
+STEPS += [
+    (900, lambda: (setattr(backend, 'ai_client', __import__('coremail_desktop.app.demo', fromlist=['DemoAiClient']).DemoAiClient()),
+                   backend.set_understand('on')), None),
+    (600, "S.prefs.understand = 'on'; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
+    (9000, "document.body.offsetWidth", 'uc-list'),
+    (500, "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'act' && (UC.cards.get(r.id) || {}).due).id)", 'uc-reader-act'),
+    (500, "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'know').id)", 'uc-reader-know'),
+    (500, "showUnderstand('act')", 'uc-act'),
+    (500, "showUnderstand('know')", 'uc-know'),
+    (500, "selectFolder('1')", None),
+    (900, "const r = $$('#mail-list .row')[1].getBoundingClientRect(); showMenu(r.left + 80, r.top + 20, UC.menu(rowOf($$('#mail-list .row')[1].dataset.id)))", 'uc-menu'),
+    (500, "hideMenu(); ucRuleDialog({ sender: 'rd@example.invalid', subject: '研发周报 · 第 42 周' }, 'know')", 'uc-rule'),
+    (500, "$('#prompt').classList.add('hidden'); openSettings(); $('#st-nav [data-tab=ai]').click(); setTimeout(() => $('#uc-on').scrollIntoView({ block: 'center' }), 300)", None),
+    (1200, "document.body.offsetWidth", 'uc-settings'),
+    (500, "$('#settings').classList.add('hidden'); S.prefs.understand = ''; ucAsk()", None),
+    (900, "document.body.offsetWidth", 'uc-ask'),
+]
+# Reader security icons: decrypted + valid signature beside the date, a warning still as a banner (HONGYAN_WALK_SEC=1 runs only these).
+SEC = len(STEPS)
+SIG_OK = "{ status: 'valid', issuer: 'INSPUR-CA', directory: true, subject: 'CN=演示', digest: 'sha256' }"
+STEPS += [
+    (2500, "selectFolder('1')", None),
+    (1200, "selectMessage(S.rows[0].id)", None),
+    (900, "renderMessage({ ...S.message, encryption: 'decrypted', signature: " + SIG_OK + " })", 'sec-icons'),
+    (700, "renderMessage({ ...S.message, encryption: 'decrypted', signature: { ...(" + SIG_OK + "), timeValid: false } })", 'sec-warn'),
+]
+
+# 工作记忆 M2, 本周需要知道 / 等对方回复 / 人物卡片 M3, 任务关系与甘特图 P1 (HONGYAN_WALK_M2=1 runs only these; demo AI).
+M2 = len(STEPS)
+
+
+def m2_setup():
+    import time
+    from coremail_desktop.app.demo import DemoAiClient
+    from tests.test_tasks import book, task_row
+    folder = Path(shot_dir) / '任务'
+    folder.mkdir(exist_ok=True)
+    rows = [task_row(401, '进行中', system='NG BI', content='NG BI 部署上线', start='2026-10-08', due='2026-11-06'),
+            task_row(402, '进行中', system='NG BI', content='服务器到货与上架', start='2026-10-10', due='2026-10-20', blockers='上级 #401'),
+            task_row(403, '受阻', system='NG BI', content='安装与接口联调', start='2026-10-21', due='2026-10-30', blockers='上级 #401；依赖 #402'),
+            task_row(404, '未开始', system='NG BI', content='用户培训', due='2026-11-04', blockers='上级 #401；依赖 #403'),
+            task_row(405, '进行中', system='CRM', content='CRM 接口对接', start='2026-10-01', due='2026-10-27')]
+    (folder / '未完成任务.xlsx').write_bytes(book({'未完成任务': rows}))
+    (folder / '已完成任务.xlsx').write_bytes(book({'已完成任务': [task_row(390, '已完成', system='NG BI', content='需求调研', start='2026-09-20', end='2026-10-05', blockers='上级 #401')],
+                                                '已取消任务': []}))
+    backend.tasks_set_folder(str(folder))
+    backend.tasks_import('trial')
+    backend.ai_client = DemoAiClient()
+    backend.set_prefs({'undoSeconds': 0})
+    backend.set_understand('on')
+    backend.memory_project('演示项目', role='own')
+    backend.messages('3', 0, 50)
+    sent = next(r for r in backend.cache.matching(lambda r: r['fid'] == '3'))
+    backend.cache.update(sent['id'], ts=time.time() - 5 * 86400, subject='请确认接口文档 v2 的字段', to='"李华" <lihua@example.invalid>', preview='请在周五前确认')
+
+
+KNOW_MAIL = "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'know' && (UC.cards.get(r.id) || {}).project).id)"
+STEPS += [
+    (900, m2_setup, None),
+    (600, "S.prefs.understand = 'on'; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
+    (12000, "ucRound()", None),
+    (12000, "UC.cards.clear(); memReset(); renderList()", None),
+    (1500, KNOW_MAIL, 'm2-reader'),
+    (900, "memTimeline(UC.cards.get(S.message.id).project)", 'm2-timeline'),
+    (500, "$('#prompt [data-close]').click(); MEM.weekOpen = true; MEM.week = 1; showUnderstand('know')", 'm3-week'),
+    (900, "showUnderstand('wait')", None),
+    (900, "selectMessage(S.rows[0].id)", 'm3-wait'),
+    (500, "selectFolder('1')", None),
+    (1200, KNOW_MAIL, None),
+    (900, "$('#r-from-name').click()", 'm3-person'),
+    (500, "closePersonPop(); openSettings(); $('#st-nav [data-tab=ai]').click(); setTimeout(() => $('#mem-projects').scrollIntoView({ block: 'center' }), 300)", None),
+    (1200, "document.body.offsetWidth", 'm2-settings'),
+    (500, "$('#settings').classList.add('hidden'); openTasks()", None),
+    (1200, "$('#tk-gantt').click()", 'p1-gantt'),
+    (900, "showTask(403)", 'p1-relations'),
+]
 
 
 def render_pdf(mid):
@@ -279,6 +364,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

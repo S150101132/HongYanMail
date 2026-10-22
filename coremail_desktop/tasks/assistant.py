@@ -19,6 +19,8 @@ MAX_ACTIONS = 10
 MAX_TEXT = 1000
 PLAN_TOKENS = 1500
 RECENT = 30
+HISTORY_LINES = 4
+REF = re.compile(r'#\s*(N\d{1,2})(?!\d)')  # A new task of the same plan, before it has a number.
 FIELD_NAMES = ('system', 'content', 'priority', 'status', 'latest', 'owner', 'start', 'due', 'end', 'blockers', 'next', 'updated', 'acceptance')
 MENTION = re.compile(r'#\s*(\d{1,4})|(\d{1,4})\s*号|任务\s*(\d{1,4})|(?<![\d.:/])(\d{1,4})(?![\d.:/])')
 
@@ -50,6 +52,11 @@ SYSTEM = f"""你是「{MARKER}」，把用户的一句话变成对 Saudi-NG 任�
     下面的数据只有未完成任务和最近归档的任务；查找更早的归档任务时用 query 关键词，由系统在全部任务中搜索。
 11. 用户要周报、工作总结、汇报时，不输出 actions，输出 "report":{{"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}}（最多 62 天）。
     本周是 {{week}}，上周是 {{lastweek}}（每周从周日开始）。用户没说时间就用本周。
+12. 用户说新增前提任务、支线任务、依赖任务、子任务时，要同时做两件事：用 create 新建这条任务，并给它 "ref":"N1"（第二条 N2，依此类推）；
+    再对原任务用 progress 记录这件事，并在 fields.blockers 写明依赖，例如「依赖 #N1：在 IT 环境开发连接 LDAP 的插件」（保留原有的其他阻塞原因）。
+    新任务的 content 末尾注明「（#原任务编号 的前提）」，system 沿用原任务的系统，owner 按用户说的写。系统执行时会把 #N1 换成新任务的真实编号；用户会在确认时逐项决定是否执行。
+13. 记录进展前，先对照该任务的 latest（最新进展）和 recent（最近的历史记录）：同一件事已经记录过（意思相同，即使措辞不同）就不要再写 progress，
+    在 reply 里说明「#编号 已在某日记录过这条进展」；只把真正新的部分（例如新任务、依赖关系、状态变化）放进 actions。
 
 输出格式（JSON 对象）：
 {{"reply":"一两句话说明你理解的操作，或回答用户的问题","questions":["需要用户补充的问题，没有就空数组"],"actions":[…],"show":null,"report":null}}"""
@@ -71,20 +78,24 @@ def mentioned(text, known):
 
 
 def context(tasks, text):
-    """The task data the model needs to match the sentence (never the whole archive)."""
+    """The task data the model needs to match the sentence (never the whole archive); tasks
+    the sentence names also carry their last history lines, to tell a repeated progress."""
     def row(t, full):
         item = {'id': t['id'], 'system': t['system'], 'status': t['status'], 'content': _clip(t['content'], 300 if full else 80)}
         if full:
             for field in ('priority', 'latest', 'owner', 'start', 'due', 'end', 'blockers', 'next', 'acceptance'):
                 if t.get(field):
                     item[field] = _clip(t[field], 200)
+            if t['id'] in numbers:
+                item['recent'] = [_clip(line, 200) for line in _clip(t.get('history'), 100000).strip().split('\n')[-HISTORY_LINES:] if line.strip()]
         elif t.get('end'):
             item['end'] = _clip(t['end'], 20)
         return item
     by_id = {t['id']: t for t in tasks}
+    numbers = mentioned(text, by_id)
     unfinished = sorted((t for t in tasks if t['status'] in OPEN_STATUSES), key=lambda t: t['id'])
     archived = sorted((t for t in tasks if t['status'] in (DONE, CANCELED)), key=lambda t: t.get('order', 0))[-RECENT:]
-    named = [by_id[i] for i in mentioned(text, by_id) if by_id[i]['status'] not in OPEN_STATUSES]
+    named = [by_id[i] for i in numbers if by_id[i]['status'] not in OPEN_STATUSES]
     return {'未完成任务': [row(t, True) for t in unfinished],
             '提到的已归档任务': [row(t, True) for t in named],
             '最近归档的任务': [row(t, False) for t in archived if t not in named],
@@ -149,6 +160,8 @@ def parse_plan(content):
                           fields={k: v for k, v in fields.items() if k in ('status', 'next', 'blockers')})
         elif item['op'] in ('update', 'create'):
             action.update(fields=fields, note=_text(item.get('note'), 300))
+            if item['op'] == 'create' and isinstance(item.get('ref'), str) and re.fullmatch(r'N\d{1,2}', item['ref']):
+                action['ref'] = item['ref']
         elif item['op'] == 'complete':
             action.update(date=_text(item.get('date'), 10), note=_text(item.get('note'), 300))
         elif item['op'] == 'cancel':
@@ -182,6 +195,18 @@ def parse_plan(content):
         report = {'from': _text(report.get('from'), 10), 'to': _text(report.get('to'), 10)}
     return {'reply': _text(value.get('reply'), 500), 'questions': questions, 'actions': actions, 'candidates': candidates[:3],
             'show': show, 'report': report}
+
+
+def resolve_refs(action, ids):
+    """#N1 in an operation's text -> the number that new task gets (ids: ref -> number);
+    None when it names a new task that is not there (left out or not created)."""
+    def fix(value):
+        return REF.sub(lambda m: f'#{ids[m.group(1)]}' if m.group(1) in ids else m.group(0), value) if isinstance(value, str) else value
+    out = {k: fix(v) if k in ('text', 'note', 'reason') else v for k, v in action.items()}
+    if isinstance(action.get('fields'), dict):
+        out['fields'] = {k: fix(v) for k, v in action['fields'].items()}
+    values = [out.get(k) for k in ('text', 'note', 'reason')] + list((out.get('fields') or {}).values())
+    return None if any(isinstance(v, str) and REF.search(v) for v in values) else out
 
 
 def check_actions(actions):

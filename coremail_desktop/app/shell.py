@@ -68,7 +68,10 @@ BACKEND_METHODS = {
     'previewAttachment': 'attachment_preview', 'openAttachment': 'open_attachment',
     'threadCounts': 'thread_counts', 'thread': 'thread',
     'aiSettings': 'ai_settings', 'setAiSettings': 'set_ai_settings', 'aiTest': 'ai_test', 'summarize': 'summarize',
-    'askMailbox': 'ask_mailbox', 'cancelAsk': 'cancel_ask',
+    'askMailbox': 'ask_mailbox', 'cancelAsk': 'cancel_ask', 'assistantPlanRun': 'assistant_plan_run',
+    'assistantDraftCompose': 'assistant_draft_compose', 'assistantDraftWrite': 'assistant_draft_write', 'assistantSent': 'assistant_sent',
+    'assistantNudge': 'assistant_nudge', 'assistantNudgeDismiss': 'assistant_nudge_dismiss', 'assistantLinkRun': 'assistant_link_run',
+    'assistantMailRun': 'assistant_mail_run', 'assistantMailUndo': 'assistant_mail_undo',
     'rewrite': 'rewrite', 'replyIdeas': 'reply_ideas', 'draftReply': 'draft_reply', 'cancelAi': 'cancel_ai',
     'precheck': 'precheck', 'checkDraft': 'check_draft', 'threadAiStatus': 'thread_ai_status', 'summarizeThread': 'summarize_thread',
     'archiveStatus': 'archive_status', 'setArchiveFolder': 'set_archive_folder', 'archiveScan': 'archive_scan',
@@ -83,22 +86,34 @@ BACKEND_METHODS = {
     'tasksFromMail': 'tasks_from_mail', 'taskUndo': 'task_undo', 'tasksMailIndex': 'tasks_mail_index',
     'taskStory': 'task_story', 'taskStoryTitles': 'task_story_titles',
     'tasksNewMail': 'tasks_new_mail', 'tasksAutoMail': 'tasks_auto_mail', 'tasksReport': 'tasks_report',
+    'aiEncrypted': 'ai_encrypted', 'setAiEncrypted': 'set_ai_encrypted',
+    'understandStatus': 'understand_status', 'setUnderstand': 'set_understand', 'understandPending': 'understand_pending',
+    'understandFetch': 'understand_fetch', 'understandMail': 'understand_mail', 'understandCards': 'understand_cards',
+    'understandView': 'understand_view', 'understandCorrect': 'understand_correct', 'understandSetDone': 'understand_set_done', 'understandRules': 'understand_rules',
+    'understandAddRule': 'understand_add_rule', 'understandDeleteRule': 'understand_delete_rule', 'understandClear': 'understand_clear',
+    'memoryProjects': 'memory_projects', 'memoryProject': 'memory_project', 'memoryFacts': 'memory_facts', 'memoryRecent': 'memory_recent',
+    'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryPerson': 'memory_person', 'followups': 'followups',
+    'followupDismiss': 'followup_dismiss', 'tasksGantt': 'tasks_gantt',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
                 'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
                 'recipientGroups', 'aiSettings', 'cancelAsk', 'cancelAi', 'precheck', 'archiveStatus', 'archiveView', 'searchArchive',
-                'cancelSend', 'heldSends', 'threadCounts', 'openAttachment'}
+                'cancelSend', 'heldSends', 'threadCounts', 'openAttachment',
+                'aiEncrypted', 'understandStatus', 'understandPending', 'understandCards', 'understandView', 'understandRules',
+                'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
-              'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread'}
+              'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread', 'understandMail', 'assistantDraftWrite'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
-STREAM_METHODS = {'rewrite', 'draftReply'}
+STREAM_METHODS = {'rewrite', 'draftReply', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
 ARCHIVE_METHODS = {'archiveScan'}
 # 任务中心: one thread, so every task change and its export run one after another.
-TASK_METHODS = {name for name in BACKEND_METHODS if name.startswith('task')}
+TASK_METHODS = {name for name in BACKEND_METHODS if name.startswith('task')} | {'assistantPlanRun', 'assistantSent',
+                                                                                'assistantNudgeDismiss', 'assistantLinkRun'}
+# assistantNudge reads the task's conversation from the server: the mail thread, like thread.
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}
 # Events a pop-out reader may pass on to the main window.

@@ -6,6 +6,7 @@ Modes: 'off' (nothing imported), 'trial' (演练: exports go to HongyanData, the
 is only read), 'live' (正式: hongyan is the only writer and exports to the task folder).
 """
 import copy
+import re
 import threading
 import time
 import uuid
@@ -13,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from coremail_desktop.errors import AppError
-from coremail_desktop.tasks import transfer
+from coremail_desktop.tasks import plan, transfer
 from coremail_desktop.tasks.rules import (CANCELED, DATE_FIELDS, DONE, FIELDS, LABEL, OPEN_STATUSES, OWNER_DEFAULT, STATUSES,
                                           append_history, blank_task, check_blocked, check_fields, day, is_day, missing, overdue,
                                           riyadh_today, sheet_of, text)
@@ -22,6 +23,7 @@ EDITABLE = tuple(f for f in FIELDS if f not in ('id', 'history'))
 BACKUPS = 14
 NAMES = (transfer.OPEN_FILE, transfer.DONE_FILE, transfer.JSON_FILE)
 UNDOABLE = ('edited', 'progress', 'completed', 'canceled', 'reopened', 'external')
+LINE_DATE = re.compile(r'^\d{4}-\d{2}-\d{2}[：:\s]*')
 KIND_TEXT = {'edited': '编辑', 'progress': '记录进展', 'completed': '标记完成', 'canceled': '取消任务', 'reopened': '重新打开', 'external': 'Excel 外部修改'}
 
 
@@ -154,6 +156,8 @@ class TaskCenter:
             changes = {f: [before.get(f), new.get(f)] for f in FIELDS if before.get(f) != new.get(f)}
             if not changes:
                 continue
+            if 'blockers' in changes:  # 上级 / 依赖 #N (P1) must not loop back to the task.
+                plan.check({**self.store.tasks, **{t['id']: t for t in tasks}}, new['id'], new.get('blockers') or '')
             new['cells'] = {f: v for f, v in (new.get('cells') or {}).items() if f not in changes}
             tasks.append(new)
             event = {'kind': kind, 'date': on_day or self.today(), 'actor': actor, 'batch': batch, 'changes': changes, 'note': note}
@@ -363,7 +367,9 @@ class TaskCenter:
 
     def undo(self, seq):
         """撤销这次修改: only the task's latest change, and only while the changed fields still
-        hold what it wrote. A new task cannot be undone (its number stays); the undo is recorded."""
+        hold what it wrote. A new task cannot be undone (its number stays); the undo is recorded.
+        A line it added to the history column stays there, followed by a line saying it was
+        undone; the 演进图 hides both (story.build)."""
         self._writable()
         found = self.store.events_by_seq([seq])
         if not found or found[0][1] != 'confirmed' or found[0][2].get('kind') not in UNDOABLE:
@@ -378,6 +384,11 @@ class TaskCenter:
             if task.get(field) != after:
                 raise AppError('TASK_UNDO_UNAVAILABLE')
             new[field] = before
+        from coremail_desktop.tasks.story import added_line
+        added = added_line(event['changes'].get('history'))
+        if added:
+            gist = (LINE_DATE.sub('', added) or added)[:60]
+            new['history'] = append_history(task['history'], self.today(), f'撤销{KIND_TEXT.get(event["kind"], "修改")}：{gist}')
         if sheet_of(new['status']) != sheet_of(task['status']):
             new['order'] = self._next_order()
         self._ctx.extra = {'undoes': seq}
@@ -404,15 +415,21 @@ class TaskCenter:
 
     def preview(self, actions):
         """Each action checked by its operation without writing: its changes, or the error code."""
+        from coremail_desktop.tasks.assistant import resolve_refs
         self._writable()
         out, next_id = [], max(self.store.tasks, default=0) + 1
+        creates = [a for a in actions if a['op'] == 'create']
+        refs = {a['ref']: next_id + i for i, a in enumerate(creates) if a.get('ref')}  # run_plan creates new tasks first.
         self._ctx.dry = True
         try:
             for action in actions:
                 item = {'op': action['op'], 'id': action.get('id')}
                 self._ctx.extra = {'mails': action['mails']} if action.get('mails') else None
                 try:
-                    found = self._dispatch(action)
+                    resolved = resolve_refs(action, refs)
+                    if resolved is None:
+                        raise AppError('TASK_PLAN_REF')
+                    found = self._dispatch(resolved)
                     item.update(found)
                     if action['op'] == 'create':
                         item['id'] = next_id  # Numbers are given when it runs; several new tasks count on.
@@ -428,16 +445,23 @@ class TaskCenter:
         return out
 
     def run_plan(self, actions, basis):
-        """Run a confirmed plan in order; each operation is checked, saved, exported and
-        verified like a manual one, and records the sentence it came from."""
+        """Run a confirmed plan, new tasks first (so #N1 in the others gets their number), then
+        the rest in order; each operation is checked, saved, exported and verified like a
+        manual one, and records the sentence it came from."""
+        from coremail_desktop.tasks.assistant import resolve_refs
         self._writable()
-        done, failed, last = [], [], None
+        done, failed, last, refs = [], [], None, {}
         self._ctx.actor, self._ctx.basis = 'ai', text(basis).strip()[:300]
         try:
-            for action in actions:
+            for action in sorted(actions, key=lambda a: a['op'] != 'create'):
                 try:
                     self._ctx.extra = {'mails': action['mails']} if action.get('mails') else None
-                    last = self._dispatch(action)
+                    resolved = resolve_refs(action, refs)
+                    if resolved is None:
+                        raise AppError('TASK_PLAN_REF')
+                    last = self._dispatch(resolved)
+                    if action.get('ref') and last.get('ids'):
+                        refs[action['ref']] = last['ids'][0]
                     done.append({'op': action['op'], 'id': (last.get('ids') or [action.get('id')])[0]})
                 except AppError as error:
                     failed.append({'op': action['op'], 'id': action.get('id'), 'code': error.code})

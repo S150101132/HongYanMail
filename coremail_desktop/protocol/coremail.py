@@ -7,9 +7,10 @@ import re
 import ssl
 import uuid
 from urllib.error import HTTPError, URLError
-from urllib.request import Request
-from urllib.parse import urljoin, urlencode
-from probe.coremail_transport import CoremailSession, CoremailError, _origin, decode_extended_json
+from urllib.request import Request, HTTPRedirectHandler, HTTPCookieProcessor, build_opener
+from urllib.parse import urljoin, urlencode, urlsplit, parse_qs
+from probe.coremail_transport import CoremailSession, CoremailError, SameOriginRedirectHandler, _origin, decode_extended_json
+from coremail_desktop.protocol.keepalive import KeepAliveHTTPSHandler
 from coremail_desktop.models import Folder, MessageSummary
 from coremail_desktop.errors import AppError
 from coremail_desktop.compose.recipients import normalize_recipients
@@ -22,6 +23,19 @@ class DesktopSession(CoremailSession):
                                        'user:getMailRules','user:addMailRules','user:updateMailRules','user:removeMailRules','user:adjustMailRuleOrder',
                                        'user:setAttrs','mbox:listTags','mbox:manageTags','mbox:updateMessageTags','cal:respond',
                                        'mbox:createUserFolders','mbox:updateFolders','mbox:deleteFolders','mbox:emptyFolder','mbox:deleteMessages'}
+    # Sending (and taking a send back) is never repeated: such requests get a fresh
+    # connection and are not resent when a reused one turns out to be dropped.
+    ONCE_ONLY=frozenset({'mbox:compose','mbox:composeF','mbox:cancelDeliver','mbox:recallMessage2'})
+    def __init__(self,base_url='https://newmail.inspur.com/coremail/'):
+        super().__init__(base_url)
+        self._https=KeepAliveHTTPSHandler(self._repeatable)  # One TLS handshake per connection, not per request.
+        self._opener=build_opener(SameOriginRedirectHandler(base_url),HTTPCookieProcessor(self._cookies),self._https)
+    def _repeatable(self,request):
+        parts=urlsplit(request.full_url)
+        return not parts.path.endswith('/compose.jsp') and not set(parse_qs(parts.query).get('func',()))&self.ONCE_ONLY
+    def close(self):
+        super().close()
+        if getattr(self,'_https',None) is not None: self._https.close_all()
     def _fetch(self,request):
         if _origin(request.full_url) != self._origin: raise AppError('UNSAFE_ORIGIN')
         code = 'NETWORK_ERROR'
@@ -270,7 +284,7 @@ class CoremailAdapter:
         for attempt in range(3 if read else 1):
             try: return self._session.call(operation, params)
             except (CoremailError,AppError) as error:
-                if error.code in ('TRANSPORT_ERROR','NETWORK_ERROR') and read and attempt < 2: continue
+                if error.code in ('TRANSPORT_ERROR','NETWORK_ERROR','TLS_ERROR') and read and attempt < 2: continue
                 raise AppError(error.code) from None
     def list_folders(self, mboxa=''):
         # stats:true is verified read-only on the deployment (2026-10-17): each
@@ -324,7 +338,7 @@ class CoremailAdapter:
         for attempt in range(3):
             try: raw = self._session.get_message(message_id, **extra); break
             except (CoremailError,AppError) as error:
-                if error.code in ('TRANSPORT_ERROR','NETWORK_ERROR') and attempt < 2: continue
+                if error.code in ('TRANSPORT_ERROR','NETWORK_ERROR','TLS_ERROR') and attempt < 2: continue
                 raise AppError(error.code) from None
         message = BytesParser(policy=policy.default).parsebytes(raw)
         if not message.get('From') or not any(message.get(k) for k in ('To','Subject','Message-ID','Date')): raise AppError('MESSAGE_UNAVAILABLE')

@@ -170,10 +170,24 @@ class TextTest(unittest.TestCase):
         self.assertNotIn('lisi@', user)
         self.assertIn('张三（corp.example）', user)
         self.assertIn('议程.docx', user)
+        self.assertIn('用户在这封邮件中的位置：未列出', user)
+
+    def test_prompt_says_where_the_user_stands(self):
+        me = ['lisi@corp.example']
+        self.assertIn('位置：主送（共 1 人）', build_messages(doc(), '', '李四', me)[1]['content'])
+        cc = build_messages(doc(to='王五 <wangwu@corp.example>', cc='李四 <LiSi@corp.example>'), '', '李四', me)
+        self.assertIn('位置：抄送', cc[1]['content'])
+        self.assertIn('替用户「李四」', cc[0]['content'])
+        self.assertIn('不是对用户提的', cc[0]['content'])
 
     def test_parse_summary(self):
         value = parse_summary('```json\n{"conclusion": " 周五开会 ", "points": ["a", "", 3, "b"], "actions": "回复确认"}\n```')
-        self.assertEqual(value, {'conclusion': '周五开会', 'points': ['a', 'b'], 'actions': ['回复确认']})
+        self.assertEqual(value, {'conclusion': '周五开会', 'points': ['a', 'b'], 'actions': ['回复确认'], 'forMe': False, 'who': ''})
+        mine = parse_summary(json.dumps({'conclusion': 'c', 'actions': ['答复'], 'for_me': True, 'who': '我'}))
+        self.assertEqual((mine['forMe'], mine['who']), (True, ''))
+        theirs = parse_summary(json.dumps({'conclusion': 'c', 'actions': ['答复'], 'for_me': 'true', 'who': 'Mohammed'}))
+        self.assertEqual((theirs['forMe'], theirs['who']), (False, 'Mohammed'))  # Only a real true counts as mine.
+        self.assertFalse(parse_summary(json.dumps({'conclusion': 'c', 'actions': [], 'for_me': True}))['forMe'])
         self.assertEqual(len(parse_summary(json.dumps({'conclusion': 'x' * 900, 'points': ['p'] * 20}))['points']), 8)
         for bad in ('不是 JSON', '[1, 2]', '{"points": {"a": 1}}', '{"conclusion": "", "points": []}'):
             with self.assertRaises(AppError) as raised:
@@ -238,6 +252,12 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(len(ai.calls), 2)
         self.assertEqual(self.backend.ai_settings()['usage'], {'tokens': 200, 'calls': 2})
         self.assertIn('请总结下面这封邮件', ai.calls[0][1]['content'])
+        saved = self.backend.cache.get('aiSummaries')
+        saved['demo1'].pop('v')  # Made with an older prompt: made again, not shown.
+        self.backend.cache.set('aiSummaries', saved)
+        self.assertNotIn('cached', self.backend.summarize('demo1'))
+        self.assertEqual(len(ai.calls), 3)
+        self.assertIn('不是翻译', ai.calls[0][0]['content'])
 
     def test_mail_must_be_downloaded_first(self):
         self.backend.ai_client = FakeAi()
@@ -288,7 +308,8 @@ class WiringTest(unittest.TestCase):
         for name in ('aiSettings', 'setAiSettings', 'aiTest', 'summarize'):
             self.assertIn(name, shell.BACKEND_METHODS)
         self.assertEqual(shell.AI_METHODS, {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
-                                            'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread'})
+                                            'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread', 'understandMail',
+                                            'assistantDraftWrite'})
         self.assertFalse(shell.AI_METHODS & shell.FAST_METHODS)
 
     def test_page_renders_ai_text_escaped(self):

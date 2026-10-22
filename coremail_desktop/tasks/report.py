@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 from coremail_desktop.errors import AppError
 from coremail_desktop.tasks.rules import CANCELED, DONE, OPEN_STATUSES, is_day
-from coremail_desktop.tasks.story import history_steps
+from coremail_desktop.tasks.story import undone_seqs, visible_lines
 
 MARKER = '鸿雁工作周报'
 SECTIONS = ('本周完成', '本周进展', '受阻与风险', '下周计划')
@@ -37,14 +37,20 @@ def _clip(value, limit):
 
 def gather(tasks, events, start, end):
     """What happened between start and end (history lines and changes dated in it), and every
-    unfinished task's status, next step and blockers (for 风险 and 下周计划)."""
-    by_task = {}
-    for _, review, e in events:
-        if review == 'confirmed' and e.get('kind') in ('created', 'completed', 'canceled', 'reopened') and start <= str(e.get('date') or '') <= end:
+    unfinished task's status, next step and blockers (for 风险 and 下周计划). Undone changes and
+    the 撤销 lines are left out, as in the 演进图."""
+    by_task, of_task = {}, {}
+    for item in events:
+        of_task.setdefault(item[2].get('task'), []).append(item)
+    skip = undone_seqs(events)
+    for seq, review, e in events:
+        if review == 'confirmed' and seq not in skip and e.get('kind') in ('created', 'completed', 'canceled', 'reopened') \
+                and start <= str(e.get('date') or '') <= end:
             by_task.setdefault(e['task'], []).append({'date': e['date'], 'kind': e['kind']})
     active = []
     for task in sorted(tasks, key=lambda t: t['id']):
-        steps = [{'date': d, 'text': _clip(t, 400)} for d, t, _ in history_steps(task.get('history')) if d and start <= d <= end]
+        steps = [{'date': d, 'text': _clip(t, 400)} for _, (d, t, _) in visible_lines(task.get('history'), of_task.get(task['id'], []))
+                 if d and start <= d <= end]
         changes = by_task.get(task['id'], [])
         finished = task['status'] in (DONE, CANCELED) and is_day(task.get('end')) and start <= task['end'] <= end
         if steps or changes or finished:

@@ -435,6 +435,31 @@ class CommandTests(unittest.TestCase):
         excel = {t['id']: t for t in transfer.parse_books(books_of(self.folder))['tasks']}
         self.assertEqual(excel[333]['status'], '已完成')
 
+    def test_new_prerequisite_task_gets_its_number_in_the_dependency(self):
+        from coremail_desktop.tasks import assistant
+        self.reply = {'reply': '新建前提任务并记录依赖', 'questions': [], 'actions': [
+            {'op': 'progress', 'id': 302, 'text': '新增前提任务 #N1', 'fields': {'blockers': '等待客户；依赖 #N1：开发 LDAP 插件'}},
+            {'op': 'create', 'ref': 'N1', 'fields': {'system': 'CRM', 'content': '开发 LDAP 插件（#302 的前提）'}},
+            {'op': 'progress', 'id': 330, 'text': '要等 #N2', 'fields': {}}]}
+        plan = self.backend.tasks_command('302 新增前提任务：开发 LDAP 插件')
+        prompt = '\n'.join(m['content'] for m in self.seen[0])
+        self.assertIn('"recent": [', prompt)  # 302's last history lines, to tell a repeated progress.
+        self.assertIn('同一件事已经记录过', prompt)
+        self.assertEqual(plan['actions'][1]['ref'], 'N1')
+        preview = plan['preview']
+        self.assertEqual(preview[1]['id'], 334)
+        self.assertEqual(preview[0]['changes']['blockers'][1], '等待客户；依赖 #334：开发 LDAP 插件')
+        self.assertEqual(preview[2]['error'], 'TASK_PLAN_REF')  # #N2 is no task of this plan.
+        result = self.backend.tasks_command_run(plan['actions'][:2], '302 新增前提任务')
+        self.assertEqual(result['done'], [{'op': 'create', 'id': 334}, {'op': 'progress', 'id': 302}])
+        self.assertIn('依赖 #334', self.backend.task_get(302)['task']['blockers'])
+        self.assertTrue(self.backend.task_get(302)['task']['history'].endswith('新增前提任务 #334'))
+        # The new task left out at confirmation: the operation naming it does not run.
+        result = self.backend.tasks_command_run([plan['actions'][0]], '302 新增前提任务')
+        self.assertEqual(result['failed'], [{'op': 'progress', 'id': 302, 'code': 'TASK_PLAN_REF'}])
+        self.assertIsNone(assistant.resolve_refs({'op': 'progress', 'text': '#N1中文'}, {}))
+        self.assertEqual(assistant.resolve_refs({'op': 'progress', 'text': '#N1中文'}, {'N1': 7})['text'], '#7中文')
+
     def test_questions_come_back_and_bad_input_is_refused(self):
         self.reply = {'reply': '不确定是哪条', 'questions': ['是 302 还是 330？'], 'actions': []}
         plan = self.backend.tasks_command('那个网络问题解决了吗')
@@ -503,6 +528,24 @@ class CommandTests(unittest.TestCase):
             self.backend.tasks_from_mail(['a', 'b', 'c', 'd', 'e', 'f'])
         self.assertEqual(caught.exception.code, 'TASK_MAIL_LIMIT')
 
+    def test_undone_progress_stays_in_history_but_leaves_the_story(self):
+        center = self.backend.tasks
+        center.progress(302, center.get(302)['rev'], '改由 LDAP 插件对接')
+        before = center.get(302)['task']
+        center.progress(302, center.get(302)['rev'], '改由用户自研 LDAP 插件', fields={'next': '开发插件'})
+        self.backend.task_undo(self.backend.task_story(302)['undo'])
+        task = center.get(302)['task']
+        self.assertEqual({f: v for f, v in task.items() if f != 'history'}, {f: v for f, v in before.items() if f != 'history'})
+        self.assertTrue(task['history'].endswith('2026-10-20：改由用户自研 LDAP 插件\n2026-10-20：撤销记录进展：改由用户自研 LDAP 插件'))
+        steps = self.backend.task_story(302)['steps']
+        self.assertEqual([s['text'] for s in steps[:1]], ['改由 LDAP 插件对接'])
+        self.assertFalse(any('自研' in s['text'] or '撤销' in s['text'] for s in steps))
+        self.assertEqual([e['kind'] for e in center.get(302)['events'][:3]], ['undone', 'progress', 'progress'])
+        from coremail_desktop.tasks import report  # 周报 leaves them out too.
+        material = report.gather(list(center.store.tasks.values()), center.store.events(), '2026-10-18', '2026-10-24')
+        records = next(t for t in material['active'] if t['id'] == 302)['records']
+        self.assertEqual([r['text'] for r in records], ['改由 LDAP 插件对接'])
+
     def test_a_question_becomes_a_list_filter(self):
         self.reply = {'reply': '有 1 条受阻', 'questions': [], 'actions': [],
                       'show': {'view': 'bogus', 'query': '受阻', 'ids': [302, 'x', 302]}}
@@ -533,7 +576,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(len(self.seen), calls)  # Kept: not asked again.
         self.assertNotIn('环节0'.encode('utf-8'), (Path(self.backend.data_dir) / 'tasks' / 'tasks.db').read_bytes())
         self.backend.task_undo(steps['undo'])
-        self.assertEqual([s['event'] for s in self.backend.task_story(302)['steps'][:2]], ['undone', 'progress'])  # Undone edit gone.
+        self.assertEqual(self.backend.task_story(302)['steps'][0]['event'], 'progress')  # Undone edit and the undo: not in the story.
         self.assertEqual(story.history_steps('无日期\n2026-01-02：甲\n续行'), [('', '无日期', '无日期'), ('2026-01-02', '甲\n续行', '2026-01-02：甲')])
 
     def test_old_titles_are_made_again_and_fallback_skips_bookkeeping(self):

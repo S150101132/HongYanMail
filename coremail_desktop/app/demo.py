@@ -630,6 +630,28 @@ class DemoAiClient:
             return json.dumps({'conclusion': f'这个会话共 {count} 封邮件（演示模式：由本机生成，没有联网）。',
                                'timeline': [{'n': n, 'text': f'第 {n} 封邮件。'} for n in range(1, count + 1)][:8],
                                'open': [], 'actions': []}, ensure_ascii=False), 0
+        if '鸿雁的邮件理解助手' in messages[0]['content']:  # 理解层: a card from the subject's words.
+            subject = (re.search(r'主题：(.*)', text) or [None, ''])[1].replace('（演示）', '').strip()
+            topic = re.sub(r'^(?:Re|回复)\s*[:：]\s*|【[^】]*】', '', subject).strip() or '邮件'
+            listed = re.search(r'我负责的项目：(.*)', text)
+            project = (listed.group(1).split('、')[0] if listed and '（无）' not in listed.group(1) else '') or '演示项目'
+            known = re.search(r'^(F\d+) \[' + re.escape(project) + r'\] .*本周进展', text, re.M)  # 工作记忆: a newer status replaces it.
+            if re.search(r'周报|纪要|进展', subject):
+                card = {'kind': 'know', 'sure': True, 'gist': f'{topic}：本周进展和下周安排', 'ask': '', 'due': '',
+                        'facts': [{'project': project, 'type': 'status', 'text': f'{topic}：本周进展已更新（演示）', 'replaces': known.group(1) if known else ''},
+                                  {'project': project, 'type': 'owner', 'text': '张晓明负责接口联调（演示）'}]}
+            elif re.search(r'请|确认|申请|评审', subject):
+                due = '2026-10-23' if '周五' in subject else ''
+                card = {'kind': 'act', 'sure': True, 'gist': f'{topic}，需要你反馈', 'ask': f'就「{topic[:16]}」回复意见', 'due': due,
+                        'facts': [{'project': project, 'type': 'date', 'text': f'{topic[:20]}：{due or "本周"}前反馈（演示）'}]}
+                task = re.search(r'^#(\d+) .*' + re.escape(topic[:2]), text, re.M) if len(topic) >= 2 else None
+                if task:
+                    card['task'] = {'id': int(task.group(1)), 'why': '主题相同（演示）'}
+            elif re.search(r'通知|培训|维护', subject):
+                card = {'kind': 'ignore', 'sure': True, 'gist': f'{topic}（例行通知）', 'ask': '', 'due': ''}
+            else:
+                card = {'kind': 'know', 'sure': False, 'gist': topic[:30], 'ask': '', 'due': ''}
+            return json.dumps({'project': project if card['kind'] != 'ignore' else '', 'facts': [], **card}, ensure_ascii=False), 0
         if '鸿雁任务助手' in messages[0]['content']:
             mail = next((m['content'] for m in messages if m['role'] == 'user' and '请根据下面的邮件' in m['content']), '')
             if mail:
@@ -641,6 +663,7 @@ class DemoAiClient:
         value = {'conclusion': f'这是一封关于「{subject}」的演示邮件（演示模式：摘要由本机生成，没有联网）。',
                  'points': [l[:60] for l in lines] or ['邮件正文很短。'],
                  'actions': ['按邮件要求回复发件人。'] if re.search(r'请|麻烦|务必|回复', body) else []}
+        value.update(for_me='用户在这封邮件中的位置：主送' in text and bool(value['actions']), who='' if '位置：主送' in text else '主送的同事')
         return json.dumps(value, ensure_ascii=False), 0
 
     @staticmethod
@@ -686,6 +709,11 @@ class DemoAiClient:
         system, text = messages[0]['content'], messages[-1]['content']
         if '起草一封工作邮件的回复' in system:
             out = '您好：\n\n邮件已收到，谢谢。我们会按邮件中的要求尽快处理，【待补充：具体时间】前给您答复。\n\n（演示模式：由本机生成，没有联网。）'
+            points = [line[2:] for line in text.splitlines() if line.startswith('- ')]
+            if points:  # 助理 drafts carry their points.
+                out = '您好：\n\n' + '\n'.join(f'{i}. {p}' for i, p in enumerate(points, 1)) + '\n\n盼复，谢谢。\n\n（演示模式：由本机生成，没有联网。）'
+        elif '起草一封新邮件的正文' in system:
+            out = 'Dear all,\n\nFollowing up on this task: 【待补充：具体内容】.\n\nBest regards\n\n（演示模式：由本机生成，没有联网。）'
         else:
             body = text.split('\n', 2)[2].rsplit('\n', 1)[0] if text.count('\n') >= 3 else text
             out = body.strip() + '\n\n（演示模式：这是本机生成的改写示例，没有联网。）'
@@ -716,6 +744,97 @@ class DemoAiClient:
             gist = read.get('text', '')[:60].replace('\n', ' ') if not read.get('encrypted') else '（加密邮件，没有阅读正文）'
             return {'content': f'演示模式：你正在看的「{here.group(2)}」开头写的是：{gist} [{here.group(1)}]\n（演示模式由本机生成，没有联网。）',
                     'tool_calls': []}, 0
+        task = next((re.match(r'用户附带了当前任务 (T\d+)｜', m['content']) for m in messages
+                     if m['role'] == 'system' and m['content'].startswith('用户附带了当前任务')), None)
+        offered = {s['function']['name'] for s in tools or ()}
+        op = re.search(r'标为已读|标记为已读|标为未读|取消星标|星标|移到|移动到|删除', question)
+        if op and ('plan_mail' in offered or results) and not re.search(r'任务', question):  # 操作类工具 A3: search, then a plan.
+            action = {'标为已读': 'read', '标记为已读': 'read', '标为未读': 'unread', '取消星标': 'unflag', '星标': 'flag',
+                      '移到': 'move', '移动到': 'move', '删除': 'trash'}[op.group(0)]
+            quoted = re.search(r'「(.+?)」', question)
+            if not results:
+                return call('search_mail', {'keywords': quoted.group(1) if quoted else '评审'})
+            if len(results) == 1:
+                if not results[0].get('search'):
+                    return {'content': '演示模式：没有找到要操作的邮件。（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
+                folder = re.search(r'(?:移到|移动到)「?([^」，。]+?)」?(?:文件夹)?$', question)
+                return call('plan_mail', {'action': action, 'search': results[0]['search'], 'folder': folder.group(1) if folder else '',
+                                          'summary': '演示'})
+            plan = results[-1]
+            if 'error' in plan:
+                return {'content': f'演示模式：这项操作不能执行：{plan["error"]}', 'tool_calls': []}, 0
+            return {'content': f'演示模式：找到 {plan["count"]} 封，已拟好计划，请在下面的卡片上核对后点「执行」，执行后可以撤销。\n'
+                               '（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
+        named = re.search(r'#\s*(\d{1,5})|任务\s*(\d{1,5})', question)
+        target = f'T{named.group(1) or named.group(2)}' if named else task.group(1) if task else ''
+        group = re.search(r'回给(.+?组)', question)
+        drafting = re.search(r'回.{0,4}邮件|回一封|回给|问问|起草', question)
+        if target and drafting and ('draft_reply' in offered or any('mails' in r for r in results)):
+            done = {'plan' if 'plan' in r else 'groups' if 'groups' in r else 'other' for r in results}
+            thread = next((r for r in results if 'mails' in r), None)
+            if thread is None:  # 个人工作助理 W3: the task's conversation, a group if named, then a draft plan.
+                return call('task_thread', {'task': target})
+            if not thread['mails']:  # W4: candidates to link, from a search.
+                found = next((r for r in results if 'rows' in r), None)
+                if 'suggest_links' in offered and found is None:
+                    return call('search_mail', {'keywords': '评审'})
+                if found and found['rows'] and 'plan' not in done:
+                    return call('suggest_links', {'task': target, 'mails': [r['ref'] for r in found['rows'][:3]]})
+                if 'plan' in done:
+                    return {'content': f'演示模式：这条任务还没有关联邮件。我按任务内容找到几封可能相关的，请在下面的卡片上勾选后点「关联」，'
+                                       f'再让我起草 [{target}]\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
+                return {'content': f'演示模式：这条任务没有关联邮件，也没有找到相关的邮件 [{target}]', 'tool_calls': []}, 0
+            if group and 'groups' not in done:
+                return call('list_groups', {'task': target})
+            if 'plan' not in done:
+                found = next((r for r in results if 'groups' in r), {'groups': []})['groups']
+                ref = next((g['ref'] for g in found if group and g['name'] == group.group(1)), '')
+                if group and not ref:
+                    return {'content': f'演示模式：没有找到收件人组「{group.group(1)}」，请确认组名。', 'tool_calls': []}, 0
+                return call('draft_reply', {'mail': thread['last_from_other'] or thread['last'], 'task': target, 'group': ref,
+                                            'purpose': '告知已完成' if '完成' in question else '询问还缺的具体信息',
+                                            'points': ['请对方确认还缺哪些信息', '说明我们这边的进度']})
+            return {'content': f'演示模式：已拟好回复计划，请在下面的卡片上选收件人、核对要点后点「起草」[{target}]\n（演示模式由本机生成，没有联网。）',
+                    'tool_calls': []}, 0
+        change = re.search(r'完成|搞定|关闭|取消|不做了|记一下|进展|改为|改成', question)
+        if change and target and ('plan_tasks' in offered or results):  # 个人工作助理 W2: a plan to confirm.
+            if not results:
+                return call('read_task', {'ref': target})
+            if len(results) == 1:
+                if 'error' in results[0]:
+                    return {'content': f'演示模式：没有找到任务 {target}。', 'tool_calls': []}, 0
+                if re.search(r'完成|搞定|关闭', question):
+                    action = {'op': 'complete', 'task': target}
+                elif re.search(r'取消|不做了', question):
+                    action = {'op': 'cancel', 'task': target, 'reason': '用户说不做了'}
+                else:
+                    words = re.sub(r'^.*?(记一下|进展|改为|改成)[：:，, ]*', '', question).strip(' 。') or question
+                    action = {'op': 'progress', 'task': target, 'text': words}
+                return call('plan_tasks', {'summary': f'{ {"complete": "完成", "cancel": "取消", "progress": "记进展"}[action["op"]]} #{target[1:]}（演示）','actions': [action]})
+            plan = results[-1]
+            if not any(i.get('ok') for i in plan.get('items', [])):
+                problem = next((i.get('problem') for i in plan.get('items', []) if i.get('problem')), '') or plan.get('error', '')
+                return {'content': f'演示模式：这项操作不能执行：{problem} [{target}]', 'tool_calls': []}, 0
+            return {'content': f'演示模式：已拟好计划，请在下面的卡片上核对后点「执行」[{target}]\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
+        if task and re.search(r'这个任务|该任务|这条任务|此任务|这项任务', question):  # 个人工作助理: the task brought along.
+            if tools and not results:
+                return call('read_task', {'ref': task.group(1)})
+            f = (results[-1] if results else {}).get('fields') or {}
+            return {'content': f'演示模式：这条任务「{f.get("content", "")[:40]}」现在是{f.get("status", "")}' +
+                    (f'，下一步：{f["next"][:40]}' if f.get('next') else '') + f' [{task.group(1)}]\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
+        if 'list_tasks' in offered and re.search(r'任务|要我做|待办|待我处理', question):
+            if not results:
+                return call('list_tasks', {'mine': True})
+            if len(results) == 1 and 'pending_mail' in offered:
+                return call('pending_mail', {})
+            lines = [f'{i}. {r["content"][:30]}（{r["status"]}' + (f'，{r["due"]} 前' if r['due'] else '') + f'）[{r["ref"]}]'
+                     for i, r in enumerate(results[0]['rows'][:5], 1)]
+            mails = [f'- {r["ask"] or r["subject"]}' + (f'（{r["due"]} 前）' if r['due'] else '') + f' [{r["ref"]}]'
+                     for r in (results[1]['rows'] if len(results) > 1 else [])[:3]]
+            text = f'演示模式：你负责的未完成任务有 {results[0]["total"]} 条：\n' + '\n'.join(lines) if lines else '演示模式：没有你负责的未完成任务。'
+            if mails:
+                text += '\n待我处理的邮件：\n' + '\n'.join(mails)
+            return {'content': text + '\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
         if tools and not results:
             words = re.findall(r'[A-Za-z0-9]+|[一-龥]{2}', question)
             return call('search_mail', {'keywords': words[0] if words else question[:2]})

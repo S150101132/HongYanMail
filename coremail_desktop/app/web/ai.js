@@ -47,8 +47,13 @@ function renderAiPanel(m) {
       box.innerHTML = head(by) + `<div class="ai-body">${state.conclusion ? `<p class="ai-conclusion">${esc(state.conclusion)}</p>` : ''}` +
         `<h4>经过</h4>${steps}<h4>还没解决</h4>${list(state.open)}<h4>需要我做什么</h4>${list(state.actions)}${notes}</div>`;
     } else {
+      // forMe false: the asks are someone else's (or there are none) — shown as theirs, for information.
+      const mine = state.forMe !== false;
+      const asks = mine ? `<h4>需要我做什么</h4>${list(state.actions)}`
+        : state.actions.length ? `<h4>需要${esc(state.who || '收件人')}做什么<span class="muted small">（不是问你的，知悉即可）</span></h4>${list(state.actions)}`
+        : '<p class="muted small">没有要你做的事，知悉即可。</p>';
       box.innerHTML = head(by) + `<div class="ai-body">${state.conclusion ? `<p class="ai-conclusion">${esc(state.conclusion)}</p>` : ''}` +
-        `<h4>要点</h4>${list(state.points)}<h4>需要我做什么</h4>${list(state.actions)}</div>`;
+        `<h4>要点</h4>${list(state.points)}${asks}</div>`;
     }
   }
   renderIcons(box);
@@ -75,7 +80,7 @@ function aiMenu(button, m) {
 // Encrypted mail goes to the AI service only when the user agrees, this once.
 async function allowEncrypted(m, what) {
   if (m.encryption === 'locked') { toast('这是一封加密邮件，请先解锁个人证书', { error: true }); return null; }
-  if (m.encryption !== 'decrypted') return false;
+  if (m.encryption !== 'decrypted' || m.aiAllowed) return false;  // aiAllowed: 设置里已允许（不逐封询问）。
   return (await confirmDialog('把加密邮件发送给 AI 服务？',
     `这封邮件是加密的。${what}需要把解密后的正文发送到外部 AI 服务，邮件将不再只在你和收件人之间保密。仅这一次、仅这一封。`, '发送')) ? true : null;
 }
@@ -136,26 +141,30 @@ async function writeReply(m, idea) {
   const mode = ($('#ai-reply-mode') || {}).value || 'reply';
   await startCompose(mode, m.id);
   if ($('#composer').classList.contains('hidden')) return;
+  try {
+    await streamIntoComposer('draftReply', { mid: m.id, idea: idea ? `${idea.label}：${idea.hint}` : '', note, allow_encrypted: !!state.allow });
+  } catch (err) { if (err.code !== 'AI_CANCELLED') fail(err); }
+}
+// A streamed body into the open composer, above the signature; errors go to the caller.
+async function streamIntoComposer(method, params) {
   const ed = $('#cmp-editor');
   const live = document.createElement('div');
   live.className = 'ai-draft'; live.contentEditable = 'false'; live.textContent = 'AI 正在起草…';
   const first = ed.firstElementChild;
   if (first && first.tagName === 'P' && !first.textContent.trim()) first.replaceWith(live); else ed.prepend(live);
-  aiBusy('AI 正在起草回复…');
+  aiBusy('AI 正在起草…');
   let text = '';
   try {
-    const res = await streamCall('draftReply', { mid: m.id, idea: idea ? `${idea.label}：${idea.hint}` : '', note, allow_encrypted: !!state.allow },
-      (d) => { text += d; live.textContent = text; });
-    text = res.text;
-  } catch (err) {
-    if (err.code !== 'AI_CANCELLED') fail(err);
+    text = (await streamCall(method, params, (d) => { text += d; live.textContent = text; })).text;
+  } finally {
+    aiBusy('');
+    if (live.isConnected) {
+      if (text.trim()) { live.insertAdjacentHTML('beforebegin', textHtml(text)); C.dirty = true; }
+      else live.insertAdjacentHTML('beforebegin', '<p><br></p>');
+      live.remove();
+      ed.focus();
+    }
   }
-  aiBusy('');
-  if (!live.isConnected) return;
-  if (text.trim()) { live.insertAdjacentHTML('beforebegin', textHtml(text)); C.dirty = true; }
-  else live.insertAdjacentHTML('beforebegin', '<p><br></p>');
-  live.remove();
-  ed.focus();
 }
 
 // The composer's status line while a streamed call runs, with 停止.
@@ -333,7 +342,7 @@ async function summarizeMessage(m, opts = {}) {
   if (current && !current.error && !opts.refresh) { $('#ai-panel').scrollIntoView({ block: 'nearest' }); return; }
   if (m.encryption === 'locked') { toast('这是一封加密邮件，请先解锁个人证书再总结', { error: true }); return; }
   let allow = false;
-  if (m.encryption === 'decrypted') {
+  if (m.encryption === 'decrypted' && !m.aiAllowed) {
     allow = await confirmDialog('把加密邮件发送给 AI 服务？',
       '这封邮件是加密的。总结需要把解密后的正文发送到外部 AI 服务，邮件将不再只在你和收件人之间保密。仅这一次、仅这一封；摘要不会保存在本机。', '发送并总结');
     if (!allow) return;
@@ -355,6 +364,7 @@ function renderAiSettings() {
     $('#ai-base').value = a.baseUrl; $('#ai-model').value = a.model; $('#ai-key').value = '';
     $('#ai-key').placeholder = a.hasKey ? '已保存（不可查看），输入新 Key 可替换' : '未设置';
     $('#ai-clear').classList.toggle('hidden', !a.hasKey);
+    $('#ai-actions').checked = a.actions;
     status.textContent = (a.demo ? '演示模式：摘要由本机生成，不联网。' : a.hasKey ? '已设置 API Key。' : '未设置 API Key，「总结」和「问邮箱」暂不可用。') +
       ` 本月已调用 ${a.usage.calls} 次，共 ${a.usage.tokens} tokens。`;
   }).catch(fail);
@@ -366,6 +376,9 @@ function aiValues() {
 }
 $('#ai-save').onclick = async () => {
   try { await api('setAiSettings', aiValues()); toast('AI 设置已保存'); renderAiSettings(); } catch (err) { fail(err); }
+};
+$('#ai-actions').onchange = async (e) => {
+  try { await api('setAiSettings', { actions: e.target.checked }); toast(e.target.checked ? '对话里可以提议邮件操作' : '对话里不再提议邮件操作'); } catch (err) { fail(err); renderAiSettings(); }
 };
 $('#ai-test').onclick = async () => {
   const b = $('#ai-test'); b.disabled = true; b.textContent = '正在测试…';
@@ -405,23 +418,34 @@ function newChat() {
 
 // The mail open in the reader goes along with a question only when asked: the chip above the
 // box turns it on for that mail, and a question saying "这封" / "这件事" takes it by itself.
+// In 任务 the same goes for the selected task ("这个任务已经完成了吗").
 const CHAT_THIS = /这封|这件事|这个邮件|本邮件|此邮件|这份|上面这/;
+const CHAT_THIS_TASK = /这个任务|该任务|这条任务|此任务|这项任务|这一条/;
 function chatHere() {
+  if (READER_MID) return null;
+  if (S.local === 'tasks') {
+    const d = typeof TK !== 'undefined' && TK.detail;
+    if (!d || d.task.id !== TK.selected) return null;
+    return { kind: 'task', key: 'task:' + d.task.id, id: d.task.id, subject: `#${d.task.id} ${tkText(d.task.content).slice(0, 60)}` };
+  }
   const m = S.message;
-  if (!m || READER_MID || S.multi.size >= 2 || S.selected !== m.id || $('#reader-body').classList.contains('hidden')) return null;
-  return { mid: m.id, subject: m.subject || '（无主题）' };
+  if (!m || S.multi.size >= 2 || S.selected !== m.id || $('#reader-body').classList.contains('hidden')) return null;
+  return { kind: 'mail', key: m.id, mid: m.id, subject: m.subject || '（无主题）' };
 }
 function chatMailChanged() { if (chatOpen()) renderHere(); }
 function renderHere() {
   const box = $('#chat-here'), here = chatHere();
   box.classList.toggle('hidden', !here);
   if (!here) { box.innerHTML = ''; return; }
-  const on = S.chat.attach === here.mid;
+  const on = S.chat.attach === here.key, what = here.kind === 'task' ? '任务' : '邮件';
   box.classList.toggle('on', on);
-  box.title = on ? `这封邮件会随问题一起发给 AI：${here.subject}（点击取消）` : `点击让下一个问题带上正在看的这封：${here.subject}。问题里说"这封"时会自动带上。`;
-  box.innerHTML = `<i data-icon="mail"></i><span>${on ? '已带上：' + esc(here.subject) : '带上正在看的邮件'}</span>`;
+  box.title = on ? `这${what === '任务' ? '条任务' : '封邮件'}会随问题一起发给 AI：${here.subject}（点击取消）`
+    : `点击让下一个问题带上：${here.subject}。问题里说"${what === '任务' ? '这个任务' : '这封'}"时会自动带上。`;
+  box.innerHTML = `<i data-icon="${here.kind === 'task' ? 'tasks' : 'mail'}"></i><span>${on ? '已带上：' + esc(here.subject) : `带上正在看的${what}`}</span>`;
   renderIcons(box);
 }
+const _chatRenderFolders = renderFolders;  // Switching to 任务 or back changes what can go along.
+renderFolders = function () { _chatRenderFolders(); chatMailChanged(); };
 
 async function askMailbox(allow = [], again = null) {
   const turns = S.chat.turns, last = turns[turns.length - 1];
@@ -429,7 +453,8 @@ async function askMailbox(allow = [], again = null) {
   const question = again ? again.question : $('#ask-input').value.trim();
   if (!question) return;
   const open = chatHere();
-  const here = again ? again.here : open && (S.chat.attach === open.mid || CHAT_THIS.test(question)) ? open : null;
+  const here = again ? again.here
+    : open && (S.chat.attach === open.key || (open.kind === 'task' ? CHAT_THIS_TASK : CHAT_THIS).test(question)) ? open : null;
   // Answering the last question again replaces that turn; only a turn the backend kept is redone there.
   const redo = !!(again && again.result);
   const turn = { question, allow, here, loading: true, steps: [] };
@@ -438,8 +463,10 @@ async function askMailbox(allow = [], again = null) {
   const chat = S.chat;
   renderAsk();
   try {
-    turn.result = await api('askMailbox', { question, allow, chat: chat.id, current: here ? here.mid : '', redo });
+    turn.result = await api('askMailbox', { question, allow, chat: chat.id, redo,
+      current: here && here.kind === 'mail' ? here.mid : '', current_task: here && here.kind === 'task' ? here.id : 0 });
     chat.id = turn.result.chat;
+    if (S.chat === chat) supersedePlans(turn.result);
   } catch (err) { turn.error = err; }
   turn.loading = false;
   if (S.chat === chat) renderAsk();
@@ -450,12 +477,13 @@ function renderAsk() {
   $('#ask-run').disabled = !!(last && last.loading);
   renderHere();
   if (!turns.length) {
-    const tries = ['上周有哪些邮件需要我回复？', '最近谁给我发过报价？', '这封邮件说的截止日期是哪天？'];
+    const tries = ['现在有什么任务，哪些需要我做？', '上周有哪些邮件需要我回复？', '最近谁给我发过报价？'];
     out.innerHTML = '<div class="chat-empty"><b>问问你的邮箱</b>AI 会搜索服务器和本地存档里的邮件，阅读最相关的几封后回答，并标出出处。<br>可以接着追问，例如「第二封是谁发的」。' +
       `<div class="chat-try">${tries.map((q) => `<button type="button" data-try="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`;
     return;
   }
-  out.innerHTML = turns.map((t, i) => `<div class="chat-q">${esc(t.question)}${t.here ? `<span class="chat-here-tag">附带：${esc(t.here.subject)}</span>` : ''}</div>` +
+  out.innerHTML = turns.map((t, i) => t.event ? `<div class="chat-event">${esc(t.event)}</div>${t.result.plans.map((p, j) => planCard(p, i, j)).join('')}` :
+    `<div class="chat-q">${esc(t.question)}${t.here ? `<span class="chat-here-tag">附带：${esc(t.here.subject)}</span>` : ''}</div>` +
     turnCard(t, i, i === turns.length - 1) +
     (t.result && t.result.restarted ? '<div class="chat-sep">之前的对话已失效（例如重新登录过），这次作为新对话回答。</div>' : '') +
     (t.result && t.result.turn === CHAT_TURNS + 1 ? '<div class="chat-sep">更早的问答不再带给 AI。换个话题可以点「新对话」。</div>' : '')).join('');
@@ -477,8 +505,14 @@ function turnCard(a, index, latest) {
       (latest && !setup ? ' <button class="btn ghost" data-ask="again">重试</button>' : '') + stepList(a.steps) + '</div></div>';
   }
   const r = a.result;
-  const answer = esc(r.answer).replace(/\[(M\d+(?:, M\d+)*)\]/g, (_, refs) =>
-    refs.split(', ').map((ref) => `<a class="ask-ref" data-ref="${ref}" title="打开出处 ${ref.slice(1)}">${ref.slice(1)}</a>`).join(''));
+  // [M3] links to a source card, [T12] to the task in 任务.
+  const answer = esc(r.answer).replace(/\[([MT]\d+(?:, [MT]\d+)*)\]/g, (_, refs) =>
+    refs.split(', ').map((ref) => ref[0] === 'T' ? `<a class="ask-ref task" data-task="${ref.slice(1)}" title="在任务中心打开 #${ref.slice(1)}">#${ref.slice(1)}</a>`
+      : `<a class="ask-ref" data-ref="${ref}" title="打开出处 ${ref.slice(1)}">${ref.slice(1)}</a>`).join(''));
+  const taskCard = (k) => `<div class="ask-src ask-task" data-task="${esc(k.id)}" title="在任务中心打开"><span class="ask-num">#${esc(k.id)}</span>` +
+    `<div class="ask-src-main"><div class="ask-src-top"><b>${esc(k.content)}</b><span class="muted small">${esc(k.status)}${k.due ? ' · ' + esc(k.due) : ''}</span></div>` +
+    (k.system ? `<div class="muted small ask-snip">${esc(k.system)}</div>` : '') + '</div></div>';
+  const tasks = r.tasks || [];
   const card = (s) => `<div class="ask-src" data-mid="${esc(s.mid)}" title="打开这封邮件"><span class="ask-num">${esc(s.ref.slice(1))}</span>` +
     `<div class="ask-src-main"><div class="ask-src-top"><b>${esc(s.subject)}</b><span class="muted small">${esc(s.fromName)} · ${esc(String(s.date).slice(5, 16))}</span></div>` +
     (s.snippet ? `<div class="muted small ask-snip">${esc(s.snippet)}</div>` : '') +
@@ -490,14 +524,266 @@ function turnCard(a, index, latest) {
     (latest ? '<button class="btn ghost" data-ask="again" title="重新发送给 AI 服务查找">重新回答</button>' : '') +
     `</div><div class="ai-body"><p class="ask-answer">${answer}</p>` +
     (r.limited ? '<p class="ask-limited">已达到查找次数或时间的上限，答案可能不完整。</p>' : '') +
+    (r.plans || []).map((p, j) => planCard(p, index, j)).join('') +
+    (tasks.length ? `<div class="ask-sources"><h4>任务</h4>${tasks.map(taskCard).join('')}</div>` : '') +
     (cited.length ? `<div class="ask-sources"><h4>出处</h4>${cited.map(card).join('')}</div>` : '') +
     (other.length ? `<details class="ask-process"><summary>也查阅过 ${other.length} 封</summary>${other.map(card).join('')}</details>` : '') +
     (r.steps.length ? `<details class="ask-process"><summary>查找过程（${r.steps.length} 步）</summary>${stepList(r.steps)}</details>` : '') +
     '</div></div>';
 }
 
+// 助理 plans (W2): the preview of tasks.js (planItem), run by id on 执行 — the backend keeps
+// the operations, the page only shows them. p.state: '' | running | done | off.
+const planReady = (x) => !x.error && x.changes && Object.keys(x.changes).length > 0;
+function planCard(p, turn, j) {
+  if (p.kind === 'draft') return draftCard(p, turn, j);
+  if (p.kind === 'link') return linkCard(p, turn, j);
+  if (p.kind === 'mail') return mailCard(p, turn, j);
+  const ready = p.preview.filter(planReady).length, at = `data-turn="${turn}" data-plan="${j}"`;
+  const title = p.state === 'done' ? '任务操作 · 已执行' : p.state === 'off' ? '任务操作 · 未执行' : ready ? '任务操作 · 待你确认' : '任务操作 · 不能执行';
+  let foot = '';
+  if (p.state === 'running') foot = '<span class="tk-spin"></span>正在执行…';
+  else if (p.state === 'done') {
+    const o = p.outcome, c = o.verify.counts;
+    foot = `<span class="plan-ok">已执行 ${o.done.length} 项${o.failed.length ? `，${o.failed.length} 项没有执行` : ''}</span>` +
+      `<span class="muted small">核验通过：未完成 ${c.open} · 已完成 ${c.done} · 已取消 ${c.canceled}</span><span class="spacer"></span>` +
+      `<button class="btn ghost sm" ${at} data-plan-act="verify">核验结果</button>`;
+  } else if (p.state === 'off') foot = `<span class="muted small">${esc(p.note)}</span>`;
+  else if (ready) {
+    foot = `<span class="muted small">点「执行」后才会写入任务清单</span><span class="spacer"></span>` +
+      `<button class="btn ghost sm" ${at} data-plan-act="edit">修改</button><button class="btn primary sm" ${at} data-plan-act="run">执行${ready > 1 ? ` ${ready} 项` : ''}</button>`;
+  }
+  return `<div class="chat-plan${p.state ? ' ' + p.state : ''}"><div class="chat-plan-head"><i data-icon="tasks"></i><b>${title}</b>` +
+    (p.summary ? `<span class="muted small">${esc(p.summary)}</span>` : '') + `</div><div class="tk-plan">${p.preview.map(planItem).join('')}</div>` +
+    (foot ? `<div class="chat-plan-foot">${foot}</div>` : '') + '</div>' + (p.nudge ? nudgeLine(p.nudge, at) : '');
+}
+// 提醒回信 (W4): under an executed plan, once, when the task's conversation waits on the user.
+// 起草 shows the draft card (as if the user asked for that reply); 不用 holds until a new mail.
+function nudgeLine(n, at) {
+  return `<div class="chat-nudge${n.state ? ' ' + n.state : ''}"><i data-icon="mail"></i><span>${esc(n.text)}</span>` +
+    (n.state === 'off' ? '<span class="muted small">好的，这个会话有新邮件之前不再提醒。</span>' : n.state ? '' :
+      `<span class="spacer"></span><button class="btn ghost sm" ${at} data-plan-act="nudge-skip">不用</button>` +
+      `<button class="btn primary sm" ${at} data-plan-act="nudge-draft">起草</button>`) + '</div>';
+}
+function nudgeAct(p, turn, act) {
+  const n = p.nudge;
+  if (n.state) return;
+  if (act === 'nudge-draft') { n.state = 'open'; turn.result.plans.push(n.plan); }
+  else { n.state = 'off'; api('assistantNudgeDismiss', { plan: n.plan.id }).catch(fail); }
+  renderAsk();
+}
+// 没有关联邮件 (W4): up to five candidates the AI found; the user ticks and links them.
+function linkCard(p, turn, j) {
+  const at = `data-turn="${turn}" data-plan="${j}"`, picks = p.picks || [], live = !p.state;
+  const rows = p.link.mails.map((m, i) => `<div class="link-row"><label><input type="checkbox" data-draft="link" value="${i}"` +
+    `${picks.includes(i) ? ' checked' : ''}${live ? '' : ' disabled'}><b>${esc(m.subject)}</b></label>` +
+    `<span class="muted small">${esc(m.fromName)} · ${esc(String(m.date).slice(5, 16))}</span>` +
+    `<a class="link-open" data-open="${esc(m.mid)}" title="打开这封邮件">打开</a></div>`).join('');
+  let foot;
+  if (p.state === 'done') foot = `<span class="plan-ok">${esc(p.note)}</span>`;
+  else if (p.state === 'off') foot = `<span class="muted small">${esc(p.note)}</span>`;
+  else foot = '<span class="muted small">勾选属于这条任务的邮件</span><span class="spacer"></span>' +
+    `<button class="btn ghost sm" ${at} data-plan-act="skip">都不是</button>` +
+    `<button class="btn primary sm" ${at} data-plan-act="link"${picks.length ? '' : ' disabled'}>关联${picks.length > 1 ? ` ${picks.length} 封` : ''}</button>`;
+  return `<div class="chat-plan${p.state ? ' ' + p.state : ''}" ${at}><div class="chat-plan-head"><i data-icon="tasks"></i>` +
+    `<b>关联邮件到 #${esc(p.link.task)}${p.state === 'done' ? ' · 已关联' : p.state === 'off' ? ' · 未关联' : ' · 待你选择'}</b></div>` +
+    `<div class="link-rows">${rows}</div><div class="chat-plan-foot">${foot}</div></div>`;
+}
+async function linkRun(p) {
+  if (p.state || !(p.picks || []).length) return;
+  try {
+    const result = await api('assistantLinkRun', { plan: p.id, picks: p.picks });
+    p.state = 'done'; p.note = `已关联 ${result.linked} 封。可以接着说「回个邮件问问」。`;
+    loadMailIndex(); TK.story = null;
+    if (S.local === 'tasks') loadTasks().catch(fail);
+  } catch (err) { p.state = 'off'; p.note = err.message; }
+  renderAsk();
+}
+// 操作类工具 (A3): what will happen to how many mails, the first few, and the question it
+// came from. 执行 runs it through the list's batch methods; 撤销 puts each mail back.
+function mailCard(p, turn, j) {
+  const m = p.mail, at = `data-turn="${turn}" data-plan="${j}"`;
+  const title = p.state === 'done' ? '邮件操作 · 已执行' : p.state === 'undone' ? '邮件操作 · 已撤销' : p.state === 'off' ? '邮件操作 · 未执行' : '邮件操作 · 待你确认';
+  const rows = m.samples.map((s) => `<div class="link-row"><b>${esc(s.subject)}</b><span class="muted small">${esc(s.fromName)} · ${esc(String(s.date).slice(5, 16))}` +
+    `${s.folder ? ' · ' + esc(s.folder) : ''}</span><a class="link-open" data-open="${esc(s.mid)}" title="打开这封邮件">打开</a></div>`).join('');
+  const notes = [m.count > m.samples.length ? `另有 ${m.count - m.samples.length} 封` : '', m.skipped ? `${m.skipped} 封已经是这样，跳过` : '',
+    m.local ? `${m.local} 封在本地存档，不能操作` : ''].filter(Boolean).join('；');
+  let foot;
+  if (p.state === 'running') foot = '<span class="tk-spin"></span>正在执行…';
+  else if (p.state === 'done') foot = `<span class="plan-ok">${esc(p.note)}</span><span class="spacer"></span>` +
+    (p.undo ? `<button class="btn ghost sm" ${at} data-plan-act="undo">撤销</button>` : '');
+  else if (p.state === 'undone' || p.state === 'off') foot = `<span class="muted small">${esc(p.note)}</span>`;
+  else foot = `<span class="muted small">点「执行」后才会操作，执行后可以撤销</span><span class="spacer"></span>` +
+    `<button class="btn ghost sm" ${at} data-plan-act="edit">修改</button><button class="btn primary sm" ${at} data-plan-act="mail">执行</button>`;
+  return `<div class="chat-plan${p.state ? ' ' + p.state : ''}" ${at}><div class="chat-plan-head"><i data-icon="${m.op === 'trash' ? 'trash' : 'mail'}"></i><b>${title}</b>` +
+    (p.summary ? `<span class="muted small">${esc(p.summary)}</span>` : '') + '</div>' +
+    `<div class="mail-plan-what">${p.state ? '计划' : '将'}${esc(m.what)} <b>${esc(m.count)}</b> 封</div><div class="link-rows">${rows}</div>` +
+    (notes ? `<div class="muted small mail-plan-note">${esc(notes)}</div>` : '') +
+    `<div class="muted small mail-plan-note">依据：${esc(p.basis)}</div><div class="chat-plan-foot">${foot}</div></div>`;
+}
+function refreshMail(res) {
+  applyFolders(res);
+  if (S.search) runSearch(S.search); else loadList(true);
+}
+async function mailRun(p) {
+  if (p.state) return;
+  p.state = 'running'; renderAsk();
+  try {
+    const res = await api('assistantMailRun', { plan: p.id });
+    p.state = 'done'; p.undo = res.undo;
+    p.note = `已${p.mail.what} ${res.done.length} 封` + (res.failed.length ? `，${res.failed.length} 封未完成，请稍后重试` : '');
+    refreshMail(res);
+  } catch (err) { p.state = 'off'; p.note = err.message; }
+  renderAsk();
+}
+async function mailUndo(p) {
+  const undo = p.undo;
+  if (!undo) return;
+  p.undo = ''; renderAsk();
+  try {
+    const res = await api('assistantMailUndo', { undo });
+    p.state = 'undone'; p.note = `已撤销：${res.done.length} 封已恢复` + (res.failed.length ? `，${res.failed.length} 封未恢复` : '');
+    refreshMail(res);
+  } catch (err) { fail(err); }
+  renderAsk();
+}
+async function runPlan(p) {
+  if (p.state) return;
+  p.state = 'running'; renderAsk();
+  try {
+    const result = await api('assistantPlanRun', { plan: p.id });
+    p.state = 'done'; p.outcome = result;
+    if (result.failed.length) toast(`${result.failed.length} 项没有执行：${result.failed.map((f) => (f.id ? '#' + f.id + ' ' : '') + (TK_OP[f.op] || f.op)).join('、')}`, { error: true, ms: 8000 });
+    const ex = result.export || {};
+    if (ex.state && ex.state !== 'ok') toast('已保存；导出未完成，见任务列表上方的提示', { error: true });
+    if (result.unblocked && result.unblocked.length && typeof offerUnblock === 'function') offerUnblock(result.unblocked);  // P1
+    loadMailIndex(); TK.story = null;
+    // A task that left the current tab (完成, 取消) opens under 全部, as from a task link.
+    await loadTasks();
+    if (S.local === 'tasks' && result.ids.length) openTask(result.ids[result.ids.length - 1]).catch(fail);
+  } catch (err) { p.state = 'off'; p.note = err.message; }
+  renderAsk();
+  if (p.state !== 'done' || !p.outcome.nudge) return;
+  try { p.nudge = await api('assistantNudge', { nudge: p.outcome.nudge }); } catch (err) { return; }  // Only a reminder.
+  if (p.nudge) renderAsk();
+}
+// A newer plan for the same tasks replaces an older one still waiting (the backend dropped it too).
+function supersedePlans(result) {
+  const ids = new Set((result.plans || []).flatMap((p) => (p.preview || []).map((x) => x.op !== 'create' && x.id)).filter(Boolean));
+  if (!ids.size) return;
+  S.chat.turns.forEach((t) => (t.result && t.result !== result && t.result.plans || []).forEach((p) => {
+    if (!p.state && (p.preview || []).some((x) => ids.has(x.id) && x.op !== 'create')) { p.state = 'off'; p.note = '已被下面新的计划取代。'; }
+  }));
+}
+
+// 助理·起草 (W3): a draft card. The AI chose the mail, the purpose and the points; the user
+// picks the recipients here (the reply's, or a recipient group) and edits the points. 起草
+// opens the composer with the AI's body; the user checks and sends it. Choices live on p,
+// so a re-render keeps them.
+function draftTarget(p) { const d = p.draft; return p.target !== undefined ? p.target : d.group || (d.reply ? d.mode : ''); }
+function draftCard(p, turn, j) {
+  const d = p.draft, at = `data-turn="${turn}" data-plan="${j}"`, target = draftTarget(p);
+  const group = d.groups.find((g) => g.id === target);
+  const points = p.points !== undefined ? p.points : d.points.join('\n');
+  const groupText = (g) => `${g.name}（${g.count} 人${g.overlap ? `，重合 ${g.overlap} 人` : ''}${g.external ? `，含外部 ${g.external} 人` : ''}）`;
+  const groupOptions = d.groups.length ? `<optgroup label="收件人组">${d.groups.map((g) => `<option value="${esc(g.id)}"${g.id === target ? ' selected' : ''}>${esc(groupText(g))}</option>`).join('')}</optgroup>` : '';
+  const live = !p.state, chosen = p.contacts || (d.contacts || []).map((_, i) => i);
+  let to;
+  if (d.reply) {
+    to = `<div class="draft-what">回复 <b>${esc(d.mail.fromName)}</b>${d.mail.domain ? `（@${esc(d.mail.domain)}）` : ''} ${esc(String(d.mail.date).slice(5, 10))} 的《${esc(d.mail.subject)}》</div>` +
+      `<label class="draft-row"><span>回复给</span><select data-draft="target"${live ? '' : ' disabled'}>` +
+      `<option value="reply"${target === 'reply' ? ' selected' : ''}>按原邮件回复</option><option value="reply_all"${target === 'reply_all' ? ' selected' : ''}>全部回复</option>${groupOptions}</select></label>` +
+      (group ? `<label class="draft-keep"><input type="checkbox" data-draft="keep"${p.keep ? ' checked' : ''}${live ? '' : ' disabled'}>保留原发件人在主送</label>` : '');
+  } else {
+    to = `<div class="draft-what">新邮件《${esc(d.subject)}》</div>` + (d.contacts.length ? `<div class="draft-row"><span>收件人</span><div class="draft-people">${d.contacts.map((c, i) =>
+      `<label><input type="checkbox" data-draft="contact" value="${i}"${chosen.includes(i) ? ' checked' : ''}${live ? '' : ' disabled'}>${esc(c.name || c.domain)}` +
+      `<span class="muted small">@${esc(c.domain)}</span>${c.external ? '<em class="draft-ext">外部</em>' : ''}</label>`).join('')}</div></div>` : '') +
+      `<label class="draft-row"><span>收件人组</span><select data-draft="target"${live ? '' : ' disabled'}><option value="">（不用）</option>${groupOptions}</select></label>`;
+  }
+  const external = (group ? group.external : 0) + (d.reply ? 0 : chosen.filter((i) => d.contacts[i].external).length);
+  let foot;
+  if (p.state === 'drafted') foot = '<span class="plan-ok">已打开写信窗口</span><span class="muted small">请核对收件人、加密和正文后自己发送；发出后会提议记一条进展</span>' +
+    `<span class="spacer"></span><button class="btn ghost sm" ${at} data-plan-act="draft">再起草一次</button>`;
+  else if (p.state === 'off') foot = `<span class="muted small">${esc(p.note)}</span>`;
+  else foot = '<span class="muted small">AI 只写正文，不会发送</span><span class="spacer"></span>' +
+    `<button class="btn ghost sm" ${at} data-plan-act="skip">不用</button><button class="btn primary sm" ${at} data-plan-act="draft">起草</button>`;
+  return `<div class="chat-plan${p.state ? ' ' + p.state : ''}" ${at}><div class="chat-plan-head"><i data-icon="mail"></i>` +
+    `<b>${d.reply ? '起草回复' : '起草新邮件'}${p.state === 'drafted' ? ' · 已起草' : p.state === 'off' ? ' · 未起草' : ' · 待你确认'}</b></div>` +
+    `<div class="draft-body">${to}<div class="draft-row"><span>目的</span><div>${esc(d.purpose)}</div></div>` +
+    (d.scheduleAt ? `<div class="draft-row"><span>定时</span><div>${esc(scheduleText(d.scheduleAt))} 发出（写信窗口里可以改；仍由你点发送）</div></div>` : '') +
+    `<label class="draft-row"><span>要点</span><textarea data-draft="points" rows="${Math.min(6, Math.max(2, points.split('\n').length))}"` +
+    ` placeholder="每行一条"${live ? '' : ' disabled'}>${esc(points)}</textarea></label>` +
+    (external ? `<div class="draft-warn">含外部收件人 ${external} 人：请在写信窗口核对；外部收件人默认不加密</div>` : '') +
+    `</div><div class="chat-plan-foot">${foot}</div></div>`;
+}
+async function draftFromPlan(p) {
+  const d = p.draft, params = { plan: p.id, target: draftTarget(p), keep_sender: !!p.keep };
+  if (!d.reply) params.contacts = p.contacts || d.contacts.map((_, i) => i);
+  let draft;
+  try { draft = await api('assistantDraftCompose', params); } catch (err) {
+    fail(err);
+    if (err.code === 'AI_PLAN_EXPIRED') { p.state = 'off'; p.note = err.message; renderAsk(); }
+    return;
+  }
+  if (C.draft && !$('#composer').classList.contains('hidden') && C.dirty) await saveDraft(true);
+  openComposer(draft);
+  $('#cmp-title').textContent += ' · 助理起草';
+  S.assistDrafts.set(draft.localId, p.id);
+  p.state = 'drafted'; renderAsk();
+  const points = (p.points !== undefined ? p.points : d.points.join('\n')).split('\n').map((x) => x.trim()).filter(Boolean);
+  let allow = false;
+  for (;;) {
+    try { await streamIntoComposer('assistantDraftWrite', { plan: p.id, points, allow_encrypted: allow }); return; } catch (err) {
+      if (err.code === 'AI_ENCRYPTED_CONFIRM' && !allow && await confirmDialog('把加密邮件发送给 AI 服务？',
+        '要回复的邮件是加密的。起草需要把解密后的正文发送到外部 AI 服务，邮件将不再只在你和收件人之间保密。仅这一次、仅这一封。', '发送并起草')) { allow = true; continue; }
+      if (err.code !== 'AI_CANCELLED') fail(err);
+      return;
+    }
+  }
+}
+$('#ask-out').addEventListener('change', (e) => {
+  const el = e.target.closest('[data-draft]'), card = el && el.closest('.chat-plan[data-plan]');
+  if (!card) return;
+  const p = S.chat.turns[+card.dataset.turn].result.plans[+card.dataset.plan];
+  if (el.dataset.draft === 'target') p.target = el.value;
+  else if (el.dataset.draft === 'keep') p.keep = el.checked;
+  else if (el.dataset.draft === 'contact') p.contacts = $$('[data-draft="contact"]', card).filter((c) => c.checked).map((c) => +c.value);
+  else if (el.dataset.draft === 'link') p.picks = $$('[data-draft="link"]', card).filter((c) => c.checked).map((c) => +c.value);
+  if (el.dataset.draft !== 'points') renderAsk();
+});
+$('#ask-out').addEventListener('input', (e) => {
+  const el = e.target.closest('[data-draft="points"]'), card = el && el.closest('.chat-plan[data-plan]');
+  if (card) S.chat.turns[+card.dataset.turn].result.plans[+card.dataset.plan].points = el.value;
+});
+
+// A drafted mail that went out (or into the outbox): offer the progress line (Q5: never by itself).
+S.assistDrafts = new Map();  // composer localId -> draft plan id
+const _assistSendOutcome = sendOutcome;
+sendOutcome = function (res, meta = {}) { _assistSendOutcome(res, meta); assistAfterSend(res); };
+async function assistAfterSend(res) {
+  const plan = res && S.assistDrafts.get(res.localId);
+  if (!plan || !['Accepted', 'Queued'].includes(res.state)) return;
+  S.assistDrafts.delete(res.localId);
+  let next;
+  try { next = await api('assistantSent', { plan }); } catch (err) { return; }  // Only a proposal.
+  if (!next) return;
+  S.chat.turns.push({ event: '邮件已发出。要在任务里记一条进展吗？', result: { plans: [next] } });
+  if (chatOpen()) renderAsk();
+  else toast('邮件已发出。要在任务里记一条进展吗？', { ms: 9000, action: { label: '查看', run: () => showAsk() } });
+}
+
 // A source opens in the reader beside the conversation; where the reader is not shown
 // (任务, 通讯录, a pop-out) it opens in its own window.
+// A task opens in 任务 (the conversation stays); one not on the current tab shows under 全部.
+async function openTask(id) {
+  id = Number(id);
+  if (!id) return;
+  if (S.local !== 'tasks') await openTasks();
+  if (TK.rows.some((r) => r.id === id)) { showTask(id); return; }
+  clearTaskFilter(); TK.view = 'all'; TK.selected = id;
+  $$('#tk-tabs [data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === 'all'));
+  await loadTasks();
+}
 function openSource(mid) {
   if (!mid) return;
   if (READER_MID || $('#reader').offsetParent === null) { api('openReader', { mid }).catch(fail); return; }
@@ -507,8 +793,22 @@ function openSource(mid) {
 $('#ask-out').addEventListener('click', async (e) => {
   const t = e.target, turns = S.chat.turns, last = turns[turns.length - 1];
   const ref = t.closest('[data-ref]'), allow = t.closest('[data-allow]'), act = t.closest('[data-ask]'), tried = t.closest('[data-try]');
+  const task = t.closest('[data-task]'), planAct = t.closest('[data-plan-act]');
   const turn = turns[+((t.closest('[data-turn]') || {}).dataset || {}).turn] || last;
-  if (tried) { $('#ask-input').value = tried.dataset.try; askMailbox(); }
+  if (planAct) {
+    const p = turn.result.plans[+planAct.dataset.plan];
+    if (planAct.dataset.planAct === 'run') runPlan(p);
+    else if (planAct.dataset.planAct === 'verify') showVerify(p.outcome);
+    else if (planAct.dataset.planAct === 'draft') draftFromPlan(p);
+    else if (planAct.dataset.planAct === 'link') linkRun(p);
+    else if (planAct.dataset.planAct === 'mail') mailRun(p);
+    else if (planAct.dataset.planAct === 'undo') mailUndo(p);
+    else if (planAct.dataset.planAct.startsWith('nudge-')) nudgeAct(p, turn, planAct.dataset.planAct);
+    else if (planAct.dataset.planAct === 'skip') { p.state = 'off'; p.note = p.kind === 'link' ? '没有关联。' : '没有起草。'; renderAsk(); }
+    else { p.state = 'off'; p.note = '没有执行。在下面说说要怎么改，例如「日期改成昨天」。'; renderAsk(); $('#ask-input').focus(); }
+  } else if (t.closest('[data-open]')) openSource(t.closest('[data-open]').dataset.open);
+  else if (tried) { $('#ask-input').value = tried.dataset.try; askMailbox(); }
+  else if (task) openTask(task.dataset.task).catch(fail);
   else if (act) {
     ({ cancel: () => api('cancelAsk').catch(() => {}),
        again: () => askMailbox(last.allow, last),
@@ -543,7 +843,7 @@ $('#btn-ask').onclick = () => {  // The words go to the conversation; the list g
 };
 // The mail list is folded away while chatting: going to a folder or view brings it back.
 $('#app .sidebar').addEventListener('click', (e) => { if (chatOpen() && e.target.closest('a.folder')) hideAsk(); }, true);
-$('#chat-here').onclick = () => { const here = chatHere(); if (here) { S.chat.attach = S.chat.attach === here.mid ? '' : here.mid; renderHere(); } };
+$('#chat-here').onclick = () => { const here = chatHere(); if (here) { S.chat.attach = S.chat.attach === here.key ? '' : here.key; renderHere(); } };
 $('#ask-close').onclick = hideAsk;
 $('#chat-new').onclick = newChat;
 $('#ask-form').onsubmit = (e) => { e.preventDefault(); askMailbox(); };
