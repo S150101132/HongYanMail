@@ -109,7 +109,7 @@ if (typeof document !== 'undefined') {
     if (typeof showToday === 'function') {
       add('前往', 'clock', '在等别人', () => showToday('wait'), ['等回复', '等对方回复', '催办', '跟进', '受阻']);
       add('前往', 'spark', '待我确认', () => showToday('confirm'), ['待确认', 'AI 建议', '确认建议']);
-      if (ucOn()) add('前往', 'spark', '本周概括', () => showToday('week'), ['本周需要知道', '需要知道', '周报', '本周']);
+      if (ucOn() && S.prefs.memoryFacts) add('前往', 'spark', '本周概括', () => showToday('week'), ['本周需要知道', '需要知道', '周报', '本周']);
     }
     add('命令', 'template', '从模板新建', () => newFromTemplate(), ['模板', '用模板写信']);
     add('命令', 'refresh', '收信', () => $('#btn-refresh').click(), ['刷新', '同步', '收邮件'], 'F5');

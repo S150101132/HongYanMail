@@ -138,7 +138,7 @@ def parse(content, tasks=(), refs=()):
             facts.append(fact)
     task = value.get('task') if isinstance(value.get('task'), dict) else {}
     candidate = task.get('id') if type(task.get('id')) is int and task.get('id') in tasks else None
-    card = {'kind': kind, 'sure': value.get('sure') is not False, 'gist': _text(value.get('gist'), GIST),
+    card = {'kind': kind, 'sure': value.get('sure') is True, 'gist': _text(value.get('gist'), GIST),
             'tag': _text(value.get('tag'), TAG),
             'ask': _text(value.get('ask'), ASK) if kind == 'act' else '', 'due': due if kind == 'act' else '',
             'project': _text(value.get('project'), PROJECT), 'facts': facts[:FACTS]}

@@ -33,7 +33,8 @@ DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify'
                  'understand': '',  # 理解层: '' not asked yet, 'on', 'off'.
                  'listGist': True,  # The list's second line shows the card's 要点 instead of the body's start.
                  'toolbar': 'lean',  # A4: 'lean' folds low-use buttons into ⋯ / 格式 / the send menu; 'full' shows them all.
-                 'startPage': 'today',  # R2a: 'today' opens 今天 after signing in, 'inbox' the 收件箱.
+                 'startPage': 'inbox',  # R2a/R3b: 'inbox' opens the 收件箱 after signing in, 'today' 今天.
+                 'memoryFacts': False,  # R3c: the 理解层 also keeps project facts (工作记忆); off: it only sorts mail.
                  'hiddenFolders': []}  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
 CLOSE_ACTIONS = ('', 'tray', 'quit')
 UNDO_CHOICES = (0, 5, 10, 20, 30)  # 撤销发送 delay in seconds; 0 sends at once.
@@ -243,7 +244,7 @@ def _fact_view(fact):
 def _card_view(card):
     """What the page sees of a card (its facts go to 工作记忆 and are shown from there)."""
     return {'kind': card.get('kind'), 'sure': bool(card.get('sure')), 'gist': card.get('gist') or '', 'tag': card.get('tag') or '', 'ask': card.get('ask') or '',
-            'due': card.get('due') or '', 'project': card.get('project') or '', 'done': bool(card.get('done')),
+            'due': card.get('due') or '', 'project': card.get('project') or '', 'done': bool(card.get('done')), 'answered': card.get('answered') or '',
             'actor': card.get('actor') or 'ai', 'rule': bool(card.get('rule')), 'model': card.get('model') or '', 'at': card.get('at') or '',
             'task': (card.get('task') or {}).get('id') or 0, 'why': (card.get('task') or {}).get('why') or ''}
 
@@ -471,10 +472,12 @@ class MailBackend:
             if self.memory:
                 self.memory.close()
             from coremail_desktop.memory.store import MemoryStore
+            self._memory_error = ''
             try:
                 self.memory = MemoryStore(self.data_dir / 'cache' / (account_key + '.memory.db'), self.protector)
-            except AppError:
+            except AppError as error:
                 self.memory = None  # The 理解层 is optional; mail works without it.
+                self._memory_error = error.code
             self._understand_failed = {}
         self.account = username
         self.services = self._services_factory(self.adapter, self.data_dir, prepare_encrypted=self._prepare_encrypted)
@@ -541,7 +544,7 @@ class MailBackend:
         if prefs['understand'] not in ('', 'on', 'off'):
             prefs['understand'] = ''
         if prefs['startPage'] not in ('today', 'inbox'):
-            prefs['startPage'] = 'today'
+            prefs['startPage'] = 'inbox'
         if prefs['toolbar'] not in ('lean', 'full'):
             prefs['toolbar'] = 'lean'
         if prefs['undoSeconds'] not in UNDO_CHOICES:
@@ -3503,7 +3506,7 @@ class MailBackend:
     # thread, downloads without marking read) -> understand_mail (AI thread, one call each).
     def _memory(self):
         if self.memory is None:
-            raise AppError('MEMORY_UNAVAILABLE' if self.cache is not None else 'NOT_AUTHENTICATED')
+            raise AppError(getattr(self, '_memory_error', '') or 'MEMORY_UNAVAILABLE' if self.cache is not None else 'NOT_AUTHENTICATED')
         return self.memory
 
     def _understand_on(self):
@@ -3592,7 +3595,8 @@ class MailBackend:
                     self._understand_failed[mid] = error.code
                 raise
             projects, tasks = self._projects(), self._open_tasks()
-            refs = merge.prompt_facts(memory.facts, projects)
+            keep = self.prefs()['memoryFacts']  # R3c: off, the card only sorts the mail; no project facts.
+            refs = merge.prompt_facts(memory.facts, projects) if keep else {}
             brief = [(t['id'], ' '.join(filter(None, (t.get('system'), t.get('content'))))) for t in sorted(tasks, key=lambda t: t['id'])][-understand.TASKS:]
             messages = understand.build_messages(document, self.display_name, [self.account or '', *self.identities], projects,
                                                  row.get('date') or '', datetime.now().date(), tasks=brief, facts=refs)
@@ -3606,7 +3610,7 @@ class MailBackend:
         card.update(v=understand.CARD_VERSION, at=datetime.now().strftime('%Y-%m-%d %H:%M'), actor='ai',
                     messageId=(self._docs[mid].headers.get('message-id', ('',))[0].strip('<> ') if mid in self._docs else ''))
         memory.put_card(mid, card)
-        if card.get('facts') and card['kind'] != 'ignore':
+        if card.get('facts') and card['kind'] != 'ignore' and self.prefs()['memoryFacts']:
             self._remember(mid, card, row, refs)
         month = datetime.now().strftime('%Y-%m')
         usage = memory.get('usage') or {}
@@ -3656,6 +3660,7 @@ class MailBackend:
         if kind == 'act':
             rows.sort(key=lambda r: -(r.get('ts') or 0))
             rows.sort(key=lambda r: r['card']['due'] or '9999')
+            rows.sort(key=lambda r: bool(r['card']['answered']))  # Answered (R3a): after the ones still waiting on me.
         else:
             rows.sort(key=lambda r: r.get('ts') or 0, reverse=True)
         return {'rows': rows, 'total': len(rows)}
@@ -3673,7 +3678,10 @@ class MailBackend:
             counts['wait'] = len(self.followups())
         usage = (self.memory.get('usage') if self.memory else None) or {}
         month = datetime.now().strftime('%Y-%m')
+        from coremail_desktop.ui.messages import user_message
+        error = getattr(self, '_memory_error', '')
         return {'state': self.prefs()['understand'] if self.cache else '', 'available': self.memory is not None,
+                'unavailable': user_message(error) if self.memory is None and error else '',
                 'encrypted': self.ai_encrypted(), 'counts': counts, 'rules': len(self.memory.rules) if self.memory else 0,
                 'month': usage.get('mails', 0) if usage.get('month') == month else 0, 'failed': len(self._understand_failed)}
 
@@ -3720,18 +3728,17 @@ class MailBackend:
                 changed.append(mid)
         return {'changed': changed, 'status': self.understand_status()}
 
-    def understand_answered(self, mid):
-        """回复即已处理 (R1a): mid was replied to or forwarded and went out, so it and the earlier
-        要我做 mail of its conversation are done; returns the ids that changed (for 撤销)."""
-        if not isinstance(mid, str) or not mid or len(mid) > 300:
+    def understand_answered(self, mid, how='reply'):
+        """回复后只标「已回复」(R3a): a reply ('reply') or forward ('forward') of mid went out. A
+        reply is not the work done, so the 要我做 card only says so and stays on the list, after
+        the ones not yet answered; the user marks it 已处理. Returns the ids that changed."""
+        if not isinstance(mid, str) or not mid or len(mid) > 300 or how not in ('reply', 'forward'):
             raise AppError('UNDERSTAND_INVALID')
-        if not self._understand_on() or self.cache.summary(mid) is None:
+        card = self.memory.card(mid) if self._understand_on() else None
+        if not card or card.get('kind') != 'act' or not card.get('sure') or card.get('done') or card.get('answered') == how:
             return {'changed': []}
-        _, _, rows = self._thread_rows(mid)
-        ts = self.cache.summary(mid).get('ts') or 0
-        ids = [r['id'] for r in rows if (r.get('ts') or 0) <= ts] or [mid]
-        cards = {i: self.memory.card(i) for i in ids}
-        return self.understand_set_done([i for i, c in cards.items() if c and c.get('sure')])
+        self.memory.put_card(mid, {**card, 'answered': how})
+        return {'changed': [mid]}
 
     # 今天 (R2a) ------------------------------------------------------------------
     def today_overview(self):
@@ -3753,9 +3760,10 @@ class MailBackend:
             elif is_day(t['due']) and t['due'] <= horizon:
                 rows.append({'kind': 'task', 'id': t['id'], 'due': t['due'], 'ts': 0, 'task': t})
         rows.sort(key=lambda r: -r['ts'])
-        rows.sort(key=lambda r: (not (r['due'] and r['due'] < today), r['due'] or '9999'))
+        rows.sort(key=lambda r: (not (r['due'] and r['due'] < today), r['due'] or '9999', bool(r['kind'] == 'mail' and r['mail']['card']['answered'])))
         waiting = len(self.followups()) if understanding else 0
         return {'date': today, 'rows': rows, 'understanding': understanding, 'tasks': tasks_on,
+                'unread': self.understand_pending()['left'] if understanding else 0,  # Mail the AI has not read yet (V2).
                 'counts': {'overdue': sum(1 for r in rows if r['due'] and r['due'] < today),
                            'today': sum(1 for r in rows if r['due'] == today),
                            'waiting': waiting + len(blocked), 'confirm': len(center.pending()) if tasks_on else 0}}

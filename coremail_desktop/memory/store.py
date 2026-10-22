@@ -31,6 +31,9 @@ class MemoryStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         key_path = self.path.with_suffix('.key')
+        if not key_path.exists() and _has_rows(self.path):
+            # Records without their key: never start over with a new key over them (V5).
+            raise AppError('MEMORY_KEY_MISSING')
         try:
             if key_path.exists():
                 key = protector.unprotect(key_path.read_bytes())
@@ -47,6 +50,7 @@ class MemoryStore:
         except Exception:
             raise AppError('MEMORY_UNAVAILABLE') from None
         self.cards, self.rules, self.facts = {}, {}, {}
+        stored = sum(self._db.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] for table in ('facts', 'cards', 'rules'))
         for fact_id, blob in self._db.execute('SELECT id, blob FROM facts ORDER BY at'):
             try:
                 self.facts[fact_id] = self._open(blob, 'fact:' + fact_id)
@@ -62,6 +66,11 @@ class MemoryStore:
                 self.rules[rule_id] = self._open(blob, 'rule:' + rule_id)
             except Exception:
                 continue
+
+        if stored and not (self.facts or self.cards or self.rules):
+            # Not one record opens: the key is not theirs. Shown as an error, never as no memory (V5).
+            self._db.close()
+            raise AppError('MEMORY_KEY_MISSING')
 
     def _seal(self, value, aad):
         nonce = os.urandom(12)
@@ -136,3 +145,19 @@ class MemoryStore:
     def close(self):
         with self._lock:
             self._db.close()
+
+
+def _has_rows(path):
+    """Whether a memory database already holds records (read-only; a missing file holds none)."""
+    if not Path(path).exists():
+        return False
+    try:
+        db = sqlite3.connect(f'file:{Path(path).as_posix()}?mode=ro', uri=True)
+        try:
+            return any(db.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
+                       for table in ('facts', 'cards', 'rules')
+                       if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone())
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return True  # Unreadable: keep it as it is rather than start over.

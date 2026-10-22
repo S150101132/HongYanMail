@@ -329,7 +329,7 @@
           <p class="muted small">精简时，阅读栏只留回复、转发、删除、星标和 AI，其余在「⋯」里；写信时少用的格式在「格式」里，定时发送和模板在「发送」旁的 ▾ 里；高级搜索的时间改为下拉。快捷键不变；也可以按 Ctrl+K 用命令找到每个功能。</p>
           <h3>收信与提醒</h3>
           <label class="pref-row">启动时打开
-            <select id="pref-start"><option value="today">今天</option><option value="inbox">收件箱</option></select></label>
+            <select id="pref-start"><option value="inbox">收件箱</option><option value="today">今天</option></select></label>
           <label class="pref-row">自动收信间隔
             <select id="pref-poll"><option value="30">30 秒</option><option value="60">1 分钟</option><option value="120">2 分钟</option><option value="300">5 分钟</option><option value="900">15 分钟</option></select></label>
           <label class="check"><input type="checkbox" id="pref-notify"> 新邮件桌面通知</label>
@@ -405,6 +405,7 @@
           <div id="uc-rules"></div>
           <div class="row-gap"><button class="btn ghost danger" id="uc-clear">清除理解结果和规则</button></div>
           <h3>工作记忆</h3>
+          <label class="check"><input id="mem-facts" type="checkbox"> 记录项目事实（关掉时理解新邮件只做分类，不记项目的进展和决定；已记下的保留）</label>
           <p class="muted small">理解邮件时，鸿雁把名单里项目的进展、决定、分工和关键日期记下来：同一件事有了新消息就更新，旧的留作历史；外部邮件不能自动改同事说过的，你写的 AI 也不能改，这两种会等你确认。任务中心未完成任务的「系统」自动列入（我负责）；也可以手动添加只想了解的项目（我关注），或把别名合并到一个项目。</p>
           <div id="mem-projects" class="mem-projects"></div>
           <div class="row-gap mem-add"><input id="mem-new" type="text" maxlength="30" spellcheck="false" placeholder="项目名，例如 NG BI"><button class="btn ghost" id="mem-add">添加项目</button></div>

@@ -8,6 +8,7 @@
 
 const UC = window.UC = { status: null, cards: new Map(), busy: false };  // cards: mid -> card, or null (asked, none)
 const UC_KIND = { act: '要我做', know: '要我知道', ignore: '可以忽略' };
+const UC_ANSWERED = { reply: '回复', forward: '转发' };  // R3a: what went out for a 要我做 mail.
 const UC_SKIP = ['AI_ENCRYPTED_CONFIRM', 'CERT_LOCKED', 'AI_MAIL_UNAVAILABLE', 'AI_BAD_RESPONSE'];  // That mail only; go on.
 
 function ucOn() { return S.prefs.understand === 'on'; }
@@ -28,7 +29,8 @@ UC.row = (r) => {
   if (!c) return null;
   const due = c.kind === 'act' && c.sure && !c.done ? ucDue(c.due) : null;
   const lead = c.kind === 'act' && c.sure && !c.done ? `<span class="uc-dot" title="${esc('要我做：' + (c.ask || c.gist))}"></span>` +
-    (due ? `<span class="uc-due${due.late ? ' late' : ''}">${esc(due.text)}</span>` : '') : '';
+    (due ? `<span class="uc-due${due.late ? ' late' : ''}">${esc(due.text)}</span>` : '') +
+    (c.answered ? `<span class="uc-answered">已${UC_ANSWERED[c.answered] || '回复'}</span>` : '') : '';
   const short = c.tag || ucShort(c.gist);
   const prev = S.prefs.listGist !== false && short ? `<div class="prev uc-gist" title="${esc('AI 要点：' + c.gist)}">${esc(short)}</div>` : '';
   return { lead, prev, cls: c.kind === 'ignore' && c.sure ? ' uc-ignore' : '' };
@@ -43,7 +45,7 @@ UC.group = (r) => {
   if (S.local === 'u-wait') return (r.waiting || 0) >= 7 ? '一周以上没有回复' : '3 天以上没有回复';
   return null;
 };
-UC.empty = () => S.local === 'u-act' ? '没有需要你处理的邮件 🎉' : S.local === 'u-know' ? '最近 30 天没有知会类的邮件'
+UC.empty = () => S.local === 'u-act' ? 'AI 读过的邮件里没有要你做的（还没读到的邮件仍在收件箱里）' : S.local === 'u-know' ? '最近 30 天没有知会类的邮件'
   : S.local === 'u-wait' ? '没有等对方回复的邮件' : '';
 const ucLocal = () => S.local === 'u-act' || S.local === 'u-know' || S.local === 'u-wait';
 UC.menu = (r) => {
@@ -211,7 +213,8 @@ function renderUcStrip(m) {
     const due = ucDue(c.due);
     box.className = 'uc-strip act';
     box.innerHTML = `<i data-icon="flag"></i><span class="uc-text"><b>要你做：</b>${esc(c.ask || c.gist)}</span>` +
-      (due ? `<span class="uc-due${due.late ? ' late' : ''}">${esc(due.text)}</span>` : '') + project +
+      (due ? `<span class="uc-due${due.late ? ' late' : ''}">${esc(due.text)}</span>` : '') +
+      (c.answered ? `<span class="uc-answered">已${UC_ANSWERED[c.answered] || '回复'}</span>` : '') + project +
       (typeof mailToTask === 'function' ? '<button class="btn ghost" data-uc="task" title="交给任务中心（AI 判断新建还是更新哪条任务）">转为任务</button>' : '') +
       '<button class="btn ghost" data-uc="done" title="从「要我做」中移除">已处理</button>' + more;
   } else {
@@ -257,19 +260,19 @@ function ucAfterChange() {
   ucRefreshStatus();
 }
 
-// 回复即已处理 (R1a): a reply or forward that went out takes its 要我做 mail (and the earlier
-// ones of the conversation) off the list; 撤销 in the toast puts back exactly those.
+// 回复后只标已回复 (R3a): a reply or forward that went out marks its 要我做 mail 已回复 / 已转发;
+// it stays on the list (a reply is not the work done) and the toast offers 已处理 in one click.
 const _ucSendOutcome = sendOutcome;
 sendOutcome = function (res, meta = {}) { _ucSendOutcome(res, meta); ucAnswered(res, meta); };
 async function ucAnswered(res, meta) {
   if (!ucOn() || !meta.source || !['Accepted', 'Queued'].includes(res.state)) return;
+  const mid = meta.source, how = meta.how === 'forward' ? 'forward' : 'reply';
   let changed;
-  try { ({ changed } = await api('understandAnswered', { mid: meta.source })); } catch { return; }
+  try { ({ changed } = await api('understandAnswered', { mid, how })); } catch { return; }
   if (!changed.length) return;
-  const set = (done) => api('understandSetDone', { ids: changed, done }).then(() => { UC.cards.clear(); ucAfterChange(); });
-  UC.cards.clear(); ucAfterChange();
-  toast(`已回复：${changed.length > 1 ? `${changed.length} 封「要我做」` : '这封「要我做」'}标为已处理`, { ms: 8000,
-    action: { label: '撤销', run: () => set(false).then(() => toast('已撤销')).catch(fail) } });
+  UC.cards.delete(mid); ucAfterChange();
+  toast(`已${UC_ANSWERED[how]}，这封仍在「要我做」里。事情办完了就点「已处理」`, { ms: 9000,
+    action: { label: '已处理', run: () => ucCorrect(mid, { done: true }, {}) } });
 }
 async function ucRuleDialog(info, kind) {
   const email = (info.sender || '').toLowerCase(), domain = email.includes('@') ? email.split('@')[1] : '';
@@ -361,7 +364,8 @@ async function renderUcSettings() {
   $('#uc-enc-senders').value = enc.senders.join('\n');
   $('#uc-on').checked = st.state === 'on';
   $('#uc-gist').checked = S.prefs.listGist !== false;
-  $('#uc-status').textContent = !st.available ? '无法打开本机的理解数据，「理解新邮件」暂不可用。' : st.state !== 'on' ? '未开启。' :
+  $('#mem-facts').checked = !!S.prefs.memoryFacts;
+  $('#uc-status').textContent = !st.available ? (st.unavailable || '无法打开本机的理解数据，「理解新邮件」暂不可用。') : st.state !== 'on' ? '未开启。' :
     `本月已理解 ${st.month} 封邮件；要我做 ${st.counts.act} 封，知会 ${st.counts.know} 封未读，等回复 ${st.counts.wait || 0} 封` +
     (st.failed ? `；${st.failed} 封这次无法读取（例如证书未解锁），已跳过` : '') + '。';
   const rules = st.available ? await api('understandRules').catch(() => []) : [];

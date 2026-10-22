@@ -53,12 +53,13 @@ function tdHead(data) {
   if (TD.sub) return `<div class="td-head"><button class="btn ghost sm" data-td="">← 今天</button>${TD.sub === 'confirm' && tdSuggested().length > 1
     ? `<span class="spacer"></span><button class="btn ghost sm" data-td-all="0">全部驳回</button><button class="btn sm" data-td-all="1">全部采纳</button>` : ''}</div>`;
   const links = [c.waiting ? `<a data-td="wait">在等别人 ${c.waiting}</a>` : '', c.confirm ? `<a data-td="confirm">待我确认 ${c.confirm}</a>` : '',
-    data.understanding ? '<a data-td="week">本周概括</a>' : ''].filter(Boolean).join('');
+    data.understanding && S.prefs.memoryFacts ? '<a data-td="week">本周概括</a>' : ''].filter(Boolean).join('');
   const day = new Date(data.date + 'T00:00:00');
   const counts = [c.overdue ? `<b class="late">逾期 ${c.overdue}</b>` : '', c.today ? `今天 ${c.today}` : ''].filter(Boolean).join(' · ');
   return `<div class="td-head"><span>${day.getMonth() + 1} 月 ${day.getDate()} 日 周${'日一二三四五六'[day.getDay()]}${counts ? ' · ' + counts : ''}</span>` +
     `<span class="spacer"></span>${links}</div>` +
     (!data.understanding ? '<div class="td-hint">开启「理解新邮件」后，要你做的邮件也会出现在这里。<a data-td-set="ai">去设置</a></div>' : '') +
+    (data.unread ? `<div class="td-hint">还有 ${data.unread} 封邮件 AI 还没读，暂时不在这里。<a data-td-inbox="1">去收件箱</a></div>` : '') +
     (!data.tasks ? '<div class="td-hint">导入任务后，快到期的任务也会出现在这里。<a data-td-set="tasks">去设置</a></div>' : '');
 }
 function tdRender() {
@@ -72,7 +73,9 @@ function tdRender() {
       head(tdGroup(r.due, data.date));
       html += r.kind === 'task' ? tdTaskRow(r.task) : rowHtml(r.mail);
     }
-    if (!data.rows.length) html += `<div class="list-foot td-empty">今天没有要你做的事${data.counts.waiting ? `<br><a data-td="wait">在等别人 ${data.counts.waiting}</a>` : ''}</div>`;
+    // Only what was recognised (V2): never "nothing to do" — the inbox may still hold work.
+    if (!data.rows.length) html += `<div class="list-foot td-empty">已识别的事都处理完了<div class="muted small">这里只算 AI 读过的「要我做」邮件和 3 天内到期的任务，其他邮件仍在收件箱。</div>` +
+      `<a data-td-inbox="1">去收件箱</a>${data.counts.waiting ? ` · <a data-td="wait">在等别人 ${data.counts.waiting}</a>` : ''}</div>`;
   } else if (TD.sub === 'wait') {
     for (const r of TD.waiting.mail) { head('等对方回复'); html += rowHtml(r); }
     for (const t of TD.waiting.tasks) { head('受阻的任务'); html += tdTaskRow(t); }
@@ -117,6 +120,7 @@ $('#mail-list').addEventListener('click', (e) => {
   const stop = () => { e.stopPropagation(); e.preventDefault(); };
   const link = t.closest('[data-td]');
   if (link) { stop(); showToday(link.dataset.td); return; }
+  if (t.closest('[data-td-inbox]')) { stop(); selectFolder((S.folders.find((f) => f.role === 'inbox') || { id: '1' }).id); return; }
   const set = t.closest('[data-td-set]');
   if (set) { stop(); set.dataset.tdSet === 'tasks' ? openTaskSettings() : openSettings(); return; }
   const all = t.closest('[data-td-all]');
@@ -197,6 +201,6 @@ ucOpen = function (kind) { return kind === 'wait' ? showToday('wait') : _tdUcOpe
 const _tdEnterApp = enterApp;
 enterApp = async function (profile) {
   await _tdEnterApp(profile);
-  if (S.prefs.startPage !== 'inbox') showToday(); else tdRefreshCount();
+  if (S.prefs.startPage === 'today') showToday(); else tdRefreshCount();
 };
 $('#btn-refresh').addEventListener('click', () => { if (S.local === 'today') showToday(TD.sub, true); });

@@ -254,7 +254,7 @@ U1 = len(STEPS)
 STEPS += [
     (900, lambda: (setattr(backend, 'ai_client', __import__('coremail_desktop.app.demo', fromlist=['DemoAiClient']).DemoAiClient()),
                    backend.set_understand('on')), None),
-    (600, "S.prefs.understand = 'on'; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
+    (600, "S.prefs.understand = 'on'; S.prefs.memoryFacts = true; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
     (9000, "document.body.offsetWidth", 'uc-list'),
     (500, "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'act' && (UC.cards.get(r.id) || {}).due).id)", 'uc-reader-act'),
     (500, "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'know').id)", 'uc-reader-know'),
@@ -301,6 +301,7 @@ def m2_setup():
     backend.ai_client = DemoAiClient()
     backend.set_prefs({'undoSeconds': 0})
     backend.set_understand('on')
+    backend.set_prefs({'memoryFacts': True})  # R3c: off by default; the walk shows the project memory.
     backend.memory_project('B/OSS', rename='NG BOSS')
     backend.memory_project('BI', parent='NG BOSS')
     backend.memory_project('CRM', parent='NG BOSS')
@@ -312,7 +313,7 @@ def m2_setup():
 KNOW_MAIL = "selectMessage(S.rows.find((r) => (UC.cards.get(r.id) || {}).kind === 'know' && (UC.cards.get(r.id) || {}).project).id)"
 STEPS += [
     (900, m2_setup, None),
-    (600, "S.prefs.understand = 'on'; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
+    (600, "S.prefs.understand = 'on'; S.prefs.memoryFacts = true; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
     (12000, "ucRound()", None),
     (12000, "UC.cards.clear(); memReset(); renderList()", None),
     (1500, KNOW_MAIL, 'm2-reader'),
@@ -336,15 +337,17 @@ STEPS += [
 R2 = len(STEPS)
 STEPS += [
     (900, m2_setup, None),
-    (600, "S.prefs.understand = 'on'; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
+    (600, "S.prefs.understand = 'on'; S.prefs.memoryFacts = true; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
     (12000, "ucRound()", None),
     (12000, "UC.cards.clear(); memReset(); showToday()", None),
     (1500, "document.body.offsetWidth", 'r2-today'),
     (500, "selectMessage(S.rows[0].id)", 'r2-today-mail'),
-    (700, "sendOutcome({ state: 'Accepted', localId: 'walk' }, { subject: 'Re', source: S.selected })", 'r2-replied'),  # 回复即已处理 (R1a).
+    (700, "sendOutcome({ state: 'Accepted', localId: 'walk' }, { subject: 'Re', source: S.selected, how: 'reply' })", 'r3-answered'),  # 只标已回复 (R3a).
     (900, "$('#mail-list .td-task').click()", 'r2-task-card'),
     (900, "showAsk()", 'r2-ask-today'),
     (500, "hideAsk(); showToday('wait')", 'r2-wait'),
+    (500, "$('#search').value = 'hongyan-walk-no-match'; $('#search').dispatchEvent(new Event('input'))", 'r3-search-from-today'),  # V1
+    (500, "clearSearch(); $('#search').value = ''", None),
     (900, "MEM.week = 0; showToday('week')", 'r2-week'),
     (1500, "showToday('confirm')", 'r2-confirm'),
     (900, "selectFolder('1')", None),

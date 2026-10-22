@@ -21,12 +21,27 @@ async function groupMenu(anchor) {
   await loadGroups();
   const r = anchor.getBoundingClientRect();
   const used = S.groups.slice(0, 15).map((g) => ({ label: `${g.name}（${g.members.length}）`, icon: 'contacts', run: () => applyGroup(g) }));
+  if (S.groups.length > 15) used.push({ label: `搜索全部 ${S.groups.length} 个组…`, icon: 'search', run: pickGroup });  // V6
   const current = [...chipsValue('to').map((a) => [a, 'to']), ...chipsValue('cc').map((a) => [a, 'cc'])];
   showMenu(r.left, r.bottom + 4, [...used, ...(used.length ? ['-'] : []),
     ...(current.length ? [{ label: '将当前收件人存为组…', icon: 'draft', run: () => editGroup(null, current.map(([a, field]) => ({ ...(parseAddressList(a)[0] || { email: a }), field }))) }] : []),
     { label: S.groups.length ? '管理收件人组…' : '新建收件人组…', icon: 'settings', run: () => (S.groups.length ? manageGroups() : editGroup(null)) }]);
 }
 $('#cmp-groups').onclick = (e) => groupMenu(e.currentTarget);
+// More groups than the menu shows: type part of a name (or a member) and pick one.
+async function pickGroup() {
+  const list = (q) => S.groups.filter((g) => !q || g.name.toLowerCase().includes(q) || g.members.some((m) => `${m.name || ''} ${m.email}`.toLowerCase().includes(q)));
+  const items = (q) => list(q).map((g) => `<button data-gid="${esc(g.id)}"><i data-icon="contacts"></i><span class="tpl-name">${esc(g.name)}</span><span class="muted small tpl-sub">${g.members.length} 人</span></button>`).join('')
+    || '<p class="muted small">没有匹配的组</p>';
+  const g = await promptDialog({ title: '选择收件人组',
+    body: '<input id="grp-q" type="search" spellcheck="false" placeholder="组名或成员"><div class="pick-list tpl-pick" id="grp-list"></div>',
+    onOpen: (d, done) => {
+      const draw = () => { $('#grp-list', d).innerHTML = items($('#grp-q', d).value.trim().toLowerCase()); renderIcons($('#grp-list', d));
+        $$('[data-gid]', d).forEach((b) => (b.onclick = () => done(S.groups.find((x) => x.id === b.dataset.gid)))); };
+      $('#grp-q', d).oninput = draw; draw(); setTimeout(() => $('#grp-q', d).focus(), 0);
+    } });
+  if (g) applyGroup(g);
+}
 
 // ---------------------------------------------------------------- from a message
 async function groupFromMessage(m) {

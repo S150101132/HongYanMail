@@ -141,6 +141,20 @@ class BackendTest(unittest.TestCase):
         b.messages('1', 0, 100)
         b.messages('3', 0, 50)
         b.set_understand('on')
+        b.set_prefs({'memoryFacts': True})  # R3c: off by default.
+
+    def test_facts_off_only_sorts_the_mail(self):  # R3c
+        b = self.backend
+        first, second = b.understand_pending()['ids'][:2]
+        b.memory_project('NG BI')
+        self.understand(first)  # Facts kept (on): one is remembered.
+        kept = dict(b.memory.facts)
+        self.assertTrue(kept)
+        b.set_prefs({'memoryFacts': False})
+        calls = self.understand(second)
+        self.assertNotIn('已记住的事实：', ' '.join(m['content'] for m in calls))  # Not sent along...
+        self.assertEqual(b.memory.card(second)['kind'], 'act')
+        self.assertEqual(b.memory.facts, kept)  # ...nor added; what was kept stays.
 
     def understand(self, mid, **fields):
         b = self.backend

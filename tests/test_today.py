@@ -65,29 +65,47 @@ class TodayTest(unittest.TestCase):
         b.today_overview()
         self.assertEqual(calls, [])  # Never asks the AI.
 
-    def test_a_sent_reply_marks_its_conversation_done(self):
+    def test_a_reply_only_marks_the_mail_answered(self):  # R3a: a reply is not the work done.
         b = self.b
         self.assertEqual(b.understand_answered('demo1'), {'changed': []})  # 理解层 off: nothing to do.
         b.set_understand('on')
         ids = b.understand_pending()['ids']
-        mid = ids[0]
-        _, _, rows = b._thread_rows(mid)
-        ts = b.cache.summary(mid)['ts']
-        earlier = [r['id'] for r in rows if r['id'] != mid and r['ts'] <= ts]
-        other = next(i for i in ids if i not in {r['id'] for r in rows})
-        for i in [mid, other, *earlier]:
-            act(b, i)
-        changed = b.understand_answered(mid)['changed']
-        self.assertEqual(sorted(changed), sorted([mid, *earlier]))
-        self.assertTrue(b.memory.card(mid)['done'])
-        self.assertFalse(b.memory.card(other).get('done'))  # Another conversation stays.
-        b.understand_set_done(changed, done=False)  # 撤销
-        self.assertFalse(b.memory.card(mid).get('done'))
+        mid, other, third = ids[:3]
+        for i, due in ((mid, '2026-10-23'), (other, '2026-10-23'), (third, '')):
+            act(b, i, due)
+        self.assertEqual(b.understand_answered(mid)['changed'], [mid])
+        self.assertEqual(b.understand_answered(mid)['changed'], [])  # Once.
+        self.assertEqual(b.understand_answered(mid, how='forward')['changed'], [mid])
+        card = b.memory.card(mid)
+        self.assertEqual((card['answered'], card.get('done')), ('forward', None))
+        rows = [r['id'] for r in b.understand_view('act')['rows']]
+        self.assertIn(mid, rows)  # Still to do: it stays on the list...
+        self.assertEqual(rows[-1], mid)  # ...after the ones not yet answered.
+        self.assertEqual(b.understand_view('act')['rows'][-1]['card']['answered'], 'forward')
+        self.assertIsNone(b.memory.card(other).get('answered'))  # Another mail stays as it was.
+        b.understand_set_done([mid])
+        self.assertEqual(b.understand_answered(mid)['changed'], [])  # Done already: left alone.
         act(b, other, sure=False)
         self.assertEqual(b.understand_answered(other)['changed'], [])  # Not sure: never on the list anyway.
+        for bad in ('', None):
+            with self.assertRaises(AppError):
+                b.understand_answered(bad)
         with self.assertRaises(AppError):
-            b.understand_answered('')
+            b.understand_answered(mid, how='send')
 
+    def test_the_list_says_how_much_it_covers(self):  # V2
+        b = self.b
+        b.set_understand('on')
+        left = b.understand_pending()['left']
+        self.assertGreater(left, 0)
+        self.assertEqual(b.today_overview()['unread'], left)
+        b.set_understand('off')
+        self.assertEqual(b.today_overview()['unread'], 0)
+
+    def test_inbox_first_and_facts_off_by_default(self):  # R3b, R3c
+        prefs = self.b.prefs()
+        self.assertEqual((prefs['startPage'], prefs['memoryFacts']), ('inbox', False))
+        self.assertEqual(self.b.set_prefs({'startPage': 'nope'})['startPage'], 'inbox')
 
 
 class PageTest(unittest.TestCase):
@@ -105,7 +123,10 @@ class PageTest(unittest.TestCase):
         self.assertLess(page.index('src="today.js"'), page.index('src="commands.js"'))
         for call in ("api('todayOverview')", "api('todayWaiting')", "api('tasksPending')", "api('taskReview'", "api('taskGet'"):
             self.assertIn(call, today)
-        self.assertIn("S.prefs.startPage !== 'inbox'", today)
+        self.assertIn("S.prefs.startPage === 'today'", today)  # R3b: the inbox first unless chosen.
+        self.assertIn('已识别的事都处理完了', today)  # V2: never "nothing to do".
+        self.assertNotIn('今天没有要你做的事', today)
+        self.assertIn("if (S.local) { S.local = null;", self.read('app.js'))  # V1: a search leaves 今天.
         for text in ('esc(t.content', 'esc(t.system)', 'esc(text)', 'esc(tkText(t.content))', 'esc(err.message)'):
             self.assertIn(text, today)  # Task text and AI suggestions are shown as text.
         memory = self.read('memory.js')
@@ -115,11 +136,13 @@ class PageTest(unittest.TestCase):
     def test_reply_and_strip(self):
         app, understand_js, memory = self.read('app.js'), self.read('understand.js'), self.read('memory.js')
         self.assertIn('draft.sourceMid = mid', app)
-        self.assertIn("source: C.draft.sourceMid || C.draft.replySourceId || ''", app)
-        self.assertIn("api('understandAnswered', { mid: meta.source })", understand_js)
-        self.assertIn("api('understandSetDone', { ids: changed, done })", understand_js)  # 撤销 puts back exactly those.
+        self.assertIn("source: C.draft.sourceMid || C.draft.replySourceId || '', how: C.draft.mode === 'forward' ? 'forward' : 'reply'", app)
+        self.assertIn("api('understandAnswered', { mid, how })", understand_js)
+        self.assertIn("label: '已处理', run: () => ucCorrect(mid, { done: true }, {})", understand_js)  # R3a: done is the user's click.
+        self.assertNotIn('没有需要你处理的邮件', understand_js)  # V3
         self.assertIn('关联 #${c.task}', memory)  # The task candidate is a button on the one strip.
-        self.assertIn('if (c && c.project && memRecentOpen())', memory)  # 这个项目最近 only when opened.
+        self.assertIn('if (c && c.project && S.prefs.memoryFacts && memRecentOpen())', memory)  # Only when opened, with facts kept (R3c).
+        self.assertIn('pickGroup', self.read('groups.js'))  # V6: every group can be found.
 
     def test_one_assistant(self):
         page, tasks = self.read('index.html'), self.read('tasks.js')

@@ -38,7 +38,7 @@ renderUcStrip = function (m) {
     if (strip) $('[data-uc="menu"]', strip).insertAdjacentHTML('beforebegin', `<button class="btn ghost" data-mem="link" title="${esc(title)}">关联 #${c.task}</button>`);
     else lines.push(`<div class="mem-line"><i data-icon="tasks"></i><span class="uc-text muted">${esc(title)}</span><button class="btn ghost" data-mem="link">关联</button></div>`);
   }
-  const chip = strip && $('.uc-project', strip);
+  const chip = strip && S.prefs.memoryFacts && $('.uc-project', strip);  // R3c: no facts kept, nothing to open.
   if (chip) {
     chip.classList.add('link'); chip.classList.toggle('on', memRecentOpen());
     chip.title = memRecentOpen() ? '收起「这个项目最近」' : '看这个项目最近的情况';
@@ -63,7 +63,7 @@ renderUcStrip = function (m) {
   draw(null);
   if (strip) $$('[data-mem="link"]', strip).forEach((b) => (b.onclick = () =>
     api('taskLink', { id: c.task, mid: m.id }).then(() => { toast(`已关联到任务 #${c.task}`); if (typeof loadMailIndex === 'function') loadMailIndex(); renderUcStrip(m); }).catch(fail)));
-  if (c && c.project && memRecentOpen()) memRecent(c.project).then(draw);
+  if (c && c.project && S.prefs.memoryFacts && memRecentOpen()) memRecent(c.project).then(draw);
 };
 function memRecentOpen(open) {
   try { if (open !== undefined) localStorage.setItem('hy-mem-recent', open ? '1' : '0'); return localStorage.getItem('hy-mem-recent') === '1'; }
@@ -232,6 +232,9 @@ window.personExtra = async function (pop, person) {
 };
 
 // ---------------------------------------------------------------- 设置 → 工作记忆 (the project list)
+$('#mem-facts').onchange = async () => {
+  try { S.prefs = await api('setPrefs', { values: { memoryFacts: $('#mem-facts').checked } }); memReset(); if (S.message) renderUcStrip(S.message); } catch (err) { fail(err); }
+};
 async function renderMemProjects(on) {
   const box = $('#mem-projects');
   $('#mem-add').disabled = $('#mem-new').disabled = !on;

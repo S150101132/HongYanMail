@@ -45,6 +45,15 @@ def document(text='请周五前回复联调时间。', to='demo@example.invalid'
 
 
 class CardTest(unittest.TestCase):
+    def test_sure_only_when_the_model_says_so(self):  # V4: missing or odd is not sure.
+        for value, sure in ((True, True), (False, False), (None, False), ('true', False), (1, False)):
+            fields = json.loads(card_json())
+            if value is None:
+                del fields['sure']
+            else:
+                fields['sure'] = value
+            self.assertEqual(understand.parse(json.dumps(fields, ensure_ascii=False))['sure'], sure)
+
     def test_parse_checks_every_field(self):
         card = understand.parse(card_json())
         self.assertEqual((card['kind'], card['sure'], card['due'], card['project']), ('act', True, '2026-10-23', 'NG BI'))
@@ -123,6 +132,32 @@ class StoreTest(unittest.TestCase):
         self.assertEqual((store.card('m1'), list(store.rules), store.get('usage')['mails']), ({'kind': 'act'}, ['r1'], 3))
         store.clear()
         self.assertEqual((store.cards, store.rules, store.get('usage')), ({}, {}, None))
+
+    def test_records_without_their_key_are_kept_not_started_over(self):  # V5
+        directory = Path(scratch(self))
+        store = MemoryStore(directory / 'a.memory.db', XorProtector())
+        store.put_card('m1', {'kind': 'act'})
+        store.close()
+        other = MemoryStore(directory / 'b.memory.db', XorProtector())
+        other.close()
+        key = directory / 'a.memory.key'
+        mine = key.read_bytes()
+        key.write_bytes((directory / 'b.memory.key').read_bytes())  # Another key: not one record opens.
+        before = (directory / 'a.memory.db').read_bytes()
+        for broken in ('wrong', 'missing'):
+            if broken == 'missing':
+                key.unlink()
+            with self.assertRaises(AppError) as raised:
+                MemoryStore(directory / 'a.memory.db', XorProtector())
+            self.assertEqual(raised.exception.code, 'MEMORY_KEY_MISSING')
+            self.assertFalse(broken == 'missing' and key.exists())  # No new key made over the records.
+        self.assertEqual((directory / 'a.memory.db').read_bytes(), before)
+        key.write_bytes(mine)
+        store = MemoryStore(directory / 'a.memory.db', XorProtector())
+        self.addCleanup(store.close)
+        self.assertEqual(store.card('m1'), {'kind': 'act'})  # The right key back: everything is there.
+        fresh = MemoryStore(directory / 'new.memory.db', XorProtector())  # No records yet: a key is made as before.
+        fresh.close()
 
 
 class BackendTest(unittest.TestCase):

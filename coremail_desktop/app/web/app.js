@@ -728,8 +728,11 @@ $('#search').addEventListener('input', (e) => {
   searchTimer = setTimeout(async () => {  // Instant local results while typing.
     const q = e.target.value.trim(); if (!q) return;
     const token = ++searchToken;
-    S.search = q; S.searchMore = null; S.rows = await api('searchLocal', { query: q, filters: SF.active() }).catch(() => []);
+    const rows = await api('searchLocal', { query: q, filters: SF.active() }).catch(() => []);
     if (token !== searchToken) return;
+    // A search leaves 今天 and the other local views (V1), as Enter does: the list is the results.
+    if (S.local) { S.local = null; S.multi.clear(); S.open.clear(); renderSelection(); renderFolders(); }
+    S.search = q; S.searchMore = null; S.rows = rows;
     $('#list-title').textContent = '搜索结果'; renderList(); $('#list-sub').textContent = '本机结果 · 回车搜索服务器';
   }, 220);
 });
@@ -1317,7 +1320,7 @@ async function startCompose(mode, mid, extra = {}) {
   try {
     const box = mode === 'new' && !mid ? currentBox() : null;
     const draft = await api('compose', box ? { mode, mid, mailbox: box.id } : { mode, mid });
-    if (mid && mode !== 'new') draft.sourceMid = mid;  // 回复即已处理 (understand.js) once it goes out.
+    if (mid && mode !== 'new') draft.sourceMid = mid;  // 已回复 / 已转发 on its 要我做 card (understand.js) once it goes out.
     Object.assign(draft, extra);
     openComposer(draft);
   } catch (err) { fail(err); }
@@ -1659,7 +1662,7 @@ async function sendMail() {
       if (go && (await unlockCertificate())) setTimeout(sendMail, 0);
       return;
     }
-    const meta = { encrypt: value.encrypt, sign: value.sign, subject: value.subject, source: C.draft.sourceMid || C.draft.replySourceId || '' };
+    const meta = { encrypt: value.encrypt, sign: value.sign, subject: value.subject, source: C.draft.sourceMid || C.draft.replySourceId || '', how: C.draft.mode === 'forward' ? 'forward' : 'reply' };
     if (res.state === 'Held') {
       // 撤销发送: the composer closes; the bar counts down and can bring it back.
       closeComposer(true);
@@ -1799,7 +1802,7 @@ function openSettings() {
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-autostart').checked = !!p.autostart;
   $('#pref-close').value = p.closeAction || '';
-  $('#pref-start').value = p.startPage || 'today';
+  $('#pref-start').value = p.startPage || 'inbox';
   // The first-close dialog may have remembered a choice since the page last read prefs.
   api('prefs').then((fresh) => { S.prefs.closeAction = fresh.closeAction; $('#pref-close').value = fresh.closeAction || ''; }).catch(() => {});
   $('#pref-undo').value = String(p.undoSeconds ?? 10); $('#pref-precheck').checked = p.precheck !== false;
