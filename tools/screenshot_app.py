@@ -350,6 +350,26 @@ STEPS += [
     (900, "$('#tk-ask').click()", 'r2-ask-tasks'),
 ]
 
+# 界面打磨：the five daily screens plus a menu and a toast, before/after (HONGYAN_WALK_POLISH=1 runs only these).
+POLISH = len(STEPS)
+STEPS += [
+    (900, m2_setup, None),
+    (600, "S.prefs.understand = 'on'; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
+    (12000, "UC.cards.clear(); renderList()", None),
+    (1500, "selectMessage(S.rows[1].id)", 'p-inbox'),
+    (600, "moreMenu($('#reader-body [data-act=more]'), S.message)", 'p-menu'),
+    (500, "hideMenu(); startCompose('reply', S.selected)", None),
+    (900, "document.body.offsetWidth", 'p-compose'),
+    (500, "closeComposer(true); showToday()", None),
+    (1500, "document.body.offsetWidth", 'p-today'),
+    (900, "openTasks()", None),
+    (1200, "showTask(403)", 'p-tasks'),
+    (700, "selectFolder('1')", None),
+    (1200, "selectMessage(S.rows[0].id); batchMove(null, { delete: true })", 'p-toast'),
+    (500, "[...document.querySelectorAll('#toasts .toast button')].filter((b) => b.textContent === '撤销').forEach((b) => b.click()); openSettings()", None),
+    (900, "document.body.offsetWidth", 'p-settings'),
+]
+
 
 def render_pdf(mid):
     """The same hidden-view path as 导出为 PDF, written into the screenshot folder."""
@@ -386,6 +406,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)
