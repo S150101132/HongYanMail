@@ -29,6 +29,8 @@ shot_dir = tempfile.mkdtemp(prefix='hongyan-shot-', dir=str(ROOT / 'build'))
 atexit.register(shutil.rmtree, shot_dir, True)
 backend = MailBackend(shot_dir, adapter_factory=DemoAdapter)
 backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'demo', True)
+from coremail_desktop.ai.trending import demo_get  # noqa: E402
+backend.trending_get = demo_get  # G1: never the real GitHub.
 backend.set_prefs({'theme': theme, 'signature': '<b>演示用户</b><br>研发中心 · 产品部<br><span style="color:#2563eb">demo@example.invalid</span>'})
 window = shell.AppShell(backend, demo=True)
 window.resize(width, 900)
@@ -332,10 +334,8 @@ STEPS += [
     (600, "S.prefs.understand = 'on'; S.prefs.memoryFacts = true; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
     (12000, "ucRound()", None),
     (12000, "UC.cards.clear(); memReset(); showToday()", None),
-    (1500, "document.body.offsetWidth", 'r2-today'),
-    (500, "selectMessage(S.rows[0].id)", 'r2-today-mail'),
-    (700, "sendOutcome({ state: 'Accepted', localId: 'walk' }, { subject: 'Re', source: S.selected, how: 'reply' })", 'r3-answered'),  # 只标已回复 (R3a).
-    (900, "$('#mail-list .td-task').click()", 'r2-task-card'),
+    (1500, "document.body.offsetWidth", 'g1-trending'),  # G1: 今天 became GitHub Trending.
+    (500, "$('#mail-list .td-repo').click()", 'g1-trending-card'),
     (900, "showAsk()", 'r2-ask-today'),
     (500, "hideAsk(); showToday('wait')", 'r2-wait'),
     (500, "$('#search').value = 'hongyan-walk-no-match'; $('#search').dispatchEvent(new Event('input'))", 'r3-search-from-today'),  # V1

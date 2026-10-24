@@ -625,6 +625,9 @@ class DemoAiClient:
         if '鸿雁发送前检查' in messages[0]['content']:
             return json.dumps({'issues': [] if '附件' not in text or '（没有附件）' not in text else
                                [{'kind': 'attachment', 'quote': '附件', 'advice': '正文提到附件，但没有添加附件（演示）。'}]}, ensure_ascii=False), 0
+        if '今天 GitHub Trending' in messages[0]['content']:
+            from coremail_desktop.ai.trending import demo
+            return demo(messages), 0
         if '鸿雁每周概要助手' in messages[0]['content']:
             from coremail_desktop.ai.weekly import demo
             return demo(messages), 0

@@ -144,6 +144,8 @@ def run_app(demo=False,minimized=False,eml=None):
         atexit.register(shutil.rmtree,demo_dir,True)
         backend=MailBackend(demo_dir,adapter_factory=DemoAdapter)
         backend.ai_client=DemoAiClient()
+        from .ai.trending import demo_get
+        backend.trending_get=demo_get
         backend.login('https://demo.invalid/coremail/','demo@example.invalid','demo',True)
     else:
         from .crypto.service import CryptoService

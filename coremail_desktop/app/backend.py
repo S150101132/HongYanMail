@@ -33,7 +33,7 @@ DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify'
                  'understand': '',  # 理解层: '' not asked yet, 'on', 'off'.
                  'listGist': True,  # The list's second line shows the card's 要点 instead of the body's start.
                  'toolbar': 'lean',  # A4: 'lean' folds low-use buttons into ⋯ / 格式 / the send menu; 'full' shows them all.
-                 'startPage': 'inbox',  # R2a/R3b: 'inbox' opens the 收件箱 after signing in, 'today' 今天.
+                 'startPage': 'inbox',  # R2a/R3b: 'inbox' opens the 收件箱 after signing in, 'today' GitHub Trending (G1).
                  'memoryFacts': False,  # R3c: the 理解层 also keeps project facts (工作记忆); off: it only sorts mail.
                  'hiddenFolders': []}  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
 CLOSE_ACTIONS = ('', 'tray', 'quit')
@@ -229,7 +229,6 @@ UNDERSTAND_SKIP = ('sent', 'drafts', 'trash', 'spam', 'virus')
 UNDERSTAND_DAYS, UNDERSTAND_ROUND = 30, 10
 # 催办 (M3): sent mail that asked something of its To recipients and got no reply.
 FOLLOWUP_DAYS, FOLLOWUP_KEEP = 3, 500
-TODAY_DAYS = 3  # 今天 (R2a): tasks due within this many days are on the list.
 ASKING = re.compile(r'[?？]|请|麻烦|能否|是否|可否|确认|please|could you|can you|kindly|let me know|advise', re.I)
 
 
@@ -386,6 +385,7 @@ class MailBackend:
         self.memory = None  # 理解层 (memory/store.py): cards and correction rules of this account.
         self._understand_failed = {}  # mid -> code: mail the 理解层 could not read this session (not retried).
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
+        self.trending_get = None  # GitHub Trending (G1): demo and tests pass a stand-in for the network.
         self._ai_lock = threading.Lock()
         self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
         self._chats = {}  # 问邮箱 conversations, in memory only: id -> {'tools', 'turns', 'shown'}.
@@ -3733,34 +3733,49 @@ class MailBackend:
         self.memory.put_card(mid, {**card, 'answered': how})
         return {'changed': [mid]}
 
-    # 今天 (R2a) ------------------------------------------------------------------
-    def today_overview(self):
-        """今天: one list of what is mine to do now — 要我做 mail and unfinished tasks overdue or
-        due within TODAY_DAYS days (受阻 ones wait on others, so they are under 在等别人) —
-        overdue first, then by due date, undated last (newest first); and the counts behind
-        the head's links. From the caches and the task store only: no AI, no network."""
-        from coremail_desktop.tasks.rules import is_day
-        center = self._tasks()
-        today, tasks_on = center.today(), center.status()['mode'] != 'off'
-        horizon = (datetime.fromisoformat(today) + timedelta(days=TODAY_DAYS)).date().isoformat()
-        understanding = self._understand_on()
-        rows = [{'kind': 'mail', 'id': r['id'], 'due': r['card']['due'], 'ts': r.get('ts') or 0, 'mail': r}
-                for r in (self.understand_view('act')['rows'] if understanding else [])]
-        blocked = []
-        for t in center.overview('open')['rows'] if tasks_on else []:
-            if t['status'] == '受阻':
-                blocked.append(t)
-            elif is_day(t['due']) and t['due'] <= horizon:
-                rows.append({'kind': 'task', 'id': t['id'], 'due': t['due'], 'ts': 0, 'task': t})
-        rows.sort(key=lambda r: -r['ts'])
-        rows.sort(key=lambda r: (not (r['due'] and r['due'] < today), r['due'] or '9999', bool(r['kind'] == 'mail' and r['mail']['card']['answered'])))
-        waiting = len(self.followups()) if understanding else 0
-        return {'date': today, 'rows': rows, 'understanding': understanding, 'tasks': tasks_on,
-                'unread': self.understand_pending()['left'] if understanding else 0,  # Mail the AI has not read yet (V2).
-                'counts': {'overdue': sum(1 for r in rows if r['due'] and r['due'] < today),
-                           'today': sum(1 for r in rows if r['due'] == today),
-                           'waiting': waiting + len(blocked), 'confirm': len(center.pending()) if tasks_on else 0}}
+    # GitHub Trending (G1) ----------------------------------------------------------
+    def trending(self, refresh=False):
+        """Today's GitHub Trending with a Chinese intro per repository, made once a day and kept
+        in trending/<date>.json (public data only). Without AI, or when it fails, the English
+        descriptions show and the intros are tried again the next time the page opens."""
+        from coremail_desktop.ai import trending
+        from coremail_desktop.ui.messages import user_message
+        now = datetime.now()
+        folder = self.data_dir / 'trending'
+        path = folder / (now.strftime('%Y-%m-%d') + '.json')
+        try:
+            saved = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            saved = None
+        if saved and saved.get('v') != trending.TRENDING_VERSION:
+            saved = None
+        ready = self.ai_settings()['ready']
+        if saved and not refresh and (saved['ai'] or not ready):
+            return saved
+        repos = saved['repos'] if saved and not refresh else trending.fetch(self.trending_get)
+        ai, error = False, ''
+        if ready:
+            try:
+                docs = trending.readmes(repos, self.trending_get)
+                content, _ = self._ai_call(trending.build_messages(repos, docs), max_tokens=trending.TRENDING_TOKENS, json_mode=True)
+                intros = trending.parse_intros(content, [r['name'] for r in repos])
+                for r in repos:
+                    r['intro'] = intros.get(r['name'], '')
+                ai = True
+            except AppError as err:
+                error = user_message(err.code)
+        result = {'date': now.strftime('%Y-%m-%d'), 'at': now.strftime('%H:%M'), 'repos': repos, 'ai': ai, 'ready': ready,
+                  'error': error, 'v': trending.TRENDING_VERSION}
+        try:
+            folder.mkdir(exist_ok=True)
+            path.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
+            for old in sorted(folder.glob('*.json'))[:-7]:  # A week of days is plenty.
+                old.unlink()
+        except OSError:
+            pass  # A blocked data folder must not hide the list.
+        return result
 
+    # 在等别人 (R2a; a sub-page of Trending since G1) ------------------------------------
     def today_waiting(self):
         """在等别人: sent mail nobody answered (催办) and 受阻 tasks."""
         center = self._tasks()

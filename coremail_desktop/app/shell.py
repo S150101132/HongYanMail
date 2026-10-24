@@ -93,7 +93,7 @@ BACKEND_METHODS = {
     'understandAddRule': 'understand_add_rule', 'understandDeleteRule': 'understand_delete_rule', 'understandClear': 'understand_clear',
     'memoryProjects': 'memory_projects', 'memoryProject': 'memory_project', 'memoryFacts': 'memory_facts', 'memoryRecent': 'memory_recent',
     'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryWeekBrief': 'memory_week_brief', 'memoryPerson': 'memory_person', 'followups': 'followups',
-    'todayOverview': 'today_overview', 'todayWaiting': 'today_waiting',
+    'todayWaiting': 'today_waiting', 'trending': 'trending',
     'followupDismiss': 'followup_dismiss',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
@@ -107,14 +107,14 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
               'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
-              'memoryWeekBrief'}
+              'memoryWeekBrief', 'trending'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
 STREAM_METHODS = {'rewrite', 'draftReply', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
 ARCHIVE_METHODS = {'archiveScan'}
 # 任务中心: one thread, so every task change and its export run one after another.
 TASK_METHODS = {name for name in BACKEND_METHODS if name.startswith('task')} | {'assistantPlanRun', 'assistantSent',
-                                                                                'assistantNudgeDismiss', 'assistantLinkRun', 'todayOverview', 'todayWaiting'}
+                                                                                'assistantNudgeDismiss', 'assistantLinkRun', 'todayWaiting'}
 # assistantNudge reads the task's conversation from the server: the mail thread, like thread.
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}

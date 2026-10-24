@@ -1146,7 +1146,7 @@ html:not(.tb-lean) .lean-only { display: none !important; }
 .tk-rel-roll { display: inline-block; width: 80px; height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
 .tk-rel-roll span { display: block; height: 100%; background: var(--ok-strong); }
 
-/* 今天 (R2a): one list in the mail list, a task card in the reader. */
+/* Trending (G1, was 今天 R2a): one list in the mail list, a card in the reader. */
 .app.today-mode #filter-seg, .app.today-mode #btn-threads { display: none; }
 .td-head { display: flex; align-items: center; gap: 12px; padding: 8px 14px; font-size: var(--fs-sm); color: var(--text-2); border-bottom: 1px solid var(--line-2); }
 .td-head a { color: var(--accent); cursor: pointer; white-space: nowrap; }
@@ -1156,6 +1156,9 @@ html:not(.tb-lean) .lean-only { display: none !important; }
 .td-empty a { color: var(--accent); cursor: pointer; }
 .td-icon { background: var(--accent-soft); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; }
 .td-icon i { width: 15px; height: 15px; }
+.td-rank { font-size: var(--fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+.row.td-repo .subj { white-space: normal; line-height: 1.5; }
+.td-intro { margin: 0; font-size: var(--fs-lg); line-height: 1.6; }
 .row.td-confirm .td-acts { margin-top: 6px; }
 .td-card { padding: 22px 28px; display: grid; gap: 12px; align-content: start; }
 .td-card h2 { margin: 0; font-size: var(--fs-xl); line-height: 1.4; }

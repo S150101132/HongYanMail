@@ -1,46 +1,77 @@
 'use strict';
-/* 鸿雁 · 今天 (R2a): the first page — one list of what is mine to do now: 要我做 mail and tasks
-   overdue or due within three days, by due date (backend today_overview). Everything else is
-   a link in the head: 在等别人 (催办 and 受阻 tasks), 待我确认 (the task center's suggestions),
-   本周概括 (memory.js). It lives in the mail list and reader: a mail opens in the reader as
-   ever, a task as a short card (记进展 / 完成 / 在任务中心打开). Loaded last but commands.js. */
+/* 鸿雁 · Trending (G1, was 今天 R2a): the left bar's first entry shows today's GitHub Trending,
+   each repository with a short Chinese intro the AI wrote once that day (backend trending);
+   a repository opens as a card in the reader. The old 今天 sub-pages stay, reached from the
+   命令框: 在等别人 (催办 and 受阻 tasks), 待我确认 (the task center's suggestions), 本周概括
+   (memory.js); there a mail opens in the reader as ever, a task as a short card (记进展 / 完成 /
+   在任务中心打开). The view keeps S.local 'today'. Loaded last but commands.js. */
 
-const TD = { sub: '', data: null, waiting: null, confirm: null, task: null };
+const TD = { sub: '', data: null, waiting: null, confirm: null, task: null, repo: null };
 const TD_SUB = { wait: '在等别人', confirm: '待我确认', week: '本周概括' };
 
-async function showToday(sub = '', quiet) {
+async function showToday(sub = '', quiet, refresh) {
   if (!quiet || S.local !== 'today' || TD.sub !== sub) {
     S.local = 'today'; S.search = null; S.filter = 'all'; S.listToken++; S.multi.clear(); S.open.clear();
     S.rows = []; S.more = false; S.total = null; $('#search').value = '';
     TD.sub = sub; TD.data = TD.waiting = TD.confirm = null;
     tdHideTask(); renderSelection();
-    $('#list-title').textContent = sub ? TD_SUB[sub] : '今天';
+    $('#list-title').textContent = sub ? TD_SUB[sub] : 'GitHub Trending';
     $('#list-sub').textContent = '';
-    $('#mail-list').innerHTML = '<div class="skeleton"></div>'.repeat(4);
+    $('#mail-list').innerHTML = '<div class="skeleton"></div>'.repeat(4) + (sub ? '' : '<div class="list-foot muted small">正在读取今天的榜单，AI 写中文简介约需半分钟…</div>');
   }
   const token = S.listToken;
   renderFolders();
   try {
-    const data = await api('todayOverview');
+    const data = sub ? {} : await api('trending', { refresh: !!refresh });
     if (sub === 'wait') TD.waiting = await api('todayWaiting');
     if (sub === 'confirm') TD.confirm = await api('tasksPending').catch(() => []);
     if (token !== S.listToken) return;
-    TD.data = data; tdCount(data);
-    const mails = sub === 'wait' ? TD.waiting.mail : sub ? [] : data.rows.filter((r) => r.kind === 'mail').map((r) => r.mail);
+    TD.data = data;
+    const mails = sub === 'wait' ? TD.waiting.mail : [];
     if (sub === 'wait') UC.wait = new Map(TD.waiting.mail.map((r) => [r.id, r]));
     mails.forEach((r) => r.card && UC.cards.set(r.id, r.card));
     S.rows = mails; S.total = mails.length;
     tdRender();
+    if (TD.repo) tdShowRepo(TD.repo);
     if (sub === 'week' && typeof memTop === 'function') { MEM.weekOpen = true; memTop('week'); }
   } catch (err) { if (token === S.listToken) $('#mail-list').innerHTML = `<div class="list-foot">${esc(err.message)}</div>`; }
 }
 $('#nav-today').onclick = () => showToday();
 
-function tdCount(data) { $('#today-count').textContent = data && data.rows.length ? data.rows.length : ''; }
-function tdRefreshCount() { if (S.local !== 'today') api('todayOverview').then(tdCount).catch(() => {}); }
+// ---------------------------------------------------------------- Trending
+const tdNum = (n) => n >= 10000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n || 0);
+function tdRepoRow(r, i) {
+  return `<div class="row td-repo${TD.repo === r.name ? ' sel' : ''}" data-repo="${esc(r.name)}" role="option">
+    <span class="avatar xs td-icon td-rank">${i + 1}</span>
+    <div class="main"><div class="line1"><span class="who">${esc(r.name)}</span><span class="when">+${tdNum(r.today)} ★</span></div>
+      <div class="subj">${esc(r.intro || r.description || '（没有描述）')}</div>
+      <div class="prev">${r.language ? esc(r.language) + ' · ' : ''}★ ${tdNum(r.stars)}</div></div></div>`;
+}
+function tdTrendHead(data) {
+  const day = new Date(data.date + 'T00:00:00');
+  return `<div class="td-head"><span>${day.getMonth() + 1} 月 ${day.getDate()} 日 日榜 · ${data.repos.length} 个项目 · ${esc(data.at)} 更新</span>` +
+    `<span class="spacer"></span><a data-td-refresh="1">刷新</a></div>` +
+    (!data.ready ? '<div class="td-hint">设置 AI 助手后，每个项目会有一两句中文简介；现在显示的是英文原描述。<a data-td-set="ai">去设置</a></div>'
+      : data.error ? `<div class="td-hint">中文简介没有生成：${esc(data.error)}现在显示英文原描述。<a data-td-refresh="1">重试</a></div>` : '');
+}
+function tdShowRepo(name) {
+  const r = ((TD.data || {}).repos || []).find((x) => x.name === name);
+  if (!r) return;
+  S.selected = null; S.message = null; TD.task = null; TD.repo = name;
+  $$('#mail-list .row').forEach((x) => x.classList.toggle('sel', x.dataset.repo === name));
+  ['#reader-empty', '#reader-body', '#reader-multi'].forEach((s) => $(s).classList.add('hidden'));
+  const card = $('#reader-task');
+  card.classList.remove('hidden');
+  card.innerHTML = `<div class="td-card">
+    <div class="td-card-head"><b>${esc(r.name)}</b>${r.language ? `<span class="tk-sys">${esc(r.language)}</span>` : ''}</div>
+    ${r.intro ? `<p class="td-intro">${esc(r.intro)}</p>` : ''}
+    <div class="td-card-meta">★ ${tdNum(r.stars)} · 今天 +${tdNum(r.today)} · Fork ${tdNum(r.forks)}</div>
+    <div class="row-gap"><button class="btn primary sm" data-td-browse="1">在浏览器打开</button></div>
+    ${r.description ? `<div class="td-field"><span class="muted">原描述</span><p>${esc(r.description)}</p></div>` : ''}</div>`;
+  $('[data-td-browse]', card).onclick = () => api('openExternal', { url: r.url }).catch(fail);
+}
 
-// ---------------------------------------------------------------- the list
-function tdGroup(due, today) { return !due ? '没有截止日期' : due < today ? '已逾期' : due === today ? '今天到期' : '接下来'; }
+// ---------------------------------------------------------------- the sub-pages' lists
 function tdTaskRow(t) {
   const due = ucDue(t.due);
   return `<div class="row td-task${TD.task === t.id ? ' sel' : ''}" data-task="${t.id}" role="option">
@@ -48,34 +79,18 @@ function tdTaskRow(t) {
     <div class="main"><div class="line1"><span class="who">#${t.id}${t.system ? ' · ' + esc(t.system) : ''}</span><span class="when">${esc(t.status)}</span></div>
       <div class="subj">${due ? `<span class="uc-due${due.late ? ' late' : ''}">${esc(due.text)}</span>` : ''}${esc(t.content || '（无内容）')}</div></div></div>`;
 }
-function tdHead(data) {
-  const c = data.counts;
-  if (TD.sub) return `<div class="td-head"><button class="btn ghost sm" data-td="">← 今天</button>${TD.sub === 'confirm' && tdSuggested().length > 1
+function tdHead() {
+  return `<div class="td-head"><button class="btn ghost sm" data-td="">← Trending</button>${TD.sub === 'confirm' && tdSuggested().length > 1
     ? `<span class="spacer"></span><button class="btn ghost sm" data-td-all="0">全部驳回</button><button class="btn sm" data-td-all="1">全部采纳</button>` : ''}</div>`;
-  const links = [c.waiting ? `<a data-td="wait">在等别人 ${c.waiting}</a>` : '', c.confirm ? `<a data-td="confirm">待我确认 ${c.confirm}</a>` : '',
-    data.understanding && S.prefs.memoryFacts ? '<a data-td="week">本周概括</a>' : ''].filter(Boolean).join('');
-  const day = new Date(data.date + 'T00:00:00');
-  const counts = [c.overdue ? `<b class="late">逾期 ${c.overdue}</b>` : '', c.today ? `今天 ${c.today}` : ''].filter(Boolean).join(' · ');
-  return `<div class="td-head"><span>${day.getMonth() + 1} 月 ${day.getDate()} 日 周${'日一二三四五六'[day.getDay()]}${counts ? ' · ' + counts : ''}</span>` +
-    `<span class="spacer"></span>${links}</div>` +
-    (!data.understanding ? '<div class="td-hint">开启「理解新邮件」后，要你做的邮件也会出现在这里。<a data-td-set="ai">去设置</a></div>' : '') +
-    (data.unread ? `<div class="td-hint">还有 ${data.unread} 封邮件 AI 还没读，暂时不在这里。<a data-td-inbox="1">去收件箱</a></div>` : '') +
-    (!data.tasks ? '<div class="td-hint">导入任务后，快到期的任务也会出现在这里。<a data-td-set="tasks">去设置</a></div>' : '');
 }
 function tdRender() {
   const list = $('#mail-list'), data = TD.data;
   if (!data) return;
   S.items = S.rows.map((r) => ({ id: r.id, ids: [r.id], rows: [r] }));  // What app.js keeps for J / K and selection.
-  let html = tdHead(data), group = null;
+  let html = TD.sub ? tdHead() : tdTrendHead(data), group = null;
   const head = (g) => { if (g !== group) { group = g; html += `<div class="group-head">${g}</div>`; } };
   if (!TD.sub) {
-    for (const r of data.rows) {
-      head(tdGroup(r.due, data.date));
-      html += r.kind === 'task' ? tdTaskRow(r.task) : rowHtml(r.mail);
-    }
-    // Only what was recognised (V2): never "nothing to do" — the inbox may still hold work.
-    if (!data.rows.length) html += `<div class="list-foot td-empty">已识别的事都处理完了<div class="muted small">这里只算 AI 读过的「要我做」邮件和 3 天内到期的任务，其他邮件仍在收件箱。</div>` +
-      `<a data-td-inbox="1">去收件箱</a>${data.counts.waiting ? ` · <a data-td="wait">在等别人 ${data.counts.waiting}</a>` : ''}</div>`;
+    html += data.repos.map(tdRepoRow).join('');
   } else if (TD.sub === 'wait') {
     for (const r of TD.waiting.mail) { head('等对方回复'); html += rowHtml(r); }
     for (const t of TD.waiting.tasks) { head('受阻的任务'); html += tdTaskRow(t); }
@@ -120,9 +135,10 @@ $('#mail-list').addEventListener('click', (e) => {
   const stop = () => { e.stopPropagation(); e.preventDefault(); };
   const link = t.closest('[data-td]');
   if (link) { stop(); showToday(link.dataset.td); return; }
-  if (t.closest('[data-td-inbox]')) { stop(); selectFolder((S.folders.find((f) => f.role === 'inbox') || { id: '1' }).id); return; }
-  const set = t.closest('[data-td-set]');
-  if (set) { stop(); set.dataset.tdSet === 'tasks' ? openTaskSettings() : openSettings(); return; }
+  if (t.closest('[data-td-refresh]')) { stop(); showToday('', false, true); return; }
+  if (t.closest('[data-td-set]')) { stop(); openSettings(); return; }
+  const repo = t.closest('.row[data-repo]');
+  if (repo) { stop(); tdShowRepo(repo.dataset.repo); return; }
   const all = t.closest('[data-td-all]');
   if (all) {
     stop();
@@ -144,7 +160,7 @@ $('#mail-list').addEventListener('contextmenu', (e) => { if (S.local === 'today'
 
 // ---------------------------------------------------------------- the task card in the reader
 async function tdShowTask(id) {
-  S.selected = null; S.message = null; TD.task = id;
+  S.selected = null; S.message = null; TD.task = id; TD.repo = null;
   $$('#mail-list .row').forEach((r) => r.classList.toggle('sel', Number(r.dataset.task) === id && r.classList.contains('td-task')));
   ['#reader-empty', '#reader-body', '#reader-multi'].forEach((s) => $(s).classList.add('hidden'));
   const card = $('#reader-task');
@@ -167,16 +183,16 @@ async function tdShowTask(id) {
   $$('[data-tdc]', card).forEach((b) => (b.onclick = () => (b.dataset.tdc === 'open' ? openTask(id) : taskAction(b.dataset.tdc))));
   if (typeof chatMailChanged === 'function') chatMailChanged();
 }
-function tdHideTask() { TD.task = null; $('#reader-task').classList.add('hidden'); }
+function tdHideTask() { TD.task = TD.repo = null; $('#reader-task').classList.add('hidden'); }
 
-// A mail chosen, or a selection: the card goes. Leaving 今天: the card and the week go.
+// A mail chosen, or a selection: the card goes. Leaving the page: the card and the week go.
 const _tdSelectMessage = selectMessage;
-selectMessage = function (...args) { if (TD.task) tdHideTask(); return _tdSelectMessage(...args); };
+selectMessage = function (...args) { if (TD.task || TD.repo) tdHideTask(); return _tdSelectMessage(...args); };
 const _tdRenderSelection = renderSelection;
 renderSelection = function () {
   _tdRenderSelection();
-  if (TD.task && S.multi.size >= 2) tdHideTask();
-  else if (TD.task) $('#reader-empty').classList.add('hidden');
+  if ((TD.task || TD.repo) && S.multi.size >= 2) tdHideTask();
+  else if (TD.task || TD.repo) $('#reader-empty').classList.add('hidden');
 };
 const _tdRenderFolders = renderFolders;
 renderFolders = function () {
@@ -184,15 +200,15 @@ renderFolders = function () {
   const here = S.local === 'today';
   $('#nav-today').classList.toggle('on', here);
   $('#app').classList.toggle('today-mode', here);
-  if (!here && TD.task) tdHideTask();
+  if (!here && (TD.task || TD.repo)) tdHideTask();
 };
 
-// Changes elsewhere bring the list up to date: a task saved, a card corrected or done.
+// Changes elsewhere bring a sub-page up to date: a task saved, a card corrected or done.
 const _tdAfterSave = afterSave;
-afterSave = function (result, quiet) { _tdAfterSave(result, quiet); if (S.local === 'today') showToday(TD.sub, true).then(() => TD.task && tdShowTask(TD.task)); else tdRefreshCount(); };
+afterSave = function (result, quiet) { _tdAfterSave(result, quiet); if (S.local === 'today' && TD.sub) showToday(TD.sub, true).then(() => TD.task && tdShowTask(TD.task)); };
 // ucRefreshStatus runs after every correction and every background round of the 理解层.
 const _tdUcRefreshStatus = ucRefreshStatus;
-ucRefreshStatus = function () { if (S.local === 'today') { if (TD.sub !== 'week') showToday(TD.sub, true); } else tdRefreshCount(); return _tdUcRefreshStatus(); };
+ucRefreshStatus = function () { if (S.local === 'today' && TD.sub && TD.sub !== 'week') showToday(TD.sub, true); return _tdUcRefreshStatus(); };
 // 等回复 now lives on 今天 → 在等别人.
 const _tdUcOpen = ucOpen;
 ucOpen = function (kind) { return kind === 'wait' ? showToday('wait') : _tdUcOpen(kind); };
@@ -201,6 +217,6 @@ ucOpen = function (kind) { return kind === 'wait' ? showToday('wait') : _tdUcOpe
 const _tdEnterApp = enterApp;
 enterApp = async function (profile) {
   await _tdEnterApp(profile);
-  if (S.prefs.startPage === 'today') showToday(); else tdRefreshCount();
+  if (S.prefs.startPage === 'today') showToday();
 };
 $('#btn-refresh').addEventListener('click', () => { if (S.local === 'today') showToday(TD.sub, true); });

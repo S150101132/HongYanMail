@@ -480,7 +480,6 @@ function renderAsk() {
   if (!turns.length) {
     // One assistant for every page (R2b): the samples follow where the user is.
     const tries = S.local === 'tasks' ? ['哪些任务受阻？', '这周有哪些任务到期？', '这个任务今天完成了', '给这个任务加一个前提任务：…']
-      : S.local === 'today' ? ['这些事先做哪件？', '哪些要今天回复？', '这个任务记一条进展：…']
       : ['现在有什么任务，哪些需要我做？', '上周有哪些邮件需要我回复？', '最近谁给我发过报价？'];
     out.innerHTML = '<div class="chat-empty"><b>问鸿雁</b>查邮件和任务、记进展、起草回复，都在这里说。AI 会搜索阅读邮件和任务后回答，并标出出处；要改任务或起草时先给你看计划，你确认后才执行。<br>可以接着追问，例如「第二封是谁发的」。' +
       `<div class="chat-try">${tries.map((q) => `<button type="button" data-try="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`;

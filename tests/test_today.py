@@ -1,11 +1,11 @@
-"""今天 (R2a) and 回复即已处理 (R1a): one list of 要我做 mail and tasks due soon, and a sent
-reply marking its conversation done. Demo adapter, local task workbooks; nothing leaves."""
+"""GitHub Trending (G1, the page that was 今天 R2a), its 在等别人 sub-page, and a sent reply
+marking its mail answered (R3a). Demo adapter, local task workbooks, a stand-in network; nothing leaves."""
 import unittest
 from pathlib import Path
 
-from coremail_desktop.ai import understand
+from coremail_desktop.ai import trending, understand
 from coremail_desktop.app.backend import MailBackend
-from coremail_desktop.app.demo import DemoAdapter
+from coremail_desktop.app.demo import DemoAdapter, DemoAiClient
 from coremail_desktop.errors import AppError
 from tests.test_app_backend import XorProtector, local_services_stub
 from tests.test_compose_v05 import scratch
@@ -34,36 +34,40 @@ class TodayTest(unittest.TestCase):
         self.b.tasks_import('live')
         self.b.tasks.clock = Clock()  # 2026-10-20 in Riyadh.
 
-    def test_one_list_of_mail_and_tasks_by_due_date(self):
+    def test_waiting_on_others(self):  # 在等别人: 受阻 tasks and unanswered sent mail; never asks the AI.
         b = self.b
-        self.tasks()
-        b.set_understand('on')
-        soon, undated = b.understand_pending()['ids'][:2]
-        act(b, soon, '2026-10-21')
-        act(b, undated)
-        view = b.today_overview()
-        self.assertEqual([(r['kind'], r['id']) for r in view['rows']],
-                         [('task', 401), ('task', 402), ('mail', soon), ('task', 406), ('mail', undated)])
-        self.assertEqual(view['rows'][2]['mail']['card']['due'], '2026-10-21')  # The row the list draws, card included.
-        self.assertEqual((view['date'], view['understanding'], view['tasks']), ('2026-10-20', True, True))
-        counts = view['counts']
-        self.assertEqual((counts['overdue'], counts['today'], counts['confirm']), (1, 1, 0))
-        self.assertEqual(counts['waiting'], len(b.followups()) + 1)  # 受阻 #404 waits on others.
-        self.assertEqual([t['id'] for t in b.today_waiting()['tasks']], [404])
-        b.understand_set_done([soon])
-        self.assertNotIn(soon, [r['id'] for r in b.today_overview()['rows']])  # Done: off the list.
-
-    def test_without_understanding_or_tasks(self):
-        b = self.b
-        self.assertEqual(b.today_overview()['rows'], [])
-        self.assertEqual((b.today_overview()['understanding'], b.today_overview()['tasks']), (False, False))
         self.assertEqual(b.today_waiting(), {'mail': [], 'tasks': []})
-        self.tasks()
-        self.assertEqual([r['id'] for r in b.today_overview()['rows']], [401, 402, 406])
         calls = []
         b.ai_client = type('Ai', (), {'model': 'm', 'chat': lambda *a, **k: calls.append(a)})()
-        b.today_overview()
-        self.assertEqual(calls, [])  # Never asks the AI.
+        self.tasks()
+        self.assertEqual([t['id'] for t in b.today_waiting()['tasks']], [404])
+        self.assertEqual(calls, [])
+
+    def test_trending_with_chinese_intros_once_a_day(self):  # G1
+        b, gets = self.b, []
+        b.trending_get = lambda url, timeout=15: gets.append(url) or trending.demo_get(url)
+        view = b.trending()
+        self.assertEqual((view['ready'], view['ai']), (False, False))  # No AI: the English descriptions only.
+        self.assertEqual([r['name'] for r in view['repos']], [r['name'] for r in trending.DEMO_REPOS])
+        self.assertNotIn('intro', view['repos'][0])
+        self.assertEqual(gets, [trending.TRENDING_URL])  # No READMEs without an AI to read them.
+        b.ai_client = DemoAiClient()
+        view = b.trending()  # AI set up since: the same list, intros now.
+        self.assertTrue(view['ai'])
+        self.assertTrue(all('演示模式' in r['intro'] for r in view['repos']))
+        self.assertEqual(gets.count(trending.TRENDING_URL), 1)
+        calls = []
+        b.ai_client = type('Ai', (), {'model': 'm', 'chat': lambda *a, **k: calls.append(a)})()
+        self.assertEqual(b.trending(), view)  # Kept for the day.
+        self.assertEqual(calls, [])
+        b.ai_client = type('Ai', (), {'model': 'm', 'chat': lambda *a, **k: ('not json', 1)})()
+        view = b.trending(refresh=True)  # 刷新 fetches again; a bad answer leaves the descriptions.
+        self.assertEqual((view['ai'], gets.count(trending.TRENDING_URL)), (False, 2))
+        self.assertIn('AI', view['error'])
+        b.trending_get = lambda url, timeout=15: (_ for _ in ()).throw(OSError())
+        with self.assertRaises(AppError) as caught:
+            b.trending(refresh=True)
+        self.assertEqual(caught.exception.code, 'TRENDING_UNAVAILABLE')
 
     def test_a_reply_only_marks_the_mail_answered(self):  # R3a: a reply is not the work done.
         b = self.b
@@ -93,15 +97,6 @@ class TodayTest(unittest.TestCase):
         with self.assertRaises(AppError):
             b.understand_answered(mid, how='send')
 
-    def test_the_list_says_how_much_it_covers(self):  # V2
-        b = self.b
-        b.set_understand('on')
-        left = b.understand_pending()['left']
-        self.assertGreater(left, 0)
-        self.assertEqual(b.today_overview()['unread'], left)
-        b.set_understand('off')
-        self.assertEqual(b.today_overview()['unread'], 0)
-
     def test_inbox_first_and_facts_off_by_default(self):  # R3b, R3c
         prefs = self.b.prefs()
         self.assertEqual((prefs['startPage'], prefs['memoryFacts']), ('inbox', False))
@@ -121,11 +116,13 @@ class PageTest(unittest.TestCase):
         self.assertIn('id="pref-start"', page)
         self.assertLess(page.index('src="memory.js"'), page.index('src="today.js"'))
         self.assertLess(page.index('src="today.js"'), page.index('src="commands.js"'))
-        for call in ("api('todayOverview')", "api('todayWaiting')", "api('tasksPending')", "api('taskReview'", "api('taskGet'"):
+        for call in ("api('trending'", "api('todayWaiting')", "api('tasksPending')", "api('taskReview'", "api('taskGet'", "api('openExternal'"):
             self.assertIn(call, today)
+        self.assertNotIn("api('todayOverview')", today)  # G1: the 今天 list gave way to Trending.
+        self.assertIn('<span class="fname">Trending</span>', page)
         self.assertIn("S.prefs.startPage === 'today'", today)  # R3b: the inbox first unless chosen.
-        self.assertIn('已识别的事都处理完了', today)  # V2: never "nothing to do".
-        self.assertNotIn('今天没有要你做的事', today)
+        for text in ('esc(r.name)', 'esc(r.intro', 'esc(r.description)', 'esc(data.error)'):
+            self.assertIn(text, today)  # Repository text from GitHub and the AI is shown as text.
         self.assertIn("if (S.local) { S.local = null;", self.read('app.js'))  # V1: a search leaves 今天.
         for text in ('esc(t.content', 'esc(t.system)', 'esc(text)', 'esc(tkText(t.content))', 'esc(err.message)'):
             self.assertIn(text, today)  # Task text and AI suggestions are shown as text.
