@@ -386,6 +386,7 @@ class MailBackend:
         self._understand_failed = {}  # mid -> code: mail the 理解层 could not read this session (not retried).
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
         self.trending_get = None  # GitHub Trending (G1): demo and tests pass a stand-in for the network.
+        self.news_get = None  # 每日速览 (G2): the same for 36氪's feed.
         self._ai_lock = threading.Lock()
         self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
         self._chats = {}  # 问邮箱 conversations, in memory only: id -> {'tools', 'turns', 'shown'}.
@@ -3732,6 +3733,36 @@ class MailBackend:
             return {'changed': []}
         self.memory.put_card(mid, {**card, 'answered': how})
         return {'changed': [mid]}
+
+    # 每日速览 (G2): 36氪 9点1氪 ---------------------------------------------------------
+    def daily_news(self, refresh=False):
+        """The newest 9点1氪, kept in news/latest.json. Today's issue is read once; before it
+        comes out the feed is looked at again at most every 30 minutes. Offline, the last
+        issue shows with a note."""
+        from coremail_desktop.app import news
+        from coremail_desktop.ui.messages import user_message
+        now, path = datetime.now(), self.data_dir / 'news' / 'latest.json'
+        try:
+            saved = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            saved = {}
+        brief, checked = saved.get('brief'), saved.get('checked') or ''
+        fresh = brief and brief['date'] == now.strftime('%Y-%m-%d') or checked > (now - timedelta(minutes=30)).isoformat(timespec='seconds')
+        if saved and fresh and not refresh:
+            return {'brief': brief, 'checked': checked[11:16], 'error': ''}
+        try:
+            brief = news.fetch(self.news_get) or brief
+        except AppError as err:
+            if not brief:
+                raise
+            return {'brief': brief, 'checked': checked[11:16], 'error': user_message(err.code)}
+        checked = now.isoformat(timespec='seconds')
+        try:
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(json.dumps({'brief': brief, 'checked': checked}, ensure_ascii=False), encoding='utf-8')
+        except OSError:
+            pass  # A blocked data folder must not hide the news.
+        return {'brief': brief, 'checked': checked[11:16], 'error': ''}
 
     # GitHub Trending (G1) ----------------------------------------------------------
     def trending(self, refresh=False):

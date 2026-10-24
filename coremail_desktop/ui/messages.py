@@ -145,6 +145,7 @@ MESSAGES = {
     'AI_TIMEOUT': 'AI 服务响应超时，请稍后再试。',
     'AI_UNAVAILABLE': 'AI 服务暂时不可用，请稍后再试。',
     'AI_CONTEXT_TOO_LONG': '邮件太长，超出了 AI 模型一次能处理的长度。',
+    'NEWS_UNAVAILABLE': '暂时读不到 36氪的新闻，请检查网络后点「刷新」重试。',
     'TRENDING_UNAVAILABLE': '暂时打不开 GitHub Trending，请检查网络后点「刷新」重试。',
     'AI_BAD_RESPONSE': 'AI 服务没有返回可用的结果，请重试。',
     'AI_ENCRYPTED_CONFIRM': '这是一封加密邮件，需要你确认后才会发送给 AI 服务。',

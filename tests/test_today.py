@@ -1,4 +1,4 @@
-"""GitHub Trending (G1, the page that was 今天 R2a), its 在等别人 sub-page, and a sent reply
+"""每日速览 (G2; GitHub Trending G1; the page that was 今天 R2a), its 在等别人 sub-page, and a sent reply
 marking its mail answered (R3a). Demo adapter, local task workbooks, a stand-in network; nothing leaves."""
 import unittest
 from pathlib import Path
@@ -116,12 +116,13 @@ class PageTest(unittest.TestCase):
         self.assertIn('id="pref-start"', page)
         self.assertLess(page.index('src="memory.js"'), page.index('src="today.js"'))
         self.assertLess(page.index('src="today.js"'), page.index('src="commands.js"'))
-        for call in ("api('trending'", "api('todayWaiting')", "api('tasksPending')", "api('taskReview'", "api('taskGet'", "api('openExternal'"):
+        for call in ("api('dailyNews'", "api('trending'", "api('todayWaiting')", "api('tasksPending')", "api('taskReview'", "api('taskGet'", "api('openExternal'"):
             self.assertIn(call, today)
         self.assertNotIn("api('todayOverview')", today)  # G1: the 今天 list gave way to Trending.
-        self.assertIn('<span class="fname">Trending</span>', page)
+        self.assertIn('<span class="fname">每日速览</span>', page)
+        self.assertIn('id="daily-view"', page)  # G2: a page of its own, not the three panes.
         self.assertIn("S.prefs.startPage === 'today'", today)  # R3b: the inbox first unless chosen.
-        for text in ('esc(r.name)', 'esc(r.intro', 'esc(r.description)', 'esc(data.error)'):
+        for text in ('esc(r.name)', 'esc(r.intro', 'esc(r.description)', 'esc(data.error)', 'esc(it.title)', 'esc(it.text)', 'esc(g)', 'esc(b.url)'):
             self.assertIn(text, today)  # Repository text from GitHub and the AI is shown as text.
         self.assertIn("if (S.local) { S.local = null;", self.read('app.js'))  # V1: a search leaves 今天.
         for text in ('esc(t.content', 'esc(t.system)', 'esc(text)', 'esc(tkText(t.content))', 'esc(err.message)'):

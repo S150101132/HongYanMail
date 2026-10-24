@@ -1146,7 +1146,7 @@ html:not(.tb-lean) .lean-only { display: none !important; }
 .tk-rel-roll { display: inline-block; width: 80px; height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
 .tk-rel-roll span { display: block; height: 100%; background: var(--ok-strong); }
 
-/* Trending (G1, was 今天 R2a): one list in the mail list, a card in the reader. */
+/* 今天's sub-pages (R2a): one list in the mail list, a task card in the reader. */
 .app.today-mode #filter-seg, .app.today-mode #btn-threads { display: none; }
 .td-head { display: flex; align-items: center; gap: 12px; padding: 8px 14px; font-size: var(--fs-sm); color: var(--text-2); border-bottom: 1px solid var(--line-2); }
 .td-head a { color: var(--accent); cursor: pointer; white-space: nowrap; }
@@ -1156,9 +1156,6 @@ html:not(.tb-lean) .lean-only { display: none !important; }
 .td-empty a { color: var(--accent); cursor: pointer; }
 .td-icon { background: var(--accent-soft); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; }
 .td-icon i { width: 15px; height: 15px; }
-.td-rank { font-size: var(--fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
-.row.td-repo .subj { white-space: normal; line-height: 1.5; }
-.td-intro { margin: 0; font-size: var(--fs-lg); line-height: 1.6; }
 .row.td-confirm .td-acts { margin-top: 6px; }
 .td-card { padding: 22px 28px; display: grid; gap: 12px; align-content: start; }
 .td-card h2 { margin: 0; font-size: var(--fs-xl); line-height: 1.4; }
@@ -1188,4 +1185,44 @@ html:not(.tb-lean) .lean-only { display: none !important; }
 .row:not(.unread):not(.sel):not(.msel) .avatar { opacity: .82; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* 每日速览 (G2): a page of its own over the list and reader — 36氪 beside GitHub Trending. */
+.daily-view { grid-column: 2 / 4; display: none; min-height: 0; min-width: 0; overflow: hidden; background: var(--bg); }
+.app.daily-mode .list-pane, .app.daily-mode .reader-pane, .app.daily-mode .contacts-view, .app.daily-mode .tasks-view { display: none; }
+.app.daily-mode .daily-view { display: block; }
+.dv-page { max-width: 1240px; height: 100%; margin: 0 auto; padding: 24px 32px; display: flex; flex-direction: column; }
+.dv-top { flex: none; display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.dv-top h1 { margin: 0 12px 0 0; font-size: var(--fs-xl); display: inline; }
+.dv-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 24px; }  /* Two columns, each scrolling on its own. */
+.dv-col { background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; padding: 0 20px 20px; min-width: 0; min-height: 0; overflow: auto; }
+.dv-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 10px; padding: 16px 0 12px; border-bottom: 1px solid var(--line-2); margin-bottom: 4px; background: var(--panel); }
+.dv-head h2 { margin: 0; font-size: var(--fs-lg); }
+.dv-link, .dv-note a { color: var(--accent); cursor: pointer; white-space: nowrap; }
+.dv-note a { margin-left: 6px; }
+.dv-note { margin: 12px 0; padding: 8px 12px; border-radius: 8px; background: var(--accent-soft); color: var(--text-2); font-size: var(--fs-sm); line-height: 1.6; }
+.dv-guide { margin: 12px 0 4px; padding: 12px 16px; border-radius: 8px; background: var(--accent-soft); }
+.dv-guide b { font-size: var(--fs-sm); color: var(--accent); }
+.dv-guide ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.7; }
+.dv-sec { margin: 20px 0 4px; font-size: var(--fs-sm); color: var(--accent); letter-spacing: .5px; }
+.dv-story { padding: 10px 0; border-bottom: 1px solid var(--line-2); cursor: pointer; }
+.dv-story:last-child { border-bottom: 0; }
+.dv-story h4 { margin: 0; font-size: var(--fs-md); font-weight: 600; line-height: 1.5; }
+.dv-story p { margin: 4px 0 0; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.7; white-space: pre-line;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dv-story.open p { display: block; }
+.dv-story:hover h4 { color: var(--accent); }
+.dv-repo { padding: 12px 0; border-bottom: 1px solid var(--line-2); cursor: pointer; }
+.dv-repo:last-child { border-bottom: 0; }
+.dv-repo:hover b { color: var(--accent); }
+.dv-repo-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dv-repo-top b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); }
+.dv-rank { flex: none; width: 22px; height: 22px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-xs);
+  font-weight: 600; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+.dv-today { flex: none; color: var(--text-2); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.dv-repo p { margin: 6px 0 0 30px; line-height: 1.6; }
+.dv-meta { margin: 6px 0 0 30px; display: flex; gap: 12px; color: var(--text-2); font-size: var(--fs-xs); }
+.dv-orig { margin: 4px 0 0 30px; color: var(--text-2); font-size: var(--fs-xs); line-height: 1.5; }
+@media (max-width: 1100px) {  /* Narrow: one column under the other, the page scrolls as one. */
+  .daily-view { overflow: auto; } .dv-page { height: auto; padding: 16px; } .dv-cols { grid-template-columns: minmax(0, 1fr); } .dv-col { overflow: visible; }
 }
