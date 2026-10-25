@@ -215,5 +215,19 @@ class MentionTest(Base):
             self.assertIn(f'<script src="{name}"></script>', (WEB / 'index.html').read_text(encoding='utf-8'))
 
 
+class SpellingTest(unittest.TestCase):
+    def test_composer_is_spellchecked_with_the_bundled_dictionary(self):
+        import os
+        from coremail_desktop.app import shell
+        folder = Path(os.environ['QTWEBENGINE_DICTIONARIES_PATH'])
+        self.assertEqual(folder, WEB.parent / 'dictionaries')
+        self.assertEqual((folder / 'en-US.bdic').read_bytes()[:4], b'BDic')
+        self.assertTrue(hasattr(shell, '_spelling_menu'))
+        page = (WEB / 'index.html').read_text(encoding='utf-8')
+        self.assertIn('id="cmp-editor" class="cmp-editor" contenteditable="true" spellcheck="true"', page)
+        self.assertIn("api('replaceMisspelled'", (WEB / 'compose.js').read_text(encoding='utf-8'))
+        self.assertIn("'coremail_desktop/app/dictionaries'", (WEB.parents[2] / 'packaging' / 'desktop.spec').read_text(encoding='utf-8'))
+
+
 if __name__ == '__main__':
     unittest.main()

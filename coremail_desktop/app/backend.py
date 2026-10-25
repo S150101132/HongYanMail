@@ -42,7 +42,6 @@ NETWORK_CODES = ('NETWORK_ERROR', 'TLS_ERROR')
 MAX_EML_BYTES = 40 * 1024 * 1024
 # Column widths the page may store (px); the page enforces the same bounds while dragging.
 WIDTH_LIMITS = {'sidebarWidth': (180, 400), 'listWidth': (280, 900), 'ctTreeWidth': (160, 480), 'ctListWidth': (240, 720), 'tkListWidth': (320, 900)}
-TEMPLATE_LIMIT = 100
 # 邮件签名: pictures (a company logo) live in the HTML as data: URIs and go out as
 # inline cid: parts like any body image (compose/inline.py).
 SIGNATURE_IMAGES, SIGNATURE_IMAGE_BYTES, SIGNATURE_TEXT = 5, 1024 * 1024, 20000
@@ -1672,47 +1671,6 @@ class MailBackend:
     def delete_draft(self, local_id):
         self.services['delete_draft'](local_id=local_id)
         return True
-
-    # Templates: named subject + body (+ recipients), in the encrypted cache kv -----
-    def templates(self):
-        return sorted(self.cache.get('templates', []), key=lambda t: t['name'].casefold())
-
-    def _template_name(self, name):
-        name = str(name or '').strip()
-        if not name or len(name) > 60 or '\n' in name:
-            raise AppError('INVALID_TEMPLATE')
-        return name
-
-    def save_template(self, name, value, recipients=False):
-        name = self._template_name(name)
-        value = dict(value or {})
-        listify = lambda key: [str(v).strip() for v in value.get(key, ()) if str(v).strip()][:100] if recipients else []
-        body, subject = str(value.get('html', '')), str(value.get('subject', ''))
-        if len(body) > 500_000 or len(subject) > 1000 or '\n' in subject:
-            raise AppError('INVALID_TEMPLATE')
-        stored = self.cache.get('templates', [])
-        same = next((t for t in stored if t['name'].casefold() == name.casefold()), None)  # Same name replaces.
-        if same is None and len(stored) >= TEMPLATE_LIMIT:
-            raise AppError('TEMPLATE_LIMIT')
-        template = {'id': same['id'] if same else uuid.uuid4().hex, 'name': name, 'subject': subject, 'html': body,
-                    'to': listify('to'), 'cc': listify('cc'), 'bcc': listify('bcc'),
-                    'modified': datetime.now().strftime('%Y-%m-%d %H:%M')}
-        self.cache.set('templates', [t for t in stored if t is not same] + [template])
-        return template
-
-    def rename_template(self, template_id, name):
-        name = self._template_name(name)
-        stored = self.cache.get('templates', [])
-        if not any(t['id'] == template_id for t in stored):
-            raise AppError('INVALID_TEMPLATE')
-        if any(t['name'].casefold() == name.casefold() and t['id'] != template_id for t in stored):
-            raise AppError('TEMPLATE_EXISTS')
-        self.cache.set('templates', [{**t, 'name': name} if t['id'] == template_id else t for t in stored])
-        return self.templates()
-
-    def delete_template(self, template_id):
-        self.cache.set('templates', [t for t in self.cache.get('templates', []) if t['id'] != template_id])
-        return self.templates()
 
     # Recipient groups (收件人组): named lists of people, each as 主送 or 抄送 -------
     # Local only, in the encrypted cache kv. Applying one only fills the composer;

@@ -1,4 +1,4 @@
-"""v0.4 reading layout: column-width prefs, local templates, print document, .eml export, pop-out windows."""
+"""v0.4 reading layout: column-width prefs, print document, .eml export, pop-out windows."""
 import os
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -28,7 +28,7 @@ def scratch(test):
     return directory
 
 
-class LayoutPrefsAndTemplatesTest(unittest.TestCase):
+class LayoutPrefsTest(unittest.TestCase):
     def setUp(self):
         self.directory = scratch(self)
         self.backend = MailBackend(self.directory, adapter_factory=DemoAdapter, protector=XorProtector(),
@@ -46,38 +46,6 @@ class LayoutPrefsAndTemplatesTest(unittest.TestCase):
         self.assertEqual((prefs['ctTreeWidth'], prefs['ctListWidth'], prefs['tagsOpen']), (250, 340, False))  # Contacts columns; tags folded.
         prefs = self.backend.set_prefs({'ctTreeWidth': 10, 'ctListWidth': 5000, 'tagsOpen': True})
         self.assertEqual((prefs['ctTreeWidth'], prefs['ctListWidth'], prefs['tagsOpen']), (160, 720, True))
-
-    def test_templates_round_trip_encrypted_rename_and_delete(self):
-        value = {'subject': '本周工作周报', 'html': '<p>本周完成：机密项目</p>', 'to': ['rd@example.invalid'], 'cc': ['x@example.invalid']}
-        plain = self.backend.save_template('周报', value)
-        self.assertEqual((plain['to'], plain['cc']), ([], []))  # Recipients only when asked.
-        kept = self.backend.save_template('会议', value, recipients=True)
-        self.assertEqual(kept['to'], ['rd@example.invalid'])
-        self.assertEqual([t['name'] for t in self.backend.templates()], ['会议', '周报'])
-        # Same name replaces instead of duplicating.
-        again = self.backend.save_template('周报', {**value, 'subject': '新主题'})
-        self.assertEqual(again['id'], plain['id'])
-        self.assertEqual(len(self.backend.templates()), 2)
-        # Stored only as ciphertext in the cache database.
-        database = next(Path(self.directory, 'cache').glob('*.db')).read_bytes()
-        self.assertNotIn('机密项目'.encode('utf-8'), database)
-        with self.assertRaises(AppError) as raised:
-            self.backend.rename_template(kept['id'], '周报')
-        self.assertEqual(raised.exception.code, 'TEMPLATE_EXISTS')
-        renamed = self.backend.rename_template(kept['id'], '例会')
-        self.assertIn('例会', [t['name'] for t in renamed])
-        self.assertEqual([t['name'] for t in self.backend.delete_template(plain['id'])], ['例会'])
-        for bad in ('', '  ', 'x' * 61, 'a\nb'):
-            with self.assertRaises(AppError):
-                self.backend.save_template(bad, value)
-
-    def test_template_count_is_limited(self):
-        for i in range(100):
-            self.backend.save_template(f'模板{i}', {'subject': '', 'html': ''})
-        with self.assertRaises(AppError) as raised:
-            self.backend.save_template('再多一个', {'subject': '', 'html': ''})
-        self.assertEqual(raised.exception.code, 'TEMPLATE_LIMIT')
-        self.backend.save_template('模板7', {'subject': '替换不受限', 'html': ''})
 
     def test_print_document_has_header_attachments_and_no_remote_by_default(self):
         row = next(r for r in self.backend.messages('1', 0, 50)['rows'] if r['flags'].get('attached'))

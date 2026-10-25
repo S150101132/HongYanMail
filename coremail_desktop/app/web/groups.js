@@ -25,7 +25,7 @@ async function groupMenu(anchor) {
   const current = [...chipsValue('to').map((a) => [a, 'to']), ...chipsValue('cc').map((a) => [a, 'cc'])];
   showMenu(r.left, r.bottom + 4, [...used, ...(used.length ? ['-'] : []),
     ...(current.length ? [{ label: '将当前收件人存为组…', icon: 'draft', run: () => editGroup(null, current.map(([a, field]) => ({ ...(parseAddressList(a)[0] || { email: a }), field }))) }] : []),
-    { label: S.groups.length ? '管理收件人组…' : '新建收件人组…', icon: 'settings', run: () => (S.groups.length ? manageGroups() : editGroup(null)) }]);
+    { label: '新建收件人组…', icon: 'contacts', run: () => editGroup(null) }]);  // Edit and delete live in 通讯录 › 收件人组.
 }
 $('#cmp-groups').onclick = (e) => groupMenu(e.currentTarget);
 // More groups than the menu shows: type part of a name (or a member) and pick one.
@@ -139,24 +139,57 @@ function drawGroupMembers(state) {
     : '<p class="muted small grp-empty">还没有成员。在上面输入姓名或邮箱添加。</p>';
 }
 
-// ---------------------------------------------------------------- settings
+// ---------------------------------------------------------------- 通讯录 › 收件人组
+// Listed under 个人通讯录 in the contacts tree (contacts.js); the card shows the members.
+function groupCounts(g) { const to = g.members.filter((m) => m.field === 'to').length; return `${g.members.length} 人（主送 ${to}，抄送 ${g.members.length - to}）`; }
 function renderGroups() {
-  const box = $('#grp-list'); if (!box) return;
-  box.innerHTML = S.groups.length ? S.groups.map((g) => {
-    const to = g.members.filter((m) => m.field === 'to').length;
-    const names = g.members.slice(0, 4).map((m) => m.name || m.email).join('、') + (g.members.length > 4 ? ' 等' : '');
-    return `<div class="tpl-row" data-id="${esc(g.id)}"><i data-icon="contacts"></i>
-      <div class="tpl-text"><b>${esc(g.name)}</b><span class="muted small">${g.members.length} 人（主送 ${to}，抄送 ${g.members.length - to}）· ${esc(names)}</span></div>
-      <button class="btn ghost sm" data-grp="edit">编辑</button><button class="btn ghost sm danger" data-grp="delete">删除</button></div>`;
-  }).join('') : '<p class="muted small">还没有收件人组。</p>';
-  renderIcons(box);
+  if (S.local !== 'contacts') return;
+  renderTree();
+  if (CT.mode === 'groups') { drawGroups(); if (CT.group) showGroup(CT.group); }
 }
-$('#grp-list').addEventListener('click', async (e) => {
-  const b = e.target.closest('[data-grp]'); if (!b) return;
-  const g = S.groups.find((x) => x.id === b.closest('.tpl-row').dataset.id); if (!g) return;
-  if (b.dataset.grp === 'edit') { editGroup(g); return; }
-  if (!(await confirmDialog('删除收件人组', `确定删除收件人组「${g.name}」吗？已写好的邮件不受影响。`, '删除'))) return;
-  try { S.groups = await api('deleteRecipientGroup', { group_id: g.id }); renderGroups(); } catch (err) { fail(err); }
-});
-$('#grp-new').onclick = () => editGroup(null);
-function manageGroups() { openSettings('compose', '#grp-section'); }
+function showGroups() {
+  CT.token++; CT.mode = 'groups'; CT.dn = null; CT.person = null; CT.group = null;
+  renderTree(); $('#ct-title').textContent = '收件人组'; drawGroups(); renderCard(null);
+}
+function drawGroups() {
+  const q = $('#ct-search').value.trim().toLowerCase();
+  const rows = S.groups.filter((g) => !q || g.name.toLowerCase().includes(q) || g.members.some((m) => `${m.name || ''} ${m.email}`.toLowerCase().includes(q)));
+  $('#ct-sub').textContent = q ? `${rows.length} / ${S.groups.length} 个组` : `${S.groups.length} 个组 · 只保存在这台电脑，已加密`;
+  const list = $('#ct-list');
+  list.innerHTML = rows.map((g) => {
+    const names = g.members.slice(0, 4).map((m) => m.name || m.email).join('、') + (g.members.length > 4 ? ' 等' : '');
+    return `<div class="row ct-grp${CT.group === g.id ? ' sel' : ''}" data-gid="${esc(g.id)}" role="option" title="双击给这组写邮件">
+      <span class="avatar grp-icon"><i data-icon="contacts"></i></span>
+      <div class="main"><div class="line1"><span class="who">${esc(g.name)}</span></div><div class="prev">${groupCounts(g)} · ${esc(names)}</div></div></div>`;
+  }).join('') + (rows.length ? '' : `<div class="list-foot">${q ? '没有匹配的组' : '把常一起写信的人存为一个组，每人可设为主送或抄送；写信时点收件人旁的「收件人组」一键添加。'}</div>`)
+    + '<div class="list-foot"><button class="btn ghost sm" id="ct-grp-new">新建收件人组…</button></div>';
+  renderIcons(list);
+}
+function showGroup(id) {
+  const g = S.groups.find((x) => x.id === id);
+  CT.group = g ? g.id : null;
+  $$('#ct-list .ct-grp').forEach((r) => r.classList.toggle('sel', r.dataset.gid === CT.group));
+  if (!g) { renderCard(null); return; }
+  const card = $('#ct-card');
+  card.innerHTML = `<div class="ct-card">
+    <span class="avatar xl grp-icon"><i data-icon="contacts"></i></span>
+    <h1>${esc(g.name)}</h1><p class="muted">${groupCounts(g)}</p>
+    <div class="grp-members grp-card-members">${g.members.map((m) => `<div class="grp-row">${avatarHtml(m.name, m.email, 'sm')}
+      <div class="t"><div>${esc(m.name || m.email)}</div><div class="muted small">${esc(m.email)}</div></div><span class="tag">${FIELD_LABEL[m.field] || '主送'}</span></div>`).join('')}</div>
+    <div class="ct-actions">
+      <button class="btn primary" id="grp-write"><i data-icon="pen"></i>写邮件</button>
+      <button class="btn ghost" id="grp-edit">编辑</button><button class="btn ghost danger" id="grp-delete">删除</button>
+    </div></div>`;
+  renderIcons(card);
+  $('#grp-write').onclick = () => writeToGroup(g);
+  $('#grp-edit').onclick = () => editGroup(g);
+  $('#grp-delete').onclick = async () => {
+    if (!(await confirmDialog('删除收件人组', `确定删除收件人组「${g.name}」吗？已写好的邮件不受影响。`, '删除'))) return;
+    try { S.groups = await api('deleteRecipientGroup', { group_id: g.id }); CT.group = null; renderGroups(); renderCard(null); } catch (err) { fail(err); }
+  };
+}
+function writeToGroup(g) {
+  if (!g) return;
+  const addr = (m) => { const name = String(m.name || '').replace(/["<>]/g, ''); return name ? `"${name}" <${m.email}>` : m.email; };
+  startCompose('new', null, { to: g.members.filter((m) => m.field !== 'cc').map(addr), cc: g.members.filter((m) => m.field === 'cc').map(addr) });
+}

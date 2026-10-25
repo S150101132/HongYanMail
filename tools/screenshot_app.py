@@ -110,21 +110,13 @@ STEPS = [
     (700, "RL.show('tags')", None),
     (900, "document.body.offsetWidth", 'settings-tags'),
     (500, "$('#settings').classList.add('hidden')", None),
-    # v0.4: resizable columns, print/export, templates, pop-out reader.
+    # v0.4: resizable columns, print/export, pop-out reader.
     (900, "selectFolder('1')", None),
     (1200, "S.prefs.sidebarWidth = 190; S.prefs.listWidth = 560; applyWidths(); selectMessage(S.rows[2].id)", 'resized'),
     (700, "S.prefs.sidebarWidth = 400; S.prefs.listWidth = 280; applyWidths()", 'resized-narrow-list'),
     (700, "$('#split-list').dispatchEvent(new MouseEvent('dblclick')); $('#split-side').dispatchEvent(new MouseEvent('dblclick'))", None),
     (700, "moreMenu($('#reader-body [data-act=more]'), S.message)", 'export-menu'),
-    (500, "hideMenu(); api('saveTemplate', { name: '周报', recipients: true, value: { subject: '本周工作周报', "
-          "html: '<p>各位好，</p><p>本周完成：</p><ul><li>…</li></ul><p>下周计划：</p>', to: ['rd@example.invalid'] } })"
-          ".then(() => api('saveTemplate', { name: '会议通知', value: { subject: '会议通知：', html: '<p>时间：</p><p>地点：</p><p>议程：</p>' } }))", None),
-    (700, "openSettings('compose', '#tpl-section')", 'settings-templates'),
-    (600, "$('#settings').classList.add('hidden'); startCompose('new')", None),
-    (900, "templateMenu($('#cmp-template'))", 'template-menu'),
-    (700, "hideMenu(); applyTemplate(S.templates.find((t) => t.name === '周报'))", 'template-applied'),
-    (500, "hideMenu(); closeComposer(true)", None),
-    (500, "$('#prompt').classList.add('hidden'); selectMessage(S.rows[3].id)", None),
+    (500, "hideMenu(); selectMessage(S.rows[3].id)", None),
     (900, lambda: window.native_openReader('demo3'), None),
     (2500, None, 'popout', 'reader'),
     (600, lambda: render_pdf('demo3'), None),
@@ -213,10 +205,10 @@ STEPS += [
     (700, "groupFromMessage(S.message)", None),
     (900, "document.body.offsetWidth", 'group-from-message'),
     (600, "$('#grp-name').value = '周会纪要收件人'; $('#grp-name').dispatchEvent(new Event('input')); $('#prompt-ok').click()", None),
-    (900, "openSettings(); setTimeout(() => $('#grp-section').scrollIntoView({ block: 'center' }), 100)", 'settings-groups'),
+    (900, "openContacts(); showGroups(); setTimeout(() => showGroup(S.groups[0] && S.groups[0].id), 300)", 'contacts-groups'),
     (700, "editGroup(S.groups.find((g) => g.name === '项目周会')); setTimeout(() => { const i = $('#grp-input'); i.value = '王'; i.dispatchEvent(new Event('input')); }, 100)", None),
     (1000, "document.body.offsetWidth", 'group-editor'),
-    (500, "hideSuggest(); $('#prompt').classList.add('hidden'); $('#settings').classList.add('hidden')", None),
+    (500, "hideSuggest(); $('#prompt').classList.add('hidden'); selectFolder('1')", None),
 ]
 # v1.0 AI: 会话摘要, AI 回复, 写信助手, 发送前检查 (HONGYAN_WALK_V10=1 runs only these; demo AI, no network).
 V10 = len(STEPS)

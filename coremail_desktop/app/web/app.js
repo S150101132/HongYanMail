@@ -26,7 +26,7 @@ const S = {
   rows: [], total: null, more: false, loading: false, listToken: 0,
   selected: null, message: null, filter: 'all', search: null,
   allowRemote: new Set(), drafts: [], items: [], multi: new Set(), anchor: null,
-  shared: [], openBoxes: new Set(), open: new Set(), thread: new Map(), threadLoading: new Set(), counts: new Map(), sentSync: 0, templates: [],
+  shared: [], openBoxes: new Set(), open: new Set(), thread: new Map(), threadLoading: new Set(), counts: new Map(), sentSync: 0,
 };
 // A pop-out reader window loads this page as index.html#reader=<mid>.
 const READER_MID = (/^#reader=(.+)$/.exec(location.hash) || [])[1] ? decodeURIComponent(location.hash.slice(8)) : null;
@@ -208,7 +208,6 @@ async function enterApp(profile) {
   refreshDraftCount();
   refreshOutbox();
   setTimeout(refreshScheduled, 1500);
-  loadTemplates();
 }
 
 // ---------------------------------------------------------------- pop-out reader window
@@ -221,7 +220,6 @@ async function enterReader(mid) {
   applyTheme(S.prefs.theme, S.prefs.density);
   $('#app').classList.remove('hidden');
   [S.folders, S.shared] = await Promise.all([api('folders', { refresh: false }).catch(() => []), api('sharedMailboxes', { refresh: false }).catch(() => [])]);
-  loadTemplates();
   selectMessage(mid);
 }
 function popOut(id) { if (id && S.local !== 'drafts' && S.local !== 'outbox') api('openReader', { mid: id }).catch(fail); }
@@ -1715,76 +1713,6 @@ composer.addEventListener('keydown', (e) => {
   e.stopPropagation();
 });
 
-// ---------------------------------------------------------------- templates (local, encrypted)
-async function loadTemplates() { try { S.templates = await api('templates'); } catch (e) { S.templates = []; } return S.templates; }
-async function applyTemplate(t) {
-  const body = $('#cmp-editor').innerText.replace(/\s+/g, '');
-  const typed = C.dirty && (body || $('#cmp-subject').value.trim());
-  if (typed && !(await confirmDialog('使用模板', `用模板「${t.name}」替换当前的主题和正文吗？`, '替换'))) return;
-  if (t.subject) $('#cmp-subject').value = t.subject;
-  $('#cmp-editor').innerHTML = t.html || '<p><br></p>';
-  for (const field of ['to', 'cc', 'bcc']) {
-    const have = new Set(chipsValue(field).map((a) => (parseAddressList(a)[0] || {}).email));
-    const box = $(`.chips[data-field="${field}"]`), input = $('input', box);
-    for (const a of t[field] || []) { const p = parseAddressList(a)[0]; if (p && !have.has(p.email)) addChip(box, input, p); }
-    if ((t[field] || []).length && field !== 'to') $('#row-' + field).classList.remove('hidden');
-  }
-  C.dirty = true; renderEncrypt();
-}
-async function saveAsTemplate() {
-  const value = collectDraft();
-  const got = await promptDialog({ title: '存为模板', okText: '保存',
-    text: '保存当前邮件的主题和正文，以后在写信窗口点「模板」套用。模板只保存在本机，已加密；附件不会保存。',
-    body: `<input type="text" id="tpl-name" maxlength="60" placeholder="模板名称" value="${esc(value.subject.slice(0, 60))}">
-      <label class="check" style="display:flex;gap:8px;margin-top:10px"><input type="checkbox" id="tpl-rcpt"> 同时保存收件人、抄送和密送</label>`,
-    collect: () => ({ name: $('#tpl-name').value.trim(), recipients: $('#tpl-rcpt').checked }) });
-  if (!got) return;
-  if (!got.name) { toast('请填写模板名称', { error: true }); return; }
-  await loadTemplates();
-  if (S.templates.some((t) => t.name.toLowerCase() === got.name.toLowerCase()) &&
-      !(await confirmDialog('替换模板', `已有名为「${got.name}」的模板，要用当前邮件替换它吗？`, '替换'))) return;
-  try {
-    await api('saveTemplate', { name: got.name, recipients: got.recipients,
-      value: { subject: value.subject, html: value.html, to: value.to, cc: value.cc, bcc: value.bcc } });
-    loadTemplates(); toast(`已存为模板「${got.name}」`);
-  } catch (err) { fail(err); }
-}
-async function templateMenu(button) {
-  await loadTemplates();
-  const r = button.getBoundingClientRect();
-  const used = S.templates.slice(0, 12).map((t) => ({ label: t.name, icon: 'template', run: () => applyTemplate(t) }));
-  showMenu(r.left, r.top, [...used, ...(used.length ? ['-'] : []),
-    { label: '将当前邮件存为模板…', icon: 'draft', run: saveAsTemplate },
-    ...(S.templates.length ? [{ label: '管理模板…', icon: 'settings', run: () => openSettings('compose', '#tpl-section') }] : [])]);
-  const m = $('#menu'), h = m.getBoundingClientRect().height;
-  m.style.top = Math.max(8, r.top - h - 4) + 'px';  // Opens upwards from the composer foot.
-}
-$('#cmp-template').onclick = (e) => templateMenu(e.currentTarget);
-function renderTemplates() {
-  const box = $('#tpl-list');
-  box.innerHTML = S.templates.length ? S.templates.map((t) => `<div class="tpl-row" data-id="${esc(t.id)}"><i data-icon="template"></i>
-      <div class="tpl-text"><b>${esc(t.name)}</b><span class="muted small">${esc(t.subject || '（无主题）')}${(t.to || []).length ? ' · 含收件人' : ''} · ${esc(t.modified)}</span></div>
-      <button class="btn ghost sm" data-tpl="rename">重命名</button><button class="btn ghost sm danger" data-tpl="delete">删除</button></div>`).join('')
-    : '<p class="muted small">还没有模板。</p>';
-  renderIcons(box);
-}
-$('#tpl-list').addEventListener('click', async (e) => {
-  const b = e.target.closest('[data-tpl]'); if (!b) return;
-  const t = S.templates.find((x) => x.id === b.closest('.tpl-row').dataset.id); if (!t) return;
-  try {
-    if (b.dataset.tpl === 'rename') {
-      const name = await promptDialog({ title: '重命名模板', okText: '保存', body: `<input type="text" id="tpl-rename" maxlength="60" value="${esc(t.name)}">`,
-        collect: () => $('#tpl-rename').value.trim() });
-      if (!name || name === t.name) return;
-      S.templates = await api('renameTemplate', { template_id: t.id, name });
-    } else {
-      if (!(await confirmDialog('删除模板', `确定删除模板「${t.name}」吗？`, '删除'))) return;
-      S.templates = await api('deleteTemplate', { template_id: t.id });
-    }
-    renderTemplates();
-  } catch (err) { fail(err); }
-});
-
 // ---------------------------------------------------------------- settings
 function openSettings() {
   const p = S.prefs;
@@ -1804,8 +1732,6 @@ function openSettings() {
   renderSidePicks();
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
   renderCertStatus();
-  renderTemplates(); loadTemplates().then(renderTemplates);
-  renderGroups(); loadGroups().then(renderGroups);
   renderAiSettings();  // ai.js: settings open only on a click, after every file has loaded.
   api('runtimeStatus').then((r) => { $('#runtime-note').classList.toggle('hidden', r.sandboxed); $('#data-dir').textContent = '本机数据（已加密）：' + r.dataDir; }).catch(() => {});
   api('certificateStatus').then((c) => { S.profile.certificate = c; renderCertStatus(); }).catch(() => {});

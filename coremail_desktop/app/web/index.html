@@ -253,7 +253,7 @@
     <div class="cmp-row"><label>收件人</label><div class="chips" data-field="to"></div><span class="cmp-toggles"><a data-show="cc">抄送</a><a data-show="bcc">密送</a><a id="cmp-groups" title="一键添加收件人组的成员；也可以把当前收件人存为组">收件人组</a></span></div>
     <div class="cmp-row hidden" id="row-cc"><label>抄送</label><div class="chips" data-field="cc"></div></div>
     <div class="cmp-row hidden" id="row-bcc"><label>密送</label><div class="chips" data-field="bcc"></div></div>
-    <div class="cmp-row"><label>主题</label><input id="cmp-subject" type="text" spellcheck="false"></div>
+    <div class="cmp-row"><label>主题</label><input id="cmp-subject" type="text" spellcheck="true" lang="en"></div>
   </div>
   <div class="cmp-toolbar" id="cmp-toolbar">
     <select id="fmt-size" class="lean-hide" title="字号"><option value="">字号</option><option value="2">小</option><option value="3">正常</option><option value="4">大</option><option value="5">特大</option></select>
@@ -279,14 +279,13 @@
     <span class="spacer"></span>
     <button id="cmp-attach" title="添加附件"><i data-icon="clip"></i><span>附件</span></button>
   </div>
-  <div id="cmp-editor" class="cmp-editor" contenteditable="true" spellcheck="false"></div>
+  <div id="cmp-editor" class="cmp-editor" contenteditable="true" spellcheck="true" lang="en"></div>
   <div id="cmp-ai-panel" class="cmp-ai-panel hidden"></div>
   <div id="cmp-atts" class="cmp-atts"></div>
   <div class="cmp-foot">
-    <span class="send-split"><button id="cmp-send" class="btn primary" title="发送 (Ctrl+Enter)"><i data-icon="send"></i>发送</button><button id="cmp-send-more" class="btn primary lean-only" title="定时发送、模板"><i data-icon="caret"></i></button></span>
+    <span class="send-split"><button id="cmp-send" class="btn primary" title="发送 (Ctrl+Enter)"><i data-icon="send"></i>发送</button><button id="cmp-send-more" class="btn primary lean-only" title="定时发送"><i data-icon="caret"></i></button></span>
     <button id="cmp-save" class="btn ghost" title="保存草稿 (Ctrl+S)">保存草稿</button>
     <button id="cmp-schedule" class="btn ghost lean-hide" title="定时发送"><i data-icon="clock"></i><span>定时发送</span></button>
-    <button id="cmp-template" class="btn ghost lean-hide" title="使用模板，或把当前邮件存为模板"><i data-icon="template"></i><span>模板</span></button>
     <span id="cmp-schedule-chip" class="sched-chip hidden"><i data-icon="clock"></i><span></span><button title="取消定时">×</button></span>
     <label class="check small" title="收件人打开邮件时，请求对方回复已读回执"><input type="checkbox" id="cmp-receipt"> 请求已读回执</label>
     <span class="spacer"></span>
@@ -324,7 +323,7 @@
           <div class="seg" id="density-seg"><button data-density="comfortable">舒适</button><button data-density="compact">紧凑</button></div>
           <h3>工具栏</h3>
           <div class="seg" id="toolbar-seg"><button data-toolbar="lean">精简</button><button data-toolbar="full">完整</button></div>
-          <p class="muted small">精简时，阅读栏只留回复、转发、删除、星标和 AI，其余在「⋯」里；写信时少用的格式在「格式」里，定时发送和模板在「发送」旁的 ▾ 里；高级搜索的时间改为下拉。快捷键不变；也可以按 Ctrl+K 用命令找到每个功能。</p>
+          <p class="muted small">精简时，阅读栏只留回复、转发、删除、星标和 AI，其余在「⋯」里；写信时少用的格式在「格式」里，定时发送在「发送」旁的 ▾ 里；高级搜索的时间改为下拉。快捷键不变；也可以按 Ctrl+K 用命令找到每个功能。</p>
           <h3>收信与提醒</h3>
           <label class="pref-row">启动时打开
             <select id="pref-start"><option value="inbox">收件箱</option><option value="today">每日速览</option></select></label>
@@ -356,13 +355,6 @@
             <button id="sig-image" title="插入图片（如公司 LOGO；也可以直接粘贴或拖入）。点击图片可调整大小"><i data-icon="image"></i></button>
           </div>
           <div id="pref-signature" class="sig-editor" contenteditable="true"></div>
-          <h3 id="tpl-section">邮件模板</h3>
-          <p class="muted small">在写信窗口点「模板」可把当前邮件存为模板，或套用已有模板。模板只保存在这台电脑，已加密。模板和收件人组的修改立即生效。</p>
-          <div id="tpl-list" class="tpl-list"></div>
-          <h3 id="grp-section">收件人组</h3>
-          <p class="muted small">把常一起写信的人存为一个组，每人可设为主送或抄送；写信时点收件人旁的「收件人组」一键添加，重复的人自动去掉。组只保存在这台电脑，已加密。</p>
-          <div id="grp-list" class="tpl-list"></div>
-          <div class="row-gap"><button class="btn ghost sm" id="grp-new">新建收件人组…</button></div>
         </div>
         <div class="modal-body st-pane st-page hidden" data-pane="security">
           <h3>加密与签名</h3>

@@ -298,8 +298,8 @@ $('#cmp-table').onclick = (e) => {
   $('#menu').insertAdjacentHTML('afterbegin', '<button id="tbl-new"><i></i><span>插入新表格…</span></button><hr>');
   $('#tbl-new').onclick = () => { hideMenu(); tablePicker(b); };
 };
-// 精简工具栏 (A4): 格式 holds the formats folded off the bar; ▾ beside 发送 holds 定时发送 and
-// 模板. Each item does what its folded button does; the editor keeps its selection meanwhile.
+// 精简工具栏 (A4): 格式 holds the formats folded off the bar; ▾ beside 发送 holds 定时发送.
+// Each item does what its folded button does; the editor keeps its selection meanwhile.
 function formatMenu(button) {
   const editor = $('#cmp-editor'), sel = getSelection();
   const range = sel.rangeCount && editor.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
@@ -321,8 +321,7 @@ $('#cmp-format').onclick = (e) => formatMenu(e.currentTarget);
 $('#cmp-send-more').onclick = (e) => {
   const b = e.currentTarget, r = b.getBoundingClientRect();
   showMenu(r.left, r.top, [
-    ...(C.draft && C.draft.scheduleAt ? [] : [{ label: '定时发送…', icon: 'clock', run: () => $('#cmp-schedule').click() }]),
-    { label: '模板…', icon: 'template', run: () => setTimeout(() => templateMenu(b)) },  // A menu of its own, after this click.
+    { label: C.draft && C.draft.scheduleAt ? '修改定时…' : '定时发送…', icon: 'clock', run: () => $('#cmp-schedule').click() },
   ]);
   const m = $('#menu'), h = m.getBoundingClientRect().height;  // Above the button: the foot is at the window's bottom.
   m.style.top = Math.max(8, r.top - h - 4) + 'px';
@@ -333,6 +332,18 @@ $('#cmp-editor').addEventListener('contextmenu', (e) => {
   e.preventDefault();
   caretIn(cell);
   tableMenu(e.clientX, e.clientY, cell);
+});
+// 拼写检查: Chromium underlines misspelled English words in the subject and body; a
+// right-click on one brings its suggestions from the shell (_spelling_menu), shown where
+// the click was. Picking one replaces the word in place.
+let spellAt = [0, 0];
+$('#composer').addEventListener('contextmenu', (e) => { spellAt = [e.clientX, e.clientY]; });
+on('spelling', ({ word, suggestions }) => {
+  if ($('#composer').classList.contains('hidden')) return;
+  showMenu(spellAt[0], spellAt[1], suggestions.length
+    ? suggestions.map((s) => ({ label: s, run: () => { api('replaceMisspelled', { word: s }).then(() => { C.dirty = true; }).catch(fail); } }))
+    : [{ label: `没有「${word}」的拼写建议`, run: () => {} }]);
+  $$('#menu button').forEach((b) => (b.onmousedown = (e) => e.preventDefault()));  // Keep the word selected.
 });
 // Tab / Shift+Tab move between cells; Tab in the last cell adds a row.
 $('#cmp-editor').addEventListener('keydown', (e) => {

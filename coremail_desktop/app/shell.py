@@ -30,6 +30,9 @@ from coremail_desktop.ui.branding import app_icon
 from coremail_desktop.ui.messages import login_message, user_message
 
 WEB_ROOT = Path(__file__).resolve().parent / 'web'
+# 拼写检查: Chromium's en-US Hunspell dictionary (chromium/deps/hunspell_dictionaries,
+# en-US-10-2.bdic). Qt reads the folder once, before the first profile exists.
+os.environ.setdefault('QTWEBENGINE_DICTIONARIES_PATH', str(Path(__file__).resolve().parent / 'dictionaries'))
 SCHEME = b'hongyan'
 APP_URL = 'hongyan://app/index.html'
 
@@ -56,7 +59,6 @@ BACKEND_METHODS = {
     'rules': 'rules', 'saveRule': 'save_rule', 'setRuleEnabled': 'set_rule_enabled', 'deleteRule': 'delete_rule', 'moveRule': 'move_rule',
     'autoReply': 'auto_reply', 'setAutoReply': 'set_auto_reply', 'tags': 'tags', 'saveTag': 'save_tag', 'deleteTag': 'delete_tag',
     'tagMessages': 'tag_messages', 'tagView': 'tag_view', 'respondInvitation': 'respond_invitation',
-    'templates': 'templates', 'saveTemplate': 'save_template', 'renameTemplate': 'rename_template', 'deleteTemplate': 'delete_template',
     'recipientGroups': 'recipient_groups', 'saveRecipientGroup': 'save_recipient_group',
     'deleteRecipientGroup': 'delete_recipient_group', 'applyRecipientGroups': 'apply_recipient_groups',
     'messageRecipients': 'message_recipients',
@@ -99,7 +101,7 @@ BACKEND_METHODS = {
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
-                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'templates', 'person',
+                'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'person',
                 'recipientGroups', 'aiSettings', 'cancelAsk', 'cancelAi', 'precheck', 'archiveStatus', 'archiveView', 'searchArchive',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment',
                 'aiEncrypted', 'understandStatus', 'understandPending', 'understandCards', 'understandView', 'understandRules',
@@ -262,9 +264,22 @@ def _make_web(owner):
     profile.installUrlSchemeHandler(SCHEME, _SchemeHandler(profile))
     interceptor = _Interceptor(profile)
     profile.setUrlRequestInterceptor(interceptor)
+    profile.setSpellCheckLanguages(['en-US']); profile.setSpellCheckEnabled(True)  # Only where the page asks (the composer).
     page = _Page(profile, owner)
     _lock_down(page)
     return profile, interceptor, page
+
+
+def _spelling_menu(view, bridge):
+    """No Chromium menu: the page draws its own. A right-click on a misspelled word in the
+    composer (spellcheck on, page did not take the click) sends the suggestions to it."""
+    view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def requested(_pos):
+        request = view.lastContextMenuRequest()
+        if request is not None and request.isContentEditable() and request.misspelledWord():
+            bridge.emit_event('spelling', {'word': request.misspelledWord(), 'suggestions': list(request.spellCheckerSuggestions())[:6]})
+    view.customContextMenuRequested.connect(requested)
 
 
 class Bridge(QObject):
@@ -483,9 +498,9 @@ class ReaderWindow(_PrintHost, QMainWindow):
         self.page.titleChanged.connect(lambda title: self.setWindowTitle(title or '鸿雁 · 邮件'))
         self.view = QWebEngineView(self)
         self.view.setPage(self.page)
-        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.setCentralWidget(self.view)
         self.bridge = Bridge(shell, host=self, share=shell.bridge)
+        _spelling_menu(self.view, self.bridge)
         self.channel = QWebChannel(self.page)
         self.channel.registerObject('bridge', self.bridge)
         self.page.setWebChannel(self.channel)
@@ -494,6 +509,10 @@ class ReaderWindow(_PrintHost, QMainWindow):
 
     def native_allowRemoteImages(self, allow=False):
         self.interceptor.allow_remote_images = bool(allow)
+        return True
+
+    def native_replaceMisspelled(self, word=''):
+        self.page.replaceMisspelledWord(str(word))
         return True
 
     def native_findText(self, text='', backward=False):
@@ -551,10 +570,10 @@ class AppShell(_PrintHost, QMainWindow):
         self.page.renderProcessTerminated.connect(self._renderer_ended)
         self.view = QWebEngineView(self)
         self.view.setPage(self.page)
-        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.setCentralWidget(self.view)
 
         self.bridge = Bridge(self)
+        _spelling_menu(self.view, self.bridge)
         self.channel = QWebChannel(self.page)
         self.channel.registerObject('bridge', self.bridge)
         self.page.setWebChannel(self.channel)
@@ -992,6 +1011,10 @@ class AppShell(_PrintHost, QMainWindow):
             return self.backend.unlock_certificate(path, password, bool(remember))
         except Exception as error:
             raise AppError(getattr(error, 'code', 'CERT_UNLOCK_FAILED')) from None
+
+    def native_replaceMisspelled(self, word=''):
+        self.page.replaceMisspelledWord(str(word))
+        return True
 
     def native_findText(self, text='', backward=False):
         flags = QWebEnginePage.FindFlag.FindBackward if backward else QWebEnginePage.FindFlag(0)

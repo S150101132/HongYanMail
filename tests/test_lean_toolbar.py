@@ -73,13 +73,11 @@ class ReachTest(unittest.TestCase):
                 self.assertIn("$('#cmp-table').onclick", self.compose)
             elif item == 'cmp-schedule':
                 self.assertIn("$('#cmp-schedule').click()", self.compose)
-            elif item == 'cmp-template':
-                self.assertIn('templateMenu(b)', self.compose)
             elif item in ('文字颜色', '高亮'):
                 self.assertIn({'文字颜色': "$('#fmt-color').click()", '高亮': "$('#fmt-hilite').click()"}[item], self.compose)
             else:
                 self.assertIn(f"'{item}'", self.compose[self.compose.index('function formatMenu'):], item)
-        self.assertEqual(len(hidden), 12)  # 字号, 下划线, 删除线, 颜色, 高亮, 缩进 ×2, 分隔线, 表格, 清除格式, 定时, 模板.
+        self.assertEqual(len(hidden), 11)  # 字号, 下划线, 删除线, 颜色, 高亮, 缩进 ×2, 分隔线, 表格, 清除格式, 定时.
         only = {a.get('id') for tag, a in self.folded.only}
         self.assertTrue({'cmp-format', 'cmp-send-more', 'sp-quick-sel'} <= only)
         for kept in ('bold', 'italic', 'insertUnorderedList', 'insertOrderedList', 'link'):

@@ -57,7 +57,9 @@ a = Analysis(
     pathex=[str(root)],
     binaries=[],
     # The daily-use interface is HTML/CSS/JS served from the private hongyan:// scheme.
-    datas=[(str(root / 'coremail_desktop' / 'app' / 'web'), 'coremail_desktop/app/web')],
+    # 拼写检查 reads Chromium's en-US dictionary from app/dictionaries (shell.py).
+    datas=[(str(root / 'coremail_desktop' / 'app' / 'web'), 'coremail_desktop/app/web'),
+           (str(root / 'coremail_desktop' / 'app' / 'dictionaries'), 'coremail_desktop/app/dictionaries')],
     # QtPdf renders PDF attachment pages to images for the in-app preview (app/shell.py).
     # zstandard's C backend is imported by name at run time (本地存档, archive/reader.py).
     hiddenimports=['PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore', 'PySide6.QtWebChannel', 'PySide6.QtPdf',

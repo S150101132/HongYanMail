@@ -105,6 +105,7 @@ async function openContacts() {
     await loadDirectory(false);
     loadDirectory(true);  // The cached tree shows at once; a fresh copy follows quietly.
   }
+  loadGroups().then(renderGroups);  // groups.js: the 收件人组 node and its list.
   setTimeout(() => $('#ct-search').focus(), 30);
 }
 $('#nav-contacts').onclick = openContacts;
@@ -129,6 +130,7 @@ $('#ct-tree').addEventListener('click', (e) => {
   const id = node.dataset.id;
   if (e.target.closest('.ct-twist')) { CT.open.has(id) ? CT.open.delete(id) : CT.open.add(id); renderTree(); return; }
   if (id === '@personal') { showPersonal(); return; }
+  if (id === '@groups') { showGroups(); return; }
   if (node.dataset.kids === '1' && !CT.open.has(id)) CT.open.add(id);
   openDepartment(id, node.dataset.name);
 });
@@ -142,8 +144,9 @@ function renderTree() {
       <span class="ct-twist${kids ? '' : ' none'}${open ? ' open' : ''}"><i data-icon="chevron"></i></span><i data-icon="${depth ? 'folder' : 'building'}"></i><span class="ct-name" title="${esc(n.name)}">${esc(n.name || '（未命名）')}</span></div>`
       + (kids && open ? draw(n.children, depth + 1) : '');
   }).join('');
-  const personal = CT.personal.length
-    ? `<div class="ct-node${CT.mode === 'personal' ? ' on' : ''}" data-id="@personal" style="padding-left:8px"><span class="ct-twist none"></span><i data-icon="user"></i><span class="ct-name">个人通讯录</span><span class="count">${CT.personal.length}</span></div><div class="ct-sep"></div>` : '';
+  const mine = (id, mode, icon, name, n) => `<div class="ct-node${CT.mode === mode ? ' on' : ''}" data-id="${id}" style="padding-left:8px"><span class="ct-twist none"></span><i data-icon="${icon}"></i><span class="ct-name">${name}</span><span class="count">${n}</span></div>`;
+  const personal = (CT.personal.length ? mine('@personal', 'personal', 'user', '个人通讯录', CT.personal.length) : '')
+    + mine('@groups', 'groups', 'contacts', '收件人组', S.groups.length) + '<div class="ct-sep"></div>';
   $('#ct-tree').innerHTML = personal + (CT.tree.length ? draw(CT.tree, 0) : '<div class="list-foot">服务器没有返回组织架构</div>');
   renderIcons($('#ct-tree'));
 }
@@ -211,18 +214,22 @@ function drawMembers() {
   if (!CT.person) renderCard(null);  // A new list starts without a selection.
 }
 $('#ct-list').addEventListener('click', (e) => {
+  if (e.target.closest('#ct-grp-new')) { editGroup(null); return; }
+  const grp = e.target.closest('.ct-grp'); if (grp) { showGroup(grp.dataset.gid); return; }
   const row = e.target.closest('.ct-row'); if (!row) return;
   CT.person = CT.rows[+row.dataset.i];
   $$('#ct-list .ct-row').forEach((r) => r.classList.toggle('sel', r === row));
   renderCard(CT.person);
 });
-$('#ct-list').addEventListener('dblclick', (e) => { const row = e.target.closest('.ct-row'); if (row) writeTo(CT.rows[+row.dataset.i]); });
+$('#ct-list').addEventListener('dblclick', (e) => {
+  const grp = e.target.closest('.ct-grp'); if (grp) { writeToGroup(S.groups.find((g) => g.id === grp.dataset.gid)); return; }
+  const row = e.target.closest('.ct-row'); if (row) writeTo(CT.rows[+row.dataset.i]); });
 
 let ctTimer = null;
 $('#ct-search').addEventListener('input', () => {
   clearTimeout(ctTimer);
   if (CT.mode === 'search' && !$('#ct-search').value.trim()) { CT.mode = 'dept'; if (CT.dn) openDepartment(CT.dn, CT.title); else showContactsHint(); return; }
-  ctTimer = setTimeout(() => { if (CT.mode !== 'search') drawMembers(); }, 120);
+  ctTimer = setTimeout(() => { if (CT.mode === 'groups') drawGroups(); else if (CT.mode !== 'search') drawMembers(); }, 120);
 });
 $('#ct-search').addEventListener('keydown', async (e) => {
   if (e.key === 'Escape') { e.target.value = ''; e.target.dispatchEvent(new Event('input')); return; }

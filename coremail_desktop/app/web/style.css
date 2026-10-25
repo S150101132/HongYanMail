@@ -606,12 +606,6 @@ button.side-section[aria-expanded="true"] i { transform: rotate(90deg); }
 .reader-only .composer .cmp-head { border-radius: 12px 12px 0 0; }
 .reader-only #cmp-max { display: none; }
 
-/* Templates */
-.tpl-list { display: grid; gap: 4px; }
-.tpl-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 8px; min-width: 0; }
-.tpl-row > i { width: 16px; height: 16px; color: var(--muted); }
-.tpl-text { flex: 1; min-width: 0; display: grid; }
-.tpl-text b, .tpl-text span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tpl-pick button { min-width: 0; }
 .tpl-pick .tpl-name { flex: none; max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .tpl-pick .tpl-sub { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -718,6 +712,11 @@ img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 .grp-empty { padding: 12px; text-align: center; }
 .seg.sm button { padding: 2px 8px; font-size: var(--fs-xs); }
 .modal-card:has(.grp-members) { width: 560px; }
+.avatar.grp-icon { background: var(--sel); color: var(--accent); }
+.avatar.grp-icon i { width: 20px; height: 20px; }
+.avatar.xl.grp-icon i { width: 38px; height: 38px; }
+.grp-card-members { text-align: left; margin: 22px 0; max-height: 46vh; }
+.grp-card-members .tag { flex: none; font-size: var(--fs-xs); padding: 0 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); }
 .cmp-editor .hy-mention { white-space: nowrap; }
 
 /* AI 助手: 「总结这封」 panel and settings */
