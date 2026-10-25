@@ -340,6 +340,7 @@ const PV = {
       const d = frame.contentDocument; if (!d) return;
       d.addEventListener('keydown', (e) => { if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && /^[-+=0]$/.test(e.key))) { this.key(e); } });
       d.addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); this.zoomBy(e.deltaY < 0 ? 1 : -1); } }, { passive: false });
+      externalLinks(d);
       this.layout();
     });
     frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">

@@ -944,6 +944,18 @@ async function unscheduleMessage(m) {
 function linkify(text) {
   return esc(text).replace(/(https?:\/\/[^\s<>"']+)/g, '<a href="$1">$1</a>');
 }
+// Links in a mail frame open in the default browser (mailto: in compose). The page CSP
+// stops the frame itself from navigating, so clicks never reach the shell on their own.
+function externalLinks(doc) {
+  const open = (e) => {
+    const a = e.target.closest && e.target.closest('a[href]'); if (!a) return;
+    e.preventDefault();
+    if (e.button > 1 || !/^(https?|mailto):/i.test(a.href)) return;
+    api('openExternal', { url: a.href }).catch(fail);
+  };
+  doc.addEventListener('click', open);
+  doc.addEventListener('auxclick', open);
+}
 function renderFlagButton() { $$('.reader-toolbar [data-act="flag"]').forEach((b) => b.classList.toggle('on', !!(S.message && S.message.flags.flagged))); }
 function renderBody(m) {
   if (m.html) writeFrame(m.html, { remote: S.allowRemote.has(m.id), paper: true });
@@ -977,6 +989,7 @@ $('#r-frame').addEventListener('load', () => {
   $$('img', doc).forEach((img) => img.addEventListener('load', fit));
   try { new ResizeObserver(() => requestAnimationFrame(fit)).observe(doc.body); } catch (e) { /* optional */ }
   doc.addEventListener('keydown', (e) => handleKey(e));
+  externalLinks(doc);
 });
 
 $('#reader-body').addEventListener('click', async (e) => {
