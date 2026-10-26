@@ -57,6 +57,7 @@ BACKEND_METHODS = {
     'person': 'person',
     'searchCapabilities': 'search_capabilities',
     'rules': 'rules', 'saveRule': 'save_rule', 'setRuleEnabled': 'set_rule_enabled', 'deleteRule': 'delete_rule', 'moveRule': 'move_rule',
+    'ruleMatches': 'rule_matches', 'applyRule': 'apply_rule', 'undoRuleApply': 'undo_rule_apply',
     'autoReply': 'auto_reply', 'setAutoReply': 'set_auto_reply', 'tags': 'tags', 'saveTag': 'save_tag', 'deleteTag': 'delete_tag',
     'tagMessages': 'tag_messages', 'tagView': 'tag_view', 'respondInvitation': 'respond_invitation',
     'recipientGroups': 'recipient_groups', 'saveRecipientGroup': 'save_recipient_group',

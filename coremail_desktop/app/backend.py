@@ -368,6 +368,7 @@ class MailBackend:
         self._docs = {}
         self._signer_directory = {}  # (sender, signer fingerprint) -> matches the company directory
         self._rules = {}  # Rule id -> the rule as the server last listed it.
+        self._rule_undo = None  # Mail id -> (folder, read, flagged) before the last 对已有邮件执行.
         self.autostart = None  # Set by the app (not in demo mode): reads and writes the Windows Run key.
         self.open_file = shell_open  # 打开 for attachments; tests replace it.
         self.convert_image = None  # Set by the app: image bytes -> PNG bytes (Qt), for TIFF previews.
@@ -2167,6 +2168,81 @@ class MailBackend:
         if [r['id'] for r in result['rules']] != order:
             raise AppError('RULE_UNCONFIRMED')
         return result
+
+    # 对已有邮件执行: the server says which inbox mail a saved rule matches (read-only listing);
+    # the client then moves / marks them with the verified bulk calls, so the step can be undone.
+    RULE_APPLY_LIMIT = 500
+
+    def _rule_for_apply(self, rule_id):
+        from coremail_desktop.protocol.rules import APPLY_ACTIONS
+        self._need('rule_matches')
+        rule = next((r for r in self.rules()['rules'] if r['id'] == rule_id), None)
+        if rule is None:
+            raise AppError('INVALID_RULE')
+        inbox = next((f['id'] for f in (self._folders or self.folders()) if f['role'] == 'inbox'), '1')
+        return rule, inbox, bool(rule['editable'] and rule['actions'] and all(a['type'] in APPLY_ACTIONS for a in rule['actions']))
+
+    def _matches_page(self, rule_id, inbox, offset, limit):
+        # The deployment answers an unknown rule id with the whole folder (analysis/rule-matches-shape-2026-10-26.json),
+        # so a match count equal to the folder total is not trusted as a filtered list.
+        page = self._online(self.adapter.rule_matches, rule_id, inbox, offset, limit)
+        self._online(self.adapter.list_messages, inbox, 0, 1)
+        if page['total'] and self.adapter.last_folder_id == inbox and page['total'] >= (self.adapter.last_folder_total or 0):
+            raise AppError('RULE_MATCH_UNVERIFIED')
+        return page
+
+    def rule_matches(self, rule_id, limit=5):
+        """How many inbox mails the rule matches now, and the newest few to show."""
+        rule, inbox, applicable = self._rule_for_apply(rule_id)
+        page = self._matches_page(rule_id, inbox, 0, max(1, min(int(limit), 100)))
+        return {'total': page['total'], 'rows': [_summary_dict(m) for m in page['messages']], 'applicable': applicable,
+                'folder': inbox, 'actions': rule['actions']}
+
+    def apply_rule(self, rule_id):
+        """Run a rule's move / mark-read / star actions on the inbox mail it matches (at most 500)."""
+        rule, inbox, applicable = self._rule_for_apply(rule_id)
+        if not applicable:
+            raise AppError('RULE_NOT_APPLICABLE')
+        rows = []
+        while len(rows) < self.RULE_APPLY_LIMIT:
+            page = self._matches_page(rule_id, inbox, len(rows), 100)
+            rows += [_summary_dict(m) for m in page['messages']]
+            if len(page['messages']) < 100 or len(rows) >= page['total']:
+                break
+        rows = rows[:self.RULE_APPLY_LIMIT]
+        if not rows:
+            return {'done': 0, 'failed': 0, 'folders': self._folders}
+        self.cache.put_summaries(inbox, rows)
+        ids = [r['id'] for r in rows]
+        before = {r['id']: (r['fid'], bool(r['flags'].get('read')), bool(r['flags'].get('flagged'))) for r in rows}
+        done, failed = set(ids), set()
+        for action in rule['actions']:
+            todo = [m for m in ids if m in done]
+            for i in range(0, len(todo), 100):
+                chunk = todo[i:i + 100]
+                if action['type'] == 'move':
+                    result = self.move(chunk, action['folder'])
+                else:
+                    result = self.set_flags(chunk, **({'read': True} if action['type'] == 'read' else {'flagged': True}))
+                failed |= set(result['failed'])
+                done -= set(result['failed'])
+        self._rule_undo = {m: before[m] for m in done}
+        return {'done': len(done), 'failed': len(failed), 'folders': self._folders}
+
+    def undo_rule_apply(self):
+        """Put the mail of the last 对已有邮件执行 back: folder, read and star as they were."""
+        undo, self._rule_undo = self._rule_undo or {}, None
+        if not undo:
+            raise AppError('OPERATION_NOT_ALLOWED')
+        for fid in {v[0] for v in undo.values()}:
+            back = [m for m, v in undo.items() if v[0] == fid and (self.cache.summary(m) or {}).get('fid') != fid]
+            for i in range(0, len(back), 100):
+                self.move(back[i:i + 100], fid)
+        for key, index in (('read', 1), ('flagged', 2)):
+            ids = [m for m, v in undo.items() if not v[index] and (self.cache.summary(m) or {}).get('flags', {}).get(key)]
+            for i in range(0, len(ids), 100):
+                self.set_flags(ids[i:i + 100], **{key: False})
+        return {'restored': len(undo), 'folders': self._folders}
 
     def auto_reply(self):
         from coremail_desktop.protocol.rules import autoreply_view

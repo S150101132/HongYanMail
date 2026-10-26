@@ -68,6 +68,21 @@ class CodecTest(unittest.TestCase):
                          [{'type': 'flag'}])
         self.assertFalse(R.rule_view({'name': '##VIP', 'condictions': server['conditions'], 'actions': [{'type': 'flags', 'value': {'vip': True}}]})['editable'])
 
+    def test_webmail_fields_and_operators(self):
+        # Webmail's own vocabulary (S.03931.js): cc / recipients are address fields; six text operators.
+        view = {'name': 'v2', 'conditions': [{'field': 'cc', 'op': 'excludes', 'value': 'a@example.invalid'},
+                                             {'field': 'recipients', 'op': '!=', 'value': '"甲" <b@example.invalid>,c@example.invalid'},
+                                             {'field': 'subject', 'op': 'startsWith', 'value': '【通知】'}],
+                'actions': [{'type': 'read'}]}
+        server = R.rule_server(view, set(), set())
+        self.assertEqual([c['operator'] for c in server['conditions']], ['excludes', '!=', 'startsWith'])
+        self.assertEqual([c.get('forAddress') for c in server['conditions']], [True, True, None])
+        back = R.rule_view(server)
+        self.assertTrue(back['editable'])
+        self.assertEqual(back['conditions'], view['conditions'])
+        for bad in ({'field': 'cc', 'op': 'regex', 'value': 'x'}, {'field': 'bcc', 'op': 'contains', 'value': 'x'}):
+            self.assertFalse(R.rule_view({'name': 'x', 'condictions': [{**bad, 'operator': bad['op'], 'operand': 'x'}], 'actions': server['actions']})['editable'])
+
     def test_tag_names_follow_webmail(self):
         rows = [['19', {'color': '0'}], ['18', {'color': '2'}], ['13', {'color': '3'}], ['11', {'color': '8'}], ['x1', {'name': '项目', 'color': '#123456'}]]
         tags = {t['id']: t for t in R.tags_view(rows)}
@@ -148,6 +163,18 @@ class AdapterTest(unittest.TestCase):
         with self.assertRaises(AppError):
             adapter.manage_tags('rename', [['x1', {}]])
 
+    def test_rule_matches_lists_by_rule(self):
+        # As webmail lists a saved rule's matches: mbox:listMessages {fid, ruleConditions:'@id'}.
+        adapter = self.adapter()
+        page = adapter.rule_matches(102, '1', 0, 5)
+        op, params = adapter._session.calls[-1]
+        self.assertEqual(op, 'mbox:listMessages')
+        self.assertEqual((params['fid'], params['ruleConditions'], params['start'], params['limit'], params['returnTotal']), (1, '@102', 0, 5, True))
+        self.assertEqual((page['total'], page['messages'][0].remote_id), (1, 'm1'))
+        for bad in ((None, '1'), (102, 'x'), (102, '1', -1), (102, '1', 0, 101)):
+            with self.assertRaises(AppError):
+                adapter.rule_matches(*bad)
+
     def test_respond_uses_the_server_calendar_record(self):
         adapter = self.adapter(calendar={'calFid': 3, 'calUid': 'u-1', 'meetingRequestMethod': 'request'})
         self.assertEqual(adapter.respond_invitation('m1', 'tentative'), {'answer': 'tentative', 'type': 2})
@@ -191,6 +218,52 @@ class BackendTest(unittest.TestCase):
         self.assertFalse(next(r for r in b.set_rule_enabled(103, False)['rules'] if r['id'] == 103)['enabled'])
         self.assertEqual([r['id'] for r in b.move_rule(new_id, -1)['rules']], [100, 102, new_id, 103])
         self.assertNotIn(new_id, [r['id'] for r in b.delete_rule(new_id)['rules']])
+
+    def test_apply_rule_to_existing_mail_and_undo(self):
+        b = self.backend
+        inbox = lambda: {r['id']: r for r in b.adapter.rows.values() if r['fid'] == '1'}
+        found = b.rule_matches(100)  # 项目归档: from product@ / rd@ -> move to 100.
+        self.assertTrue(found['applicable'])
+        self.assertGreater(found['total'], 5)
+        self.assertEqual(len(found['rows']), 5)
+        self.assertTrue(all(r['fromEmail'] in ('product@example.invalid', 'rd@example.invalid') for r in found['rows']))
+        before = inbox()
+        result = b.apply_rule(100)
+        self.assertEqual((result['done'], result['failed']), (found['total'], 0))
+        self.assertEqual(len(before) - len(inbox()), found['total'])
+        self.assertEqual(b.rule_matches(100)['total'], 0)
+        self.assertEqual(b.undo_rule_apply()['restored'], found['total'])
+        self.assertEqual(set(inbox()), set(before))
+        with self.assertRaises(AppError):
+            b.undo_rule_apply()  # Only once.
+        # Mark read, then undo puts back only what was unread.
+        named = b.save_rule({'name': 'zh', 'conditions': [{'field': 'from', 'op': '=', 'value': '"张晓明" <zhangxm@example.invalid>'}], 'actions': [{'type': 'flag'}]})['saved']
+        self.assertGreater(b.rule_matches(named)['total'], 0)  # A value with a display name matches on its address.
+        progress = lambda:{m for m, r in inbox().items() if '项目进展' in r['subject'] and not r['flags']['read']}
+        unread = progress()
+        self.assertTrue(unread)
+        rid = b.save_rule({'name': 'rd', 'conditions': [{'field': 'subject', 'op': 'startsWith', 'value': '项目进展'}], 'actions': [{'type': 'read'}]})['saved']
+        b.apply_rule(rid)
+        self.assertEqual(progress(), set())
+        b.undo_rule_apply()
+        self.assertEqual(progress(), unread)
+        # A web-only rule, and one that forwards, are never run on existing mail.
+        for rule in (103, b.save_rule({'name': 'fw', 'conditions': [{'field': 'subject', 'op': 'contains', 'value': '周报'}],
+                                       'actions': [{'type': 'forward', 'to': 'demo@example.invalid'}]})['saved']):
+            self.assertFalse(b.rule_matches(rule)['applicable'])
+            with self.assertRaises(AppError) as caught:
+                b.apply_rule(rule)
+            self.assertEqual(caught.exception.code, 'RULE_NOT_APPLICABLE')
+        self.assertEqual(b.adapter.sent, [])
+        # The deployment answers an unknown rule with the whole inbox: never act on that.
+        everything = lambda rule_id, fid, offset=0, limit=100: {'messages': [], 'total': len(inbox())}
+        b.adapter.rule_matches = everything
+        before = inbox()
+        for call in (b.rule_matches, b.apply_rule):
+            with self.assertRaises(AppError) as caught:
+                call(100)
+            self.assertEqual(caught.exception.code, 'RULE_MATCH_UNVERIFIED')
+        self.assertEqual(set(inbox()), set(before))
 
     def test_unconfirmed_rule_write_is_reported(self):
         self.backend.adapter.add_mail_rule = lambda rule: True  # The server accepts but stores nothing.
@@ -261,11 +334,14 @@ class WebAssetsTest(unittest.TestCase):
         self.assertLess(html.index('contacts.js'), html.index('<script src="rules.js">'))
         self.assertNotIn('TG.chips', (self.WEB / 'app.js').read_text(encoding='utf-8'))  # No 标签 in the page (R4).
         script = (self.WEB / 'rules.js').read_text(encoding='utf-8')
-        for name in ("api('saveRule'", "api('setAutoReply'", "api('tags'", "api('respondInvitation'", "part: 'invite.ics'"):
+        for name in ("api('saveRule'", "api('setAutoReply'", "api('tags'", "api('respondInvitation'", "part: 'invite.ics'",
+                     "api('ruleMatches'", "api('applyRule'", "api('undoRuleApply'", "api('suggest'", 'function ruleFromMail'):
             self.assertIn(name, script)
+        self.assertEqual((self.WEB / 'app.js').read_text(encoding='utf-8').count('ruleFromMail('), 2)  # Reader ⋯ and list right-click.
         from coremail_desktop.app.shell import BACKEND_METHODS
         from coremail_desktop.app.backend import MailBackend as B
-        for method in ('rules', 'saveRule', 'setRuleEnabled', 'deleteRule', 'moveRule', 'autoReply', 'setAutoReply', 'tags', 'saveTag',
+        for method in ('rules', 'saveRule', 'setRuleEnabled', 'deleteRule', 'moveRule', 'ruleMatches', 'applyRule', 'undoRuleApply',
+                       'autoReply', 'setAutoReply', 'tags', 'saveTag',
                        'deleteTag', 'tagMessages', 'tagView', 'respondInvitation'):
             self.assertTrue(hasattr(B, BACKEND_METHODS[method]), method)
 

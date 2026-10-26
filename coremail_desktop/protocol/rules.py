@@ -91,11 +91,14 @@ def clean_tag_name(name):
 
 
 # Rules --------------------------------------------------------------------------
-# The client edits a subset: conditions on sender, recipient, subject, attachment and size;
-# actions move, mark read, flag, forward and tag. A rule that holds anything else is listed
-# with editable False: it can be switched on/off, reordered or deleted, never rewritten.
-TEXT_FIELDS = ('from', 'to', 'subject')
-TEXT_OPS = ('contains', '=', 'endsWith')
+# The client edits a subset: conditions on sender, recipients (to / cc / either), subject,
+# attachment and size; actions move, mark read, flag, forward and tag. A rule that holds
+# anything else is listed with editable False: switch on/off, reorder or delete only.
+# Fields and operators are webmail's own (S.03931.js: Qt address fields, ii text operators).
+ADDRESS_FIELDS = ('from', 'to', 'cc', 'recipients')  # recipients = 收件人或抄送.
+TEXT_FIELDS = ADDRESS_FIELDS + ('subject',)
+TEXT_OPS = ('contains', 'excludes', '=', '!=', 'startsWith', 'endsWith')
+APPLY_ACTIONS = ('move', 'read', 'flag')  # What 对已有邮件执行 may do; never forward.
 SIZE_OPS = ('>', '<')
 MAX_TEXT = 1000
 
@@ -175,7 +178,7 @@ def _condition_server(c):
         if not value or len(value) > MAX_TEXT:
             raise AppError('INVALID_RULE')
         result = {'field': field, 'operator': op, 'operand': value, 'ignoreCase': True, 'listOfValues': True}
-        if field in ('from', 'to'):
+        if field in ADDRESS_FIELDS:
             result.update(forAddress=True, extractAddress=True)
         return result
     if field == 'attachment':

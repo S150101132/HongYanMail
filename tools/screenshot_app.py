@@ -364,6 +364,33 @@ STEPS += [
     (900, "document.body.offsetWidth", 'p-settings'),
 ]
 
+# 收信规则重新设计 (R5): list, editor with chips and suggestions, run on existing mail, from a mail (HONGYAN_WALK_R5=1).
+CLOSE_PROMPT = "$$('#prompt [data-close]')[0].click()"
+R5 = len(STEPS)
+STEPS += [
+    (2500, "selectFolder('1')", None),
+    (900, "openSettings('rules')", None),
+    (1200, "document.body.offsetWidth", 'r5-list'),
+    (500, "RL.edit(RL.rules[0])", None),
+    (900, "document.body.offsetWidth", 'r5-edit'),
+    (300, "(() => { const i = $$('#prompt .rl-chips input')[0]; i.focus(); i.value = 'zh'; i.dispatchEvent(new Event('input')); })()", None),
+    (900, "document.body.offsetWidth", 'r5-suggest'),
+    (300, f"hideSuggest(); {CLOSE_PROMPT}", None),
+    (500, "RL.offerApply(RL.rules[0], true)", None),
+    (1200, "document.body.offsetWidth", 'r5-apply'),
+    (300, f"{CLOSE_PROMPT}; $('#settings').classList.add('hidden'); selectMessage(S.rows[2].id)", None),
+    (1200, "ruleFromMail(S.message)", None),
+    (1200, "document.body.offsetWidth", 'r5-from-mail'),
+    (300, "$('#prompt [data-pick=new]').click()", None),
+    (1200, "document.body.offsetWidth", 'r5-new-from-mail'),
+    (300, "$('#prompt-ok').click()", None),
+    (1500, "document.body.offsetWidth", 'r5-saved-offer'),
+    (300, "$('#prompt-ok').click()", None),
+    (1500, "document.body.offsetWidth", 'r5-applied'),
+    (300, "openSettings('rules')", None),
+    (1200, "document.body.offsetWidth", 'r5-list-after'),
+]
+
 
 def render_pdf(mid):
     """The same hidden-view path as 导出为 PDF, written into the screenshot folder."""
@@ -400,6 +427,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

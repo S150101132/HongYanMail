@@ -1,4 +1,5 @@
 """Synthetic in-memory adapter for --demo and offline tests. Never touches the network."""
+import re
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from coremail_desktop.errors import AppError
@@ -544,6 +545,39 @@ class DemoAdapter:
 
     def set_mail_rule_disabled(self, rule_id, disabled):
         return self.update_mail_rule({'id': rule_id, 'disabled': disabled})
+
+    @staticmethod
+    def _rule_hit(c, r):
+        """The server matches rules itself; the demo approximates its text and address operators."""
+        field, op, operand = c.get('field'), c.get('operator'), c.get('operand')
+        if field == 'flags':
+            return bool(r['flags'].get('attached'))
+        if field == 'size':
+            return 24000 / 1024 > operand if op == '>' else 24000 / 1024 < operand
+        source = {'from': r['from'], 'to': r['to'], 'cc': r.get('cc', ''), 'recipients': f"{r['to']},{r.get('cc', '')}", 'subject': r['subject']}.get(field)
+        if source is None:
+            return False
+        values = [v.strip().casefold() for v in str(operand).split(',') if v.strip()]
+        address = lambda text: re.findall(r'[^\s<>",]+@[^\s<>",]+', text)
+        texts = address(source.casefold()) if c.get('forAddress') else [source.casefold()]
+        if c.get('forAddress'):  # `"Name" <addr>` values match on the address (extractAddress).
+            values = [(address(v) or [v])[0] for v in values]
+        test = {'contains': lambda t, v: v in t, 'excludes': lambda t, v: v not in t, '=': str.__eq__, '!=': str.__ne__,
+                'startsWith': str.startswith, 'endsWith': str.endswith}[op]
+        if op in ('excludes', '!='):
+            return all(test(t, v) for t in texts for v in values)
+        return any(test(t, v) for t in texts for v in values)
+
+    def rule_matches(self, rule_id, folder_id, offset=0, limit=100):
+        self._need()
+        rule = next((r for r in self.rules if r['id'] == rule_id), None)
+        if rule is None:
+            raise AppError('RPC_REJECTED')
+        conds = rule.get('condictions') or []
+        join = any if rule.get('operator') == 'or' else all
+        rows = sorted((r for r in self.rows.values() if r['fid'] == str(folder_id) and conds and join(self._rule_hit(c, r) for c in conds)),
+                      key=lambda r: r['date'], reverse=True)
+        return {'messages': [self._summary(r) for r in rows[offset:offset + limit]], 'total': len(rows)}
 
     def auto_reply(self):
         self._need()

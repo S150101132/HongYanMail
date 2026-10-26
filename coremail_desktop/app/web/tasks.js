@@ -725,12 +725,40 @@ async function linkMailToTask(m) {
   let rows;
   try { rows = (await api('tasksOverview', { view: 'open' })).rows; } catch (err) { fail(err); return; }
   if (!rows.length) { toast('当前没有未完成任务'); return; }
-  const list = (q) => rows.filter((r) => !q || `#${r.id} ${r.system} ${r.content}`.toLowerCase().includes(q.toLowerCase()))
-    .map((r) => `<button class="tk-pick-row" data-id="${r.id}"><b>#${r.id}</b><span class="tk-sys">${esc(r.system)}</span><span class="tk-pick-text">${esc(r.content)}</span>${tkStatus(r.status)}</button>`).join('');
-  const id = await promptDialog({ title: '关联到任务', text: m.subject || '', body: `<div class="tk-form"><input id="tk-pick-q" type="search" placeholder="筛选：编号、系统或内容" spellcheck="false"><div id="tk-pick" class="tk-pick">${list('')}</div></div>`,
+  // fuzzy: every space-separated word must hit, as a substring (score 2) or as characters in order (score 1)
+  const score = (r, words) => {
+    const hay = `#${r.id} ${r.system} ${r.content}`.toLowerCase();
+    let s = 0;
+    for (const w of words) {
+      if (hay.includes(w)) { s += 2; continue; }
+      let i = 0; for (const ch of hay) if (ch === w[i]) i++;
+      if (i < w.length) return 0;
+      s += 1;
+    }
+    return s || 1;
+  };
+  let shown = rows, at = 0;
+  const list = (q) => {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    shown = rows.map((r) => [r, score(r, words)]).filter(([, s]) => s).sort((a, b) => b[1] - a[1]).map(([r]) => r);
+    at = 0;
+    return shown.length ? shown.map((r, i) => `<button type="button" class="tk-pick-row${i ? '' : ' on'}" data-id="${r.id}"><b>#${r.id}</b><span class="tk-sys">${esc(r.system)}</span><span class="tk-pick-text">${esc(r.content)}</span>${tkStatus(r.status)}</button>`).join('')
+      : '<p class="muted small">没有匹配的任务</p>';
+  };
+  const id = await promptDialog({ title: '关联到任务', text: m.subject || '', body: `<div class="tk-form"><input id="tk-pick-q" type="search" placeholder="搜索：编号、系统或内容（支持模糊，↑↓ 选择，回车确认）" spellcheck="false" autocomplete="off"><div id="tk-pick" class="tk-pick-list">${list('')}</div></div>`,
     onOpen: (dlg, done) => {
-      $('#tk-pick-q', dlg).oninput = (e) => { $('#tk-pick', dlg).innerHTML = list(e.target.value.trim()); };
-      $('#tk-pick', dlg).onclick = (e) => { const b = e.target.closest('[data-id]'); if (b) done(Number(b.dataset.id)); };
+      const q = $('#tk-pick-q', dlg), box = $('#tk-pick', dlg);
+      const move = (d) => {
+        const bs = box.querySelectorAll('.tk-pick-row'); if (!bs.length) return;
+        bs[at].classList.remove('on'); at = (at + d + bs.length) % bs.length;
+        bs[at].classList.add('on'); bs[at].scrollIntoView({ block: 'nearest' });
+      };
+      q.oninput = () => { box.innerHTML = list(q.value.trim()); };
+      q.onkeydown = (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); }
+        else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (shown[at]) done(shown[at].id); }
+      };
+      box.onclick = (e) => { const b = e.target.closest('[data-id]'); if (b) done(Number(b.dataset.id)); };
     } });
   if (!id) return;
   try { await api('taskLink', { id, mid: m.id }); toast(`已关联到任务 #${id}`); loadMailIndex(); if (S.local === 'tasks') loadTasks(); } catch (err) { fail(err); }

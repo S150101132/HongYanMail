@@ -734,6 +734,23 @@ class CoremailAdapter:
     def set_mail_rule_disabled(self,rule_id,disabled):
         # Webmail's on/off switch sends only {id, disabled} through user:updateMailRules.
         return self.update_mail_rule({'id':rule_id,'disabled':bool(disabled)})
+    def rule_matches(self,rule_id,folder_id,offset=0,limit=100):
+        """Mail already in a folder that a saved rule matches, newest first: webmail lists them after
+        saving a rule with mbox:listMessages {fid, ruleConditions:'@<id>'} (S.03931.js setting.filter.letter)."""
+        if type(rule_id) not in (int,str) or offset<0 or not 1<=limit<=100: raise AppError('INVALID_RULE')
+        response=self._call('mbox:listMessages',{'fid':self._fid(folder_id),'ruleConditions':f'@{rule_id}','start':offset,'limit':limit,
+                                                 'mode':'count','order':'date','desc':True,'returnTotal':True,'summaryWindowSize':0},True)
+        value=response.get('var')
+        total=value.get('total') if isinstance(value,dict) else response.get('total')
+        rows=value.get('messages') if isinstance(value,dict) else value
+        if not isinstance(rows,list) or not isinstance(total,int) or total<0: raise AppError('INVALID_RESPONSE')
+        messages=[]
+        for item in rows:
+            if not isinstance(item,dict) or not isinstance(item.get('id'),str) or not item['id']: raise AppError('INVALID_RESPONSE')
+            sender=item.get('from','')
+            if isinstance(sender,list): sender=', '.join(str(x) for x in sender)
+            messages.append(_summary(item,str(item.get('fid',folder_id)),sender))
+        return {'messages':messages,'total':total}
     def auto_reply(self):
         from coremail_desktop.protocol.rules import AUTOREPLY_ATTRS
         value=self._call('user:getAttrs',{'optionalAttrIds':AUTOREPLY_ATTRS+['time_zone']},True).get('var')
