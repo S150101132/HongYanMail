@@ -8,6 +8,23 @@
 
 目标服务器：`https://newmail.inspur.com/coremail/`。`mail.inspur.com` 当前是另一套 Outlook OWA 入口。
 
+## 开发环境搭建
+
+需要 Windows 10/11 和 Python 3.12（3.11 起可用）。程序依赖 Windows DPAPI，只能在 Windows 上运行。
+
+```powershell
+git clone https://github.com/S150101132/HongYanMail.git
+cd HongYanMail
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[build]"     # PySide6、cryptography、bleach、zstandard，以及打包用的 PyInstaller
+.venv\Scripts\python.exe -m coremail_desktop --demo       # 先用合成数据跑起来，不需要账号、不联网
+.venv\Scripts\python.exe -u -m unittest discover -s tests # 全部测试
+```
+
+- 打包生成安装包还需要 [Inno Setup 6](https://jrsoftware.org/isinfo.php)（装到常见位置，或放在 `.tools\InnoSetup`，或设置 `$env:ISCC`）；没有它时 `build.ps1` 只生成免安装文件夹。
+- 连接真实邮箱需要公司 Coremail 账号；证书加密收发还需要本人 `.pfx` 证书。密码、证书、`HongyanData/`、`analysis/*.json` 等均已在 `.gitignore` 中，不要提交。
+- 开发约定、目录说明和真实账号测试规则见 `CLAUDE.md`；下一步做什么见 `docs/roadmap/待实现功能.md` 的「开发顺序」表。
+
 ## 桌面客户端
 
 ```powershell
