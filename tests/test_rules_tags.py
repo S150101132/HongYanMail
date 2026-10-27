@@ -265,6 +265,21 @@ class BackendTest(unittest.TestCase):
             self.assertEqual(caught.exception.code, 'RULE_MATCH_UNVERIFIED')
         self.assertEqual(set(inbox()), set(before))
 
+    def test_server_respelling_of_value_lists_is_confirmed(self):
+        # Webmail-made rules come back as '"a" <x>, "b" <y>'; a respelled list is still the same rule.
+        b, add = self.backend, self.backend.adapter.add_mail_rule
+        def respell(rule):
+            for c in rule['conditions']:
+                if isinstance(c.get('operand'), str):
+                    c['operand'] = ', '.join(v.replace('"', '') for v in c['operand'].split(','))
+            return add(rule)
+        b.adapter.add_mail_rule = respell
+        value = '"MINMIN YANG (杨民民)" <a@example.invalid>,"Luna Chen (陈佳璐)" <B@example.invalid>'
+        saved = b.save_rule({'name': 'two', 'conditions': [{'field': 'from', 'op': '=', 'value': value}], 'actions': [{'type': 'move', 'folder': '100'}]})
+        rule = next(r for r in saved['rules'] if r['id'] == saved['saved'])
+        self.assertEqual(rule['conditions'][0]['value'], 'MINMIN YANG (杨民民) <a@example.invalid>,Luna Chen (陈佳璐) <B@example.invalid>')
+        self.assertFalse(R.same_rule(rule, {**rule, 'conditions': [{'field': 'from', 'op': '=', 'value': 'a@example.invalid'}]}))
+
     def test_unconfirmed_rule_write_is_reported(self):
         self.backend.adapter.add_mail_rule = lambda rule: True  # The server accepts but stores nothing.
         with self.assertRaises(AppError) as caught:

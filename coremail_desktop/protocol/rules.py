@@ -106,7 +106,23 @@ MAX_TEXT = 1000
 def _text_condition(c):
     if c.get('field') not in TEXT_FIELDS or c.get('operator') not in TEXT_OPS or not isinstance(c.get('operand'), str):
         return None
-    return {'field': c['field'], 'op': c['operator'], 'value': c['operand']}
+    # Webmail stores lists as 'a, b'; the page edits them as 'a,b'.
+    return {'field': c['field'], 'op': c['operator'], 'value': ','.join(v.strip() for v in c['operand'].split(',') if v.strip())}
+
+
+def _value_key(field, value):
+    """A list value as the server matches it: an address field by its addresses (extractAddress)."""
+    items = [v.strip() for v in str(value).split(',') if v.strip()]
+    if field in ADDRESS_FIELDS:
+        items = [(re.findall(r'<([^<>]+)>', v) or [v.strip('"\' ')])[-1] for v in items]
+    return sorted({v.casefold() for v in items})
+
+
+def same_rule(a, b):
+    """Whether two rule views mean the same rule, however the server spelled the value lists."""
+    key = lambda r: ([{**c, 'value': _value_key(c['field'], c['value'])} if 'value' in c and c['field'] in TEXT_FIELDS else c for c in r['conditions']],
+                     r['actions'], r['match'], r['stop'], r['enabled'])
+    return key(a) == key(b)
 
 
 ATTACHED = ['attached', 'linkAttached']  # 普通附件 + 超大附件: webmail's "all attachment types".

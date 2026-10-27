@@ -2107,7 +2107,7 @@ class MailBackend:
         return folders, tags
 
     def save_rule(self, rule):
-        from coremail_desktop.protocol.rules import rule_server, rule_view
+        from coremail_desktop.protocol.rules import rule_server, rule_view, same_rule
         self._need('mail_rules')
         rule = dict(rule or {})
         current = self.rules()['rules']
@@ -2124,8 +2124,7 @@ class MailBackend:
         result = self.rules()
         saved = next((r for r in result['rules'] if r['name'] == name), None)
         expected = rule_view(server)
-        if saved is None or [saved[k] for k in ('conditions', 'actions', 'match', 'stop', 'enabled')] != \
-                [expected[k] for k in ('conditions', 'actions', 'match', 'stop', 'enabled')]:
+        if saved is None or not same_rule(saved, expected):
             raise AppError('RULE_UNCONFIRMED')
         return {**result, 'saved': saved['id']}
 
