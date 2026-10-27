@@ -1401,7 +1401,23 @@ function chipEl(addr) {
   el.title = p.email;
   el.innerHTML = `<span>${esc(p.name ? `${p.name}` : p.email)}</span><button tabindex="-1" title="移除">×</button>`;
   el.querySelector('button').onclick = () => { el.remove(); C.dirty = true; renderEncrypt(); };
+  el.draggable = true;
+  el.ondragstart = (e) => { dragChip = el; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.email); el.classList.add('dragging'); };
+  el.ondragend = () => { el.classList.remove('dragging'); dragChip = null; C.dirty = true; renderEncrypt(); };
   return el;
+}
+// Drag a chip to reorder it or move it between 收件人/抄送/密送; it follows the pointer live.
+let dragChip = null;
+function wireChipDrop(box, input) {
+  box.ondragover = (e) => {
+    if (!dragChip) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    const over = e.target.closest('.chip');
+    if (over === dragChip) return;
+    const before = over ? (e.clientX < over.getBoundingClientRect().left + over.offsetWidth / 2 ? over : over.nextSibling) : input;
+    if (before !== dragChip && before !== dragChip.nextSibling) box.insertBefore(dragChip, before);
+  };
+  box.ondrop = (e) => { if (dragChip) e.preventDefault(); };
 }
 function setChips(field, list) {
   const box = $(`.chips[data-field="${field}"]`);
@@ -1411,6 +1427,7 @@ function setChips(field, list) {
   input.type = 'text'; input.spellcheck = false;
   box.appendChild(input);
   wireChipInput(box, input);
+  wireChipDrop(box, input);
   box.onclick = (e) => { if (e.target === box) input.focus(); };
 }
 function addChip(box, input, addr) {

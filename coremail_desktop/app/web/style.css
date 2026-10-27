@@ -329,6 +329,8 @@ button.side-section[aria-expanded="true"] i { transform: rotate(90deg); }
 .chips input { flex: 1; min-width: 160px; border: 0; outline: none; background: transparent; height: 28px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 10px; border-radius: 13px; background: var(--accent-soft); color: var(--text); font-size: var(--fs-sm); max-width: 280px; }
 .chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip[draggable="true"] { cursor: grab; }
+.chip.dragging { opacity: .4; }
 .chip.bad { background: var(--danger-bg); color: var(--danger); }
 .chip button { border: 0; background: transparent; cursor: pointer; width: 18px; height: 18px; border-radius: 50%; color: var(--muted); padding: 0; line-height: 1; }
 .chip button:hover { background: rgba(0,0,0,.08); }
