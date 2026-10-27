@@ -167,6 +167,26 @@ def shell_open(path):
         subprocess.Popen([str(explorer), str(path)], close_fds=True)
     except OSError:
         os.startfile(str(path))  # noqa: S606 -- the user's own 打开; executables are refused before this.
+
+
+def shell_reveal(path):
+    """Show a folder, or a file selected in its folder, in Explorer; nothing is run.
+    False when the path is not there."""
+    import os
+    import subprocess
+    path = str(path or '').strip()[:500]
+    try:
+        path = Path(path).resolve() if path else None
+        if not path or not path.exists():
+            return False
+    except (OSError, ValueError):
+        return False
+    if os.name != 'nt':
+        subprocess.Popen(['xdg-open', str(path if path.is_dir() else path.parent)], close_fds=True)
+        return True
+    explorer = Path(os.environ.get('SystemRoot') or r'C:\Windows') / 'explorer.exe'
+    subprocess.Popen([str(explorer), str(path)] if path.is_dir() else [str(explorer), '/select,' + str(path)], close_fds=True)
+    return True
 SENDER_RE = re.compile(r'(?:[^\s<>@,;*]+|\*)@[^\s<>@,;*]+\.[^\s<>@,;*]+')
 
 
@@ -403,6 +423,7 @@ class MailBackend:
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
         self.trending_get = None  # GitHub Trending (G1): demo and tests pass a stand-in for the network.
         self.news_get = None  # 每日速览 (G2): the same for 36氪's feed.
+        self.net_probe = None  # 网络检测: demo and tests pass a stand-in for the network primitives.
         self._ai_lock = threading.Lock()
         self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
         self._chats = {}  # 问邮箱 conversations, in memory only: id -> {'tools', 'turns', 'shown'}.
@@ -518,6 +539,11 @@ class MailBackend:
     def internal_domains(self):
         """Colleagues are addresses in the account's own mail domains."""
         return sorted({i.rpartition('@')[2].casefold() for i in [self.account or '', *self.identities] if '@' in i})
+
+    def network_check(self):
+        """网络检测 when the server cannot be reached: which link fails (protocol/netcheck.py)."""
+        from coremail_desktop.protocol import netcheck
+        return netcheck.check(self.saved_login()['server'] or 'https://newmail.inspur.com/coremail/', self.net_probe)
 
     def profile(self):
         return {'account': self.account, 'name': self.display_name, 'identities': self.identities,
@@ -2724,7 +2750,7 @@ class MailBackend:
         restarted = bool(chat) and state is None
         if state is None:
             tools = AssistantTools(self._ask_search, self._document, self._ask_match, {},  # Folders: below, each question.
-                                   archive=self._ask_archive if self._archive_folder() else None, auto_allow=self._encrypted_ok,
+                                   archive=self._ask_archive if self._archive_on() else None, auto_allow=self._encrypted_ok,
                                    tasks=self._assist_tasks, task=self._assist_task, mine=self._assist_mine,
                                    pending=self._assist_pending if self._understand_on() else None, plan=self._assist_preview,
                                    thread=self._assist_thread, groups=self._assist_groups,
@@ -3142,13 +3168,20 @@ class MailBackend:
         return self._online(self.adapter.match_contacts, name, 5) if hasattr(self.adapter, 'match_contacts') else []
 
     # 本地存档 -----------------------------------------------------------------
-    # The official client's local archive (archmails/*.cmpack), read-only. Its catalog
-    # is an encrypted SQLite beside the mail cache; originals stay in the packs.
+    # The official client's local archive (archmails/*.cmpack) and an Outlook .pst,
+    # read-only. Their catalog is an encrypted SQLite beside the mail cache; originals
+    # stay in the packs and the .pst.
     def _local_only(self, mid):
         return mid in self._imported or str(mid).startswith('arc:')
 
     def _archive_folder(self):
         return (self.cache.get('archive') or {}).get('folder', '') if self.cache else ''
+
+    def _archive_pst(self):
+        return (self.cache.get('archive') or {}).get('pst', '') if self.cache else ''
+
+    def _archive_on(self):
+        return bool(self._archive_folder() or self._archive_pst())
 
     def _catalog(self):
         from coremail_desktop.archive.catalog import ArchiveCatalog
@@ -3159,34 +3192,37 @@ class MailBackend:
         return self.archive
 
     def _archive_raw(self, mid):
-        folder = self._archive_folder()
-        if not folder:
+        if not self._archive_on():
             raise AppError('ARCHIVE_NOT_FOUND')
-        return self._catalog().raw(folder, mid)
+        return self._catalog().raw(self._archive_folder(), mid, pst=self._archive_pst())
 
     def _archive_summary(self, mid):
         return self._catalog().summary(mid) if str(mid).startswith('arc:') and self.cache is not None else None
 
     def archive_status(self):
-        folder = self._archive_folder()
-        catalog = self._catalog() if folder else None
-        return {'folder': folder, 'messages': len(catalog.rows) if catalog else 0,
+        folder, pst = self._archive_folder(), self._archive_pst()
+        catalog = self._catalog() if folder or pst else None
+        return {'folder': folder, 'pst': pst, 'messages': len(catalog.rows) if catalog else 0,
                 'lastScan': catalog.get('lastScan') if catalog else None, 'scanning': self._archive_scan}
 
-    def set_archive_folder(self, folder=''):
-        """The account folder of the official client (or its archmails); '' turns it off."""
+    def set_archive_folder(self, folder='', pst=None):
+        """The account folder of the official client (or its archmails) and an Outlook .pst
+        file; '' turns one off, pst None keeps it."""
         from coremail_desktop.archive.catalog import archive_dir
-        folder = folder.strip() if isinstance(folder, str) else ''
+        folder = folder.strip().strip('"') if isinstance(folder, str) else ''
         if folder:
             if len(folder) > 500 or not archive_dir(folder).is_dir():
                 raise AppError('ARCHIVE_NOT_FOUND')
-        self.cache.set('archive', {'folder': folder})
+        pst = self._archive_pst() if pst is None else pst.strip().strip('"') if isinstance(pst, str) else ''
+        if pst:
+            if len(pst) > 500 or Path(pst).suffix.lower() != '.pst' or not Path(pst).is_file():
+                raise AppError('ARCHIVE_PST_NOT_FOUND')
+        self.cache.set('archive', {'folder': folder, 'pst': pst})
         return self.archive_status()
 
     def archive_scan(self, progress=None):
         """Bring the catalog up to date (minutes the first time; unchanged packs are skipped)."""
-        folder = self._archive_folder()
-        if not folder:
+        if not self._archive_on():
             raise AppError('ARCHIVE_NOT_FOUND')
         if self._archive_scan is not None:
             raise AppError('ARCHIVE_SCANNING')
@@ -3197,20 +3233,20 @@ class MailBackend:
             if progress:
                 progress({'done': done, 'total': total})
         try:
-            result = self._catalog().scan(folder, step)
+            result = self._catalog().scan(self._archive_folder(), step, pst=self._archive_pst())
         finally:
             self._archive_scan = None
         return {**self.archive_status(), 'failed': result['failed'][:50]}
 
     def archive_view(self, offset=0, limit=5000):
-        if not self._archive_folder():
+        if not self._archive_on():
             return {'rows': [], 'total': 0}
         rows, total = self._catalog().listing(int(offset), max(1, min(int(limit), 5000)))
         return {'rows': rows, 'total': total}
 
     def search_archive(self, query, filters=None):
         """Archived mail matching the search box (every word) and the filters it supports."""
-        if not self._archive_folder():
+        if not self._archive_on():
             return {'rows': [], 'total': 0}
         filters = search_filters(filters)
         if filters.get('to') or filters.get('unread') or filters.get('flagged') or filters.get('folder'):
@@ -3290,6 +3326,21 @@ class MailBackend:
         for link in self._tasks().store.links():
             index.setdefault(link['mid'], []).append(link['task'])
         return index
+
+    def tasks_for_reply(self, mid):
+        """Open tasks to offer closing once a reply or forward to mid went out: linked to that
+        mail, or to mail of the same conversation (subject once Re:/Fwd: are gone)."""
+        from coremail_desktop.tasks.rules import OPEN_STATUSES
+        center = self._tasks()
+        summary = (self.cache.summary(mid) if self.cache else None) or self._archive_summary(mid) or {}
+        key = thread_key(summary.get('subject') or '')
+        ids = []
+        for link in center.store.links():
+            same = link['mid'] == mid or (len(key) >= 6 and thread_key(link.get('subject') or '') == key)
+            if same and link['task'] not in ids:
+                ids.append(link['task'])
+        tasks = center.store.tasks
+        return [{'id': i, 'content': tasks[i]['content']} for i in ids if i in tasks and tasks[i]['status'] in OPEN_STATUSES]
 
     def _task_new_mail(self):
         """{task: [mail]}: newer mail in the conversation of a task's linked mail (same subject

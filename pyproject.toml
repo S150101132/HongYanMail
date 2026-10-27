@@ -7,7 +7,7 @@ name = "coremail-desktop-preview"
 version = "0.1.0a1"
 description = "Independent Coremail Windows desktop preview"
 requires-python = ">=3.11"
-dependencies = ["PySide6==6.12.0", "cryptography==50.0.2", "bleach==6.4.0", "zstandard==0.25.0"]
+dependencies = ["PySide6==6.12.0", "cryptography==50.0.2", "bleach==6.4.0", "zstandard==0.25.0", "libpff-python==20260926"]
 
 [project.optional-dependencies]
 build = ["pyinstaller==6.22.3"]

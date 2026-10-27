@@ -33,6 +33,8 @@ from coremail_desktop.ai.trending import demo_get  # noqa: E402
 backend.trending_get = demo_get  # G1: never the real GitHub.
 from coremail_desktop.app import news  # noqa: E402
 backend.news_get = news.demo_get  # G2: nor 36氪.
+from coremail_desktop.app.demo import DemoNetProbe  # noqa: E402
+backend.net_probe = DemoNetProbe(backend)  # 网络检测 (N1): nor the real network.
 backend.set_prefs({'theme': theme, 'signature': '<b>演示用户</b><br>研发中心 · 产品部<br><span style="color:#2563eb">demo@example.invalid</span>'})
 window = shell.AppShell(backend, demo=True)
 window.resize(width, 900)
@@ -391,6 +393,18 @@ STEPS += [
     (1200, "document.body.offsetWidth", 'r5-list-after'),
 ]
 
+# 网络检测 (N1): server unreachable -> the offline bar says which link failed (HONGYAN_WALK_N1=1).
+N1 = len(STEPS)
+STEPS += [
+    (2500, "selectFolder('1')", None),
+    (300, lambda: setattr(backend.adapter, 'offline', True), None),
+    (300, "loadList(true)", None),
+    (1500, "document.body.offsetWidth", 'n1-offline'),
+    (300, lambda: setattr(backend.adapter, 'offline', False), None),
+    (300, "$('.net-again') && $('.net-again').click()", None),
+    (1200, "document.body.offsetWidth", 'n1-online'),
+]
+
 
 def render_pdf(mid):
     """The same hidden-view path as 导出为 PDF, written into the screenshot folder."""
@@ -427,6 +441,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

@@ -111,6 +111,16 @@ function toast(text, opts = {}) {
 }
 function fail(err) { toast((err && err.message) || '操作未完成，请稍后重试。', { error: true }); }
 
+// Any path shown with class path-link (its data-path) opens in Explorer on click.
+function setPath(el, path) { el.dataset.path = path || ''; el.textContent = path || el.dataset.empty || ''; el.classList.toggle('unset', !path); }
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('.path-link');
+  const path = el && (el.dataset.path || '').trim();
+  if (!path) return;
+  e.preventDefault();
+  api('revealPath', { path }).then((ok) => ok || toast('找不到这个位置，可能已移动或删除', { error: true })).catch(fail);
+});
+
 function showMenu(x, y, items) {
   const m = $('#menu');
   m.innerHTML = '';
@@ -427,19 +437,54 @@ async function loadList(reset) {
     S.rows = reset ? page.rows : dedupe(S.rows.concat(page.rows));
     if (reset) S.counts.clear();  // Conversation sizes are re-read with the fresh page.
     S.total = page.total; S.more = page.more;
-    $('#sync-bar').classList.add('hidden');
+    hideOffline();
     S.loading = false;  // Before rendering, so the footer offers the next page.
     renderList();
     if (reset) api('prefetch', { ids: page.rows.slice(0, 15).map((r) => r.id) }).catch(() => {});
   } catch (err) {
     if (token !== S.listToken) return;
     if (!reset) { S.loading = false; S.moreFailed = true; renderList(); return; }
-    if (S.rows.length) { $('#sync-bar').textContent = '无法连接服务器，正在显示本机缓存。' ; $('#sync-bar').classList.remove('hidden'); }
+    if (S.rows.length) showOffline('无法连接服务器，正在显示本机缓存。');
     else $('#mail-list').innerHTML = `<div class="list-foot">${esc(err.message)}<br><br><button class="btn ghost" onclick="loadList(true)">重试</button></div>`;
   } finally { if (token === S.listToken) S.loading = false; }
   // Still at the bottom (a short page, or the scroll ended while this page loaded): keep going.
   if (token === S.listToken) requestAnimationFrame(loadMoreIfNear);
 }
+// 网络检测: when the offline bar appears, find which link is broken and say so in the bar.
+// Runs once each time the bar appears (not on every failed retry); 「重新检测」 runs it again.
+const NET_STEP = { local: '本机网络', proxy: '代理', dns: '域名解析', tcp: '连接服务器', tls: '安全连接', http: '服务器响应' };
+function netVerdict(r) {
+  const s = r.steps[r.steps.length - 1] || {}, web = r.internet ? '外网正常，' : r.internet === false ? '外网也不通，' : '';
+  if (!r.failed) return '网络检测正常，服务器可以访问：可能只是短暂中断。';
+  if (r.failed === 'local') return '本机没有联网：请检查网线或 Wi-Fi。';
+  if (r.failed === 'proxy') return '系统设置的代理服务器连不上：请检查代理设置或 VPN。';
+  if (r.failed === 'dns') return r.internet === false ? '解析不了邮件服务器地址，外网也不通：本机网络或 DNS 有问题。'
+    : web + '但解析不了邮件服务器地址：可能是 DNS 或 VPN 的问题。';
+  if (r.failed === 'tcp') return r.internet === false ? '连不上邮件服务器，外网也不通：本机网络有问题。'
+    : web + `但连不上邮件服务器（${s.code === 'TIMEOUT' ? '超时' : '被拒绝'}）：可能是防火墙、VPN 或服务器故障。`;
+  if (r.failed === 'tls') return s.code === 'CERT_INVALID' ? '服务器证书校验失败：可能有网络设备拦截了安全连接，或本机时间不对。'
+    : '安全连接（TLS）建立失败：可能被防火墙或代理拦截。';
+  return s.code === 'SERVER_ERROR' ? '连上了服务器，但服务器出错：服务器端故障，请稍后再试或联系 IT。'
+    : '连上了服务器，但没有响应：服务器繁忙，或被代理拦截。';
+}
+function showOffline(text) {
+  const bar = $('#sync-bar'), shown = !bar.classList.contains('hidden') && bar.dataset.net;
+  bar.classList.remove('hidden');
+  if (shown) return;  // Already diagnosed (or diagnosing) this outage.
+  checkNetwork(text);
+}
+function checkNetwork(text) {
+  const bar = $('#sync-bar');
+  bar.dataset.net = '1';
+  bar.innerHTML = `${esc(text)} <span class="muted">正在检测网络…</span>`;
+  api('networkCheck').then((r) => {
+    if (bar.classList.contains('hidden')) return;  // Back online meanwhile.
+    bar.title = r.steps.map((s) => `${NET_STEP[s.step]} ${s.ok ? '✓' : '✗'} ${s.ms}ms`).join('  ·  ');
+    bar.innerHTML = `${esc(text)}<br><b>${esc(netVerdict(r))}</b> <a href="#" class="net-again">${r.failed ? '重新检测' : '重新收信'}</a>`;
+    bar.querySelector('.net-again').onclick = (e) => { e.preventDefault(); r.failed ? checkNetwork(text) : $('#btn-refresh').click(); };
+  }).catch(() => { if (!bar.classList.contains('hidden')) bar.textContent = text; });
+}
+function hideOffline() { const bar = $('#sync-bar'); bar.classList.add('hidden'); delete bar.dataset.net; bar.title = ''; }
 function dedupe(rows) { const seen = new Set(); return rows.filter((r) => !seen.has(r.id) && seen.add(r.id)); }
 
 function visibleRows() {
@@ -1736,14 +1781,38 @@ async function sendMail() {
 }
 function closeComposer(sent) {
   clearInterval(C.timer);
-  $('#composer').classList.add('hidden'); $('#composer').classList.remove('max'); hideSuggest();
+  $('#composer').classList.add('hidden'); $('#composer').classList.remove('max'); placeComposer(null); hideSuggest();
   if (!sent && C.dirty) saveDraft(true).then((res) => res && !res.serverError && toast(res.serverDraftId ? '已保存到服务器草稿箱' : '已保存到本机草稿'));
   if (sent) C.draft = null;
 }
 $('#cmp-send').onclick = sendMail;
 $('#cmp-save').onclick = () => saveDraft(false);
 $('#cmp-close').onclick = () => closeComposer(false);
-$('#cmp-max').onclick = () => $('#composer').classList.toggle('max');
+$('#cmp-max').onclick = () => { placeComposer(null); $('#composer').classList.toggle('max'); };
+// Drag the title bar to move the floating composer; it stays fully on screen. Closing or maximizing resets it.
+function placeComposer(x, y) {
+  const box = $('#composer');
+  if (x == null) { box.style.left = box.style.top = box.style.right = box.style.bottom = ''; return; }
+  const r = box.getBoundingClientRect();
+  box.style.left = Math.round(Math.max(0, Math.min(innerWidth - r.width, x))) + 'px';
+  box.style.top = Math.round(Math.max(0, Math.min(innerHeight - r.height, y))) + 'px';
+  box.style.right = box.style.bottom = 'auto';
+}
+$('#composer .cmp-head').addEventListener('pointerdown', (e) => {
+  const box = $('#composer'), head = e.currentTarget;
+  if (e.button !== 0 || e.target.closest('button, input, a') || box.classList.contains('max') || document.documentElement.classList.contains('reader-only')) return;
+  e.preventDefault();
+  const r = box.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+  head.setPointerCapture(e.pointerId); document.body.classList.add('moving');
+  const move = (ev) => placeComposer(ev.clientX - dx, ev.clientY - dy);
+  const up = () => {
+    head.removeEventListener('pointermove', move); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up);
+    document.body.classList.remove('moving');
+  };
+  head.addEventListener('pointermove', move); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
+});
+$('#composer .cmp-head').addEventListener('dblclick', (e) => { if (!e.target.closest('button') && !document.documentElement.classList.contains('reader-only')) $('#cmp-max').click(); });
+addEventListener('resize', () => { const box = $('#composer'); if (box.style.left) placeComposer(parseFloat(box.style.left), parseFloat(box.style.top)); });
 $('#cmp-discard').onclick = async () => {
   if (!(await confirmDialog('丢弃草稿', '确定丢弃这封邮件吗？本机草稿也会删除。', '丢弃'))) return;
   const id = C.draft && C.draft.localId;
@@ -1778,7 +1847,7 @@ function openSettings() {
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
   renderCertStatus();
   renderAiSettings();  // ai.js: settings open only on a click, after every file has loaded.
-  api('runtimeStatus').then((r) => { $('#runtime-note').classList.toggle('hidden', r.sandboxed); $('#data-dir').textContent = '本机数据（已加密）：' + r.dataDir; }).catch(() => {});
+  api('runtimeStatus').then((r) => { $('#runtime-note').classList.toggle('hidden', r.sandboxed); setPath($('#data-dir'), r.dataDir); }).catch(() => {});
   api('certificateStatus').then((c) => { S.profile.certificate = c; renderCertStatus(); }).catch(() => {});
 }
 function renderSidePicks() {
@@ -1912,10 +1981,10 @@ on('synced', (v) => {
     if (v.total != null) S.total = v.total;
     renderList();
   }
-  $('#sync-bar').classList.add('hidden');
+  hideOffline();
 });
 on('syncError', (err) => {
-  if (err && err.code === 'NETWORK_ERROR') { $('#sync-bar').textContent = '网络不可用，稍后自动重试。正在显示本机缓存。'; $('#sync-bar').classList.remove('hidden'); }
+  if (err && err.code === 'NETWORK_ERROR') showOffline('网络不可用，稍后自动重试。正在显示本机缓存。');
 });
 on('authRequired', () => {
   if (READER_MID) { api('notifyMain', { name: 'authRequired' }).catch(() => {}); api('closeWindow'); return; }

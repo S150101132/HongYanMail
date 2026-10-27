@@ -366,7 +366,8 @@
         <div class="modal-body st-pane st-page hidden" data-pane="account">
           <h3>账号</h3>
           <p class="muted small" id="settings-account"></p>
-          <p class="muted small" id="data-dir"></p>
+          <div class="path-card"><div class="path-item"><div class="path-main"><div class="path-label">本机数据（已加密）</div>
+            <a class="path-link" id="data-dir" data-empty="" title="点击在资源管理器中打开"></a></div></div></div>
           <p class="muted small hidden" id="runtime-note">本机安全软件阻止了浏览器内核沙箱，鸿雁已自动以兼容模式运行。邮件正文仍在禁止脚本、禁止联网的隔离框架中显示。</p>
           <div class="row-gap"><button class="btn ghost" id="btn-quit" title="完全退出鸿雁，不再在后台收信 (Ctrl+Q)">退出鸿雁</button>
             <button class="btn ghost danger" id="btn-logout">退出登录</button></div>
@@ -403,18 +404,22 @@
         </div>
         <div class="modal-body st-pane st-page hidden" data-pane="archive">
           <h3 id="archive-section">本地存档</h3>
-          <p class="muted small">官方 Coremail 客户端「本地存档」里的邮件已不在服务器上。选择它的邮箱文件夹（其中有 archmails 文件夹，例如 D:\work\email\你的邮箱地址）后，鸿雁只读地扫描这些邮件，可以在左侧「本地存档」中浏览，搜索和「问鸿雁」也会包含它们。不会修改官方客户端的任何文件；扫描结果加密保存在本机。</p>
-          <label class="pref-row">文件夹<input id="archive-folder" type="text" spellcheck="false" placeholder="未设置"></label>
+          <p class="muted small">官方 Coremail 客户端「本地存档」里的邮件、以前从 Outlook 导出的 .pst 文件都不在服务器上。选择官方客户端的邮箱文件夹（其中有 archmails 文件夹，例如 D:\work\email\你的邮箱地址）和 / 或 .pst 文件后，鸿雁只读地扫描这些邮件，可以在左侧「本地存档」中浏览，搜索和「问鸿雁」也会包含它们。不会修改这些文件；扫描结果加密保存在本机。.pst 里只收邮件，日程和联系人跳过。</p>
+          <div class="path-card">
+            <div class="path-item"><div class="path-main"><div class="path-label">官方客户端邮箱文件夹</div><a class="path-link" id="archive-folder" data-empty="未设置" title="点击在资源管理器中打开">未设置</a></div><button class="btn ghost" id="archive-pick">更改</button></div>
+            <div class="path-item"><div class="path-main"><div class="path-label">Outlook 数据文件（.pst）</div><a class="path-link" id="archive-pst" data-empty="未设置" title="点击在资源管理器中打开">未设置</a></div><button class="btn ghost" id="archive-pick-pst">更改</button></div>
+          </div>
           <p class="muted small" id="archive-status"></p>
-          <div class="row-gap"><button class="btn ghost" id="archive-pick">选择文件夹…</button><button class="btn ghost" id="archive-save">保存并扫描</button>
+          <div class="row-gap"><button class="btn ghost" id="archive-save">保存并扫描</button>
             <button class="btn ghost" id="archive-rescan">重新扫描</button><button class="btn ghost danger" id="archive-off">停用</button></div>
         </div>
         <div class="modal-body st-pane st-page hidden" data-pane="tasks">
           <h3 id="tasks-section">任务中心</h3>
           <p class="muted small">任务保存在本机加密库中。正式使用时，每次修改后自动导出 未完成任务.xlsx、已完成任务.xlsx 和 任务数据.json 到任务文件夹，由你自己 git 提交。</p>
-          <label class="pref-row">任务文件夹<input id="tasks-folder" type="text" spellcheck="false" placeholder="未设置"></label>
+          <div class="path-card">
+            <div class="path-item"><div class="path-main"><div class="path-label">任务文件夹</div><a class="path-link" id="tasks-folder" data-empty="未设置" title="点击在资源管理器中打开">未设置</a></div><button class="btn ghost" id="tasks-pick">更改</button></div>
+          </div>
           <p class="muted small" id="tasks-status"></p>
-          <div class="row-gap"><button class="btn ghost" id="tasks-pick">选择文件夹…</button></div>
           <div id="tasks-import"><h3>导入与切换</h3>
           <p class="muted small">先「检查并导入」作为演练（任务文件夹不会被修改），确认无误后「切换为正式」。</p>
           <div class="row-gap"><button class="btn ghost" id="tasks-check">检查并导入…</button><button class="btn ghost" id="tasks-live">切换为正式…</button>

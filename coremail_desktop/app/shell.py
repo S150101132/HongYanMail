@@ -50,7 +50,7 @@ BACKEND_METHODS = {
     'setFlags': 'set_flags', 'move': 'move', 'delete': 'delete', 'searchLocal': 'search_local',
     'searchServer': 'search_server', 'suggest': 'suggest', 'compose': 'compose', 'saveDraft': 'save_draft',
     'listDrafts': 'list_drafts', 'restoreDraft': 'restore_draft', 'deleteDraft': 'delete_draft',
-    'send': 'send', 'poll': 'poll', 'prefetch': 'prefetch', 'encryptionCheck': 'encryption_check',
+    'send': 'send', 'poll': 'poll', 'prefetch': 'prefetch', 'networkCheck': 'network_check', 'encryptionCheck': 'encryption_check',
     'certificateStatus': 'certificate_status', 'forgetCertificate': 'forget_certificate',
     'deliveryStatus': 'delivery_status', 'recall': 'recall', 'scheduled': 'scheduled', 'unschedule': 'unschedule',
     'sharedMailboxes': 'shared_mailboxes',
@@ -87,7 +87,7 @@ BACKEND_METHODS = {
     'tasksExport': 'tasks_export', 'tasksResolve': 'tasks_resolve', 'tasksStopLive': 'tasks_stop_live', 'tasksRestore': 'tasks_restore',
     'tasksCompare': 'tasks_compare', 'taskLink': 'task_link', 'taskUnlink': 'task_unlink',
     'tasksCommand': 'tasks_command', 'tasksCommandRun': 'tasks_command_run',
-    'tasksFromMail': 'tasks_from_mail', 'taskUndo': 'task_undo', 'tasksMailIndex': 'tasks_mail_index',
+    'tasksFromMail': 'tasks_from_mail', 'taskUndo': 'task_undo', 'tasksMailIndex': 'tasks_mail_index', 'tasksForReply': 'tasks_for_reply',
     'taskStory': 'task_story', 'taskStoryTitles': 'task_story_titles',
     'tasksNewMail': 'tasks_new_mail', 'tasksAutoMail': 'tasks_auto_mail', 'tasksReport': 'tasks_report',
     'aiEncrypted': 'ai_encrypted', 'setAiEncrypted': 'set_ai_encrypted',
@@ -126,7 +126,7 @@ INTERNAL_METHODS = {'releaseSend': 'release_send'}
 POPOUT_EVENTS = {'mailChanged', 'authRequired'}
 # One-shot documents for printing, served at hongyan://app/print/<token>.html.
 _PRINT_DOCS = {}
-BACKGROUND_METHODS = {'prefetch'}
+BACKGROUND_METHODS = {'prefetch', 'networkCheck'}
 # Sending (encrypting, uploading attachments) takes seconds to minutes: its own thread, so
 # reading and moving mail never waits behind it. 'send' first passes the mail thread, so
 # the composer's earlier saves land before it.
@@ -942,6 +942,16 @@ class AppShell(_PrintHost, QMainWindow):
     def native_pickFolder(self, title=''):
         """A folder chosen by the user ('' when cancelled); only its path goes back."""
         return QFileDialog.getExistingDirectory(self._parent(), str(title)[:60] or '选择文件夹') or ''
+
+    def native_revealPath(self, path=''):
+        """A path shown in the page, opened in Explorer (a file is selected in its folder)."""
+        from coremail_desktop.app.backend import shell_reveal
+        return shell_reveal(path)
+
+    def native_pickPst(self):
+        """An Outlook data file chosen by the user ('' when cancelled); only its path goes back."""
+        path, _ = QFileDialog.getOpenFileName(self._parent(), '选择 Outlook 数据文件', '', 'Outlook 数据文件 (*.pst)')
+        return path or ''
 
     def native_pickFiles(self, images=False):
         if images:

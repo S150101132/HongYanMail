@@ -148,6 +148,8 @@ def run_app(demo=False,minimized=False,eml=None):
         backend.trending_get=demo_get
         from .app import news
         backend.news_get=news.demo_get
+        from .app.demo import DemoNetProbe
+        backend.net_probe=DemoNetProbe(backend)
         backend.login('https://demo.invalid/coremail/','demo@example.invalid','demo',True)
     else:
         from .crypto.service import CryptoService

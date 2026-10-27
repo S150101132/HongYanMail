@@ -16,7 +16,7 @@
 git clone https://github.com/S150101132/HongYanMail.git
 cd HongYanMail
 py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[build]"     # PySide6、cryptography、bleach、zstandard，以及打包用的 PyInstaller
+.venv\Scripts\python.exe -m pip install -e ".[build]"     # PySide6、cryptography、bleach、zstandard、libpff-python，以及打包用的 PyInstaller
 .venv\Scripts\python.exe -m coremail_desktop --demo       # 先用合成数据跑起来，不需要账号、不联网
 .venv\Scripts\python.exe -u -m unittest discover -s tests # 全部测试
 ```

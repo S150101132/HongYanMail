@@ -5,6 +5,7 @@ Like the mail cache, SQLite holds only AES-GCM ciphertext under a DPAPI-wrapped 
 the rows are kept in memory for searching (a few thousand messages). Originals are never
 copied: reading one goes back to its pack (reader.read_record). A pack whose size and
 modification time are unchanged is skipped on the next scan; a changed one is redone.
+An Outlook .pst (archive/pst.py) is one more pack, PST_PACK, its rows found by place.
 """
 import base64
 import binascii
@@ -30,6 +31,7 @@ from coremail_desktop.mime.parser import MAX_DEPTH, _raw_body, _raw_children
 TEXT_CHARS = 12000
 PREVIEW_CHARS = 200
 PACK_NAME = re.compile(r'^[0-9A-Za-z_-]{1,40}\.cmpack$')
+PST_PACK = 'outlook.pst'
 SMIME_TYPES = ('application/pkcs7-mime', 'application/x-pkcs7-mime')
 SIGNATURE_TYPES = ('application/pkcs7-signature', 'application/x-pkcs7-signature')
 
@@ -214,20 +216,23 @@ class ArchiveCatalog:
                 for row in rows:
                     self.rows.setdefault(row['id'], row)  # The same original in two packs: the first stays.
 
-    def scan(self, folder, progress=lambda done, total: None, cancelled=lambda: False):
-        """Bring the catalog up to date with folder's archmails. -> counts and failures
-        (pack and record names with a fixed reason, never content)."""
-        directory = archive_dir(folder)
-        if not directory.is_dir():
+    def scan(self, folder, progress=lambda done, total: None, cancelled=lambda: False, pst=''):
+        """Bring the catalog up to date with folder's archmails and the .pst file (either
+        may be ''). -> counts and failures (pack and record names with a fixed reason,
+        never content)."""
+        directory = archive_dir(folder) if folder else None
+        if directory is not None and not directory.is_dir():
             raise AppError('ARCHIVE_NOT_FOUND')
-        names = sorted(p.name for p in directory.iterdir() if PACK_NAME.match(p.name) and p.is_file())
-        for gone in set(self.packs) - set(names):
+        names = sorted(p.name for p in directory.iterdir() if PACK_NAME.match(p.name) and p.is_file()) if directory else []
+        pst_units = self._pst_units(pst) if pst else 0  # Messages to scan; 1 when unchanged.
+        total = len(names) + pst_units
+        for gone in set(self.packs) - set(names) - ({PST_PACK} if pst else set()):
             self._replace_pack(gone, None, [])
-        result = {'packs': len(names), 'scanned': 0, 'skipped': 0, 'failed': []}
+        result = {'packs': total, 'scanned': 0, 'skipped': 0, 'failed': []}
         for index, name in enumerate(names):
             if cancelled():
                 break
-            progress(index, len(names))
+            progress(index, total)
             path = directory / name
             try:
                 stat = path.stat()
@@ -261,7 +266,9 @@ class ArchiveCatalog:
                 result['failed'].append({'pack': name, 'record': '', 'reason': error.code})
             except OSError:
                 result['failed'].append({'pack': name, 'record': '', 'reason': 'ARCHIVE_NOT_FOUND'})
-        progress(len(names), len(names))
+        if pst and not cancelled():
+            self._scan_pst(pst, result, lambda done: progress(len(names) + min(done, pst_units), total))
+        progress(total, total)
         result['messages'] = len(self.rows)
         result['at'] = datetime.now().strftime('%Y-%m-%d %H:%M')
         # Records still unreadable in skipped packs count too, not only this run's.
@@ -269,16 +276,83 @@ class ArchiveCatalog:
         self.set('lastScan', {k: v for k, v in result.items() if k != 'failed'} | {'failedCount': len(result['failed']) + stale})
         return result
 
+    def _pst_stamp(self, path):
+        stat = Path(path).stat()
+        return [stat.st_size, stat.st_mtime_ns, str(path)]
+
+    def _pst_units(self, path):
+        from coremail_desktop.archive import pst
+        try:
+            if (self.packs.get(PST_PACK) or {}).get('stamp') == self._pst_stamp(path):
+                return 1
+            with pst.PstFile(path) as source:
+                return max(1, source.count())
+        except (AppError, OSError):
+            return 1
+
+    def _scan_pst(self, path, result, step=lambda done: None):
+        from coremail_desktop.archive import pst
+        try:
+            stamp = self._pst_stamp(path)
+            known = self.packs.get(PST_PACK)
+            if known and known['stamp'] == stamp:
+                result['skipped'] += 1
+                return
+            rows, failed, other = [], [], 0
+            with pst.PstFile(path) as source:
+                for done, (place, message) in enumerate(source.messages()):
+                    if done % 25 == 0:
+                        step(done)
+                    record = '/'.join(map(str, place))
+                    try:
+                        if message is None:
+                            raise ValueError
+                        props = pst._props(message)
+                        if not pst.is_mail(props):
+                            other += 1  # Appointments, contacts and the like.
+                            continue
+                        row = pst.describe(message, props, 'arc:' + pst.message_key(message, props)[:24])
+                        row.update(pack=PST_PACK, place=place, check=pst.check(message, props))
+                        rows.append(row)
+                    except AppError as error:
+                        failed.append({'pack': PST_PACK, 'record': record, 'reason': error.code})
+                    except Exception:
+                        failed.append({'pack': PST_PACK, 'record': record, 'reason': 'parse'})
+            self._replace_pack(PST_PACK, {'stamp': stamp, 'count': len(rows), 'failed': len(failed), 'other': other}, rows)
+            result['failed'] += failed
+            result['scanned'] += 1
+        except AppError as error:
+            result['failed'].append({'pack': PST_PACK, 'record': '', 'reason': error.code})
+        except OSError:
+            result['failed'].append({'pack': PST_PACK, 'record': '', 'reason': 'ARCHIVE_NOT_FOUND'})
+
     # Reading -------------------------------------------------------------------
-    def raw(self, folder, mid):
+    def raw(self, folder, mid, pst=''):
         """The original, read again from its pack and checked against the catalog."""
         row = self.rows.get(mid)
         if row is None:
             raise AppError('MESSAGE_UNAVAILABLE')
+        if row['pack'] == PST_PACK:
+            return self._pst_raw(row, pst)
         raw = reader.read_record(archive_dir(folder) / row['pack'], row['offset'], row['length'], row['stamp'])
         if hashlib.sha256(raw).hexdigest() != row['sha256']:
             raise AppError('ARCHIVE_CHANGED')
         return raw
+
+    def _pst_raw(self, row, path):
+        from coremail_desktop.archive import pst
+        stamp = (self.packs.get(PST_PACK) or {}).get('stamp')
+        try:
+            now = self._pst_stamp(path) if path else None
+        except OSError:
+            raise AppError('ARCHIVE_NOT_FOUND')
+        if now is None or stamp != now:
+            raise AppError('ARCHIVE_CHANGED')
+        with pst.PstFile(path) as source:
+            message = source.message(row['place'])
+            if pst.check(message) != row['check']:
+                raise AppError('ARCHIVE_CHANGED')
+            return pst.to_eml(message)
 
     def summary(self, mid):
         """The row as the mail list shows a message (no text)."""

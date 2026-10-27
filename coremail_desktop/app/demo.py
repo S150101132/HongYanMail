@@ -623,6 +623,21 @@ class DemoAdapter:
         return {'answer': answer, 'type': {'tentative': 2, 'accept': 3, 'decline': 4}[answer]}
 
 
+class DemoNetProbe:
+    """网络检测 in demo mode: everything answers, except the server port while the demo
+    adapter is offline (the internet itself still works). No network."""
+    def __init__(self, backend):
+        self.backend = backend
+    def local_address(self): return '192.0.2.10'
+    def proxy(self, scheme): return None
+    def resolve(self, host, port): return [()]
+    def connect(self, host, port):
+        if host != 'www.baidu.com' and getattr(self.backend.adapter, 'offline', False):
+            raise TimeoutError
+    def handshake(self, host, port): pass
+    def get(self, url): return 200
+
+
 PREVIEW_DEMO_ID = 'demo1'
 
 

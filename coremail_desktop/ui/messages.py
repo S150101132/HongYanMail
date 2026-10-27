@@ -168,6 +168,7 @@ MESSAGES = {
     'ARCHIVE_UNSUPPORTED': '本地存档的格式无法识别，已跳过。',
     'ARCHIVE_CHANGED': '本地存档已被官方客户端修改，请在「设置 → 本地存档」中重新扫描。',
     'ARCHIVE_SCANNING': '正在扫描本地存档，请稍候。',
+    'ARCHIVE_PST_NOT_FOUND': '找不到 Outlook 数据文件：请在「设置 → 本地存档」中选择一个 .pst 文件。',
     'TASK_NOT_FOUND': '找不到这条任务，请刷新任务列表。',
     'INVALID_TASK_COMMAND': '请用一句话说明要对任务做什么（不超过 1000 字）。',
     'TASK_MAIL_LIMIT': '一次最多选择 5 封邮件转为任务。',

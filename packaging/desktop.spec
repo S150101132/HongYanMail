@@ -61,9 +61,10 @@ a = Analysis(
     datas=[(str(root / 'coremail_desktop' / 'app' / 'web'), 'coremail_desktop/app/web'),
            (str(root / 'coremail_desktop' / 'app' / 'dictionaries'), 'coremail_desktop/app/dictionaries')],
     # QtPdf renders PDF attachment pages to images for the in-app preview (app/shell.py).
-    # zstandard's C backend is imported by name at run time (本地存档, archive/reader.py).
+    # zstandard's C backend is imported by name at run time (本地存档, archive/reader.py);
+    # pypff (libpff) only when an Outlook .pst is scanned or opened (archive/pst.py).
     hiddenimports=['PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineCore', 'PySide6.QtWebChannel', 'PySide6.QtPdf',
-                   'zstandard.backend_c'],
+                   'zstandard.backend_c', 'pypff'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

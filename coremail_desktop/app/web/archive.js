@@ -1,13 +1,14 @@
 'use strict';
-/* 鸿雁 · 本地存档: the official client's archived mail (read-only), its settings and
+/* 鸿雁 · 本地存档: the official client's archived mail and an Outlook .pst (read-only), its settings and
    scanning. Rows come from the backend's encrypted catalog and open like other mail
    (as read-only messages). Uses app.js globals. */
 
-S.archive = { folder: '', messages: 0, scanning: null };
+S.archive = { folder: '', pst: '', messages: 0, scanning: null };
+const archiveOn = (a) => !!(a.folder || a.pst);
 
 function renderArchiveNav() {
   const a = S.archive;
-  $('#nav-archive').classList.toggle('hidden', !a.folder);
+  $('#nav-archive').classList.toggle('hidden', !archiveOn(a));
   $('#nav-archive').classList.toggle('on', S.local === 'archive');
   $('#archive-count').textContent = a.scanning ? '…' : '';
 }
@@ -15,20 +16,20 @@ const _archiveRenderFolders = renderFolders;
 renderFolders = function () { _archiveRenderFolders(); renderArchiveNav(); };
 
 function archiveStatusText(a) {
-  if (!a.folder) return '未设置。';
-  if (a.scanning) return a.scanning.total ? `正在扫描：${a.scanning.done} / ${a.scanning.total} 个存档包…` : '正在扫描…';
+  if (!archiveOn(a)) return '未设置。';
+  if (a.scanning) return a.scanning.total ? `正在扫描：${Math.floor(100 * a.scanning.done / a.scanning.total)}%…` : '正在扫描…';
   const last = a.lastScan;
   if (!last) return '还没有扫描。';
-  return `已收录 ${a.messages} 封邮件（${last.packs} 个存档包），上次扫描 ${last.at}` +
+  return `已收录 ${a.messages} 封邮件，上次扫描 ${last.at}` +
     (last.failedCount ? `；${last.failedCount} 处无法读取，已跳过` : '') + '。';
 }
 function applyArchiveStatus(a) {
   S.archive = { ...S.archive, ...a };
   if (!$('#settings').classList.contains('hidden') || a.folder !== undefined) {
-    if (document.activeElement !== $('#archive-folder')) $('#archive-folder').value = S.archive.folder || '';
+    setPath($('#archive-folder'), S.archive.folder); setPath($('#archive-pst'), S.archive.pst);
     $('#archive-status').textContent = archiveStatusText(S.archive);
-    $('#archive-rescan').classList.toggle('hidden', !S.archive.folder);
-    $('#archive-off').classList.toggle('hidden', !S.archive.folder);
+    $('#archive-rescan').classList.toggle('hidden', !archiveOn(S.archive));
+    $('#archive-off').classList.toggle('hidden', !archiveOn(S.archive));
   }
   renderArchiveNav();
 }
@@ -73,19 +74,23 @@ const _archiveOpenSettings = openSettings;
 openSettings = function (...args) { const r = _archiveOpenSettings(...args); renderArchiveSettings(); return r; };
 $('#archive-pick').onclick = async () => {
   const folder = await api('pickFolder', { title: '选择官方客户端的邮箱文件夹（其中有 archmails）' }).catch(fail);
-  if (folder) $('#archive-folder').value = folder;
+  if (folder) setPath($('#archive-folder'), folder);
+};
+$('#archive-pick-pst').onclick = async () => {
+  const path = await api('pickPst').catch(fail);
+  if (path) setPath($('#archive-pst'), path);
 };
 $('#archive-save').onclick = async () => {
   try {
-    applyArchiveStatus(await api('setArchiveFolder', { folder: $('#archive-folder').value }));
-    if (S.archive.folder) scanArchive(false); else toast('已停用本地存档');
+    applyArchiveStatus(await api('setArchiveFolder', { folder: $('#archive-folder').dataset.path || '', pst: $('#archive-pst').dataset.path || '' }));
+    if (archiveOn(S.archive)) scanArchive(false); else toast('已停用本地存档');
   } catch (err) { fail(err); }
 };
 $('#archive-rescan').onclick = () => scanArchive(false);
 $('#archive-off').onclick = async () => {
-  if (!(await confirmDialog('停用本地存档', '左侧将不再显示「本地存档」，搜索和问邮箱也不再包含这些邮件。官方客户端的文件不受影响，以后可以重新选择。', '停用'))) return;
+  if (!(await confirmDialog('停用本地存档', '左侧将不再显示「本地存档」，搜索和问邮箱也不再包含这些邮件。官方客户端的文件和 .pst 文件不受影响，以后可以重新选择。', '停用'))) return;
   try {
-    applyArchiveStatus(await api('setArchiveFolder', { folder: '' }));
+    applyArchiveStatus(await api('setArchiveFolder', { folder: '', pst: '' }));
     if (S.local === 'archive') selectFolder(S.folderId);
   } catch (err) { fail(err); }
 };
@@ -97,7 +102,7 @@ enterApp = async function (...args) {
   try {
     const status = await api('archiveStatus');
     applyArchiveStatus(status);
-    if (status.folder && status.lastScan) setTimeout(() => scanArchive(true), 8000);
+    if (archiveOn(status) && status.lastScan) setTimeout(() => scanArchive(true), 8000);
   } catch (e) { /* The archive is optional. */ }
   return r;
 };

@@ -509,6 +509,20 @@ class CommandTests(unittest.TestCase):
         self.assertEqual({r['id']: r['newMail'] for r in self.backend.tasks_overview('open')['rows']}[302], 1)
         self.assertTrue(link['subject'])
 
+    def test_a_reply_offers_closing_the_linked_task(self):
+        self.backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'demo', True)
+        mail = self.backend.open_message('demo1', mark_read=False)
+        self.assertEqual(self.backend.tasks_for_reply('demo1'), [])
+        self.backend.task_link(302, 'demo1')
+        later = {'id': 'later1', 'fid': '1', 'subject': 'Re: ' + mail['subject'], 'from': 'x@example.invalid', 'fromName': 'X',
+                 'to': '', 'date': '2099-01-01 10:00:00', 'ts': 4070908800.0, 'preview': '', 'size': 1, 'flags': {}, 'tags': []}
+        self.backend.cache.put_summaries('1', [later])
+        for mid in ('demo1', 'later1'):  # The linked mail itself, or a later one of its conversation.
+            self.assertEqual([t['id'] for t in self.backend.tasks_for_reply(mid)], [302])
+        center = self.backend.tasks
+        center.complete(302, center.get(302)['rev'])
+        self.assertEqual(self.backend.tasks_for_reply('demo1'), [])  # Closed already: nothing to offer.
+
     def test_undo_restores_only_the_latest_change(self):
         center = self.backend.tasks
         center.progress(302, center.get(302)['rev'], '第一条')

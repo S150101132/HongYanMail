@@ -70,7 +70,8 @@ function renderTaskList() {
     </div>`).join('') : `<div class="list-foot">${TK.query || TK.ids ? '没有符合条件的任务' : TK.view === 'open' ? '当前无未完成任务' : '没有任务'}</div>`;
   const ex = st.export || {};
   const where = st.mode === 'live' ? '任务文件夹' : '演练文件夹';
-  const line = ex.state === 'ok' ? `已导出到${where}${ex.at ? ' · ' + esc(ex.at.slice(5, 16)) : ''}` : ex.state === 'locked' ? '待导出：Excel 正在打开任务文件'
+  const whereLink = st.mode === 'live' && st.folder ? `<a class="path-link" data-path="${esc(st.folder)}" title="点击在资源管理器中打开">${where}</a>` : where;
+  const line = ex.state === 'ok' ? `已导出到${whereLink}${ex.at ? ' · ' + esc(ex.at.slice(5, 16)) : ''}` : ex.state === 'locked' ? '待导出：Excel 正在打开任务文件'
     : ex.state === 'external' ? '导出已暂停：任务文件在外部被改过' : ex.state === 'in_use' ? '待导出：任务文件被其他程序占用'
     : ex.state === 'denied' ? '待导出：没有写入任务文件夹的权限' : ex.state === 'failed' ? '导出没有成功' : '';
   $('#tk-foot').innerHTML = `<span class="muted small">${line}</span><span class="spacer"></span><button class="link-btn" id="tk-verify">核验清单</button>`;
@@ -592,6 +593,25 @@ function planItem(p, pick, on = true) {
   return `<div class="tk-plan-item${p.error || !changes || !on ? ' off' : ''}">${head}${body}</div>`;
 }
 
+// 回复后提醒关闭任务: a reply or forward to mail linked to an open task (or of its conversation)
+// went out; the toast offers 标记完成, which opens the usual dialog in 任务. Never by itself.
+const _tkSendOutcome = sendOutcome;
+sendOutcome = function (res, meta = {}) { _tkSendOutcome(res, meta); tkAfterReply(res, meta); };
+async function tkAfterReply(res, meta) {
+  if (READER_MID || !meta.source || !['Accepted', 'Queued'].includes(res.state)) return;
+  let open;
+  try { open = await api('tasksForReply', { mid: meta.source }); } catch { return; }
+  for (const t of open.slice(0, 3)) {
+    toast(`邮件已${meta.how === 'forward' ? '转发' : '回复'}。任务 #${t.id}「${t.content.slice(0, 24)}」要关闭吗？`, { ms: 12000,
+      action: { label: '关闭任务', run: () => tkCloseFromMail(t.id) } });
+  }
+}
+async function tkCloseFromMail(id) {
+  await openTask(id);
+  for (let i = 0; i < 40 && !(TK.detail && TK.detail.task.id === id); i++) await new Promise((r) => setTimeout(r, 50));
+  if (TK.detail && TK.detail.task.id === id && TK_OPEN.includes(TK.detail.task.status)) taskAction('complete');
+}
+
 // ---------------------------------------------------------------- 邮件 → 任务（AI）
 function mailTaskItems(ids, m) {
   const one = ids.length === 1;
@@ -774,8 +794,7 @@ function taskStatusText(st) {
 }
 function applyTaskStatus(st) {
   TK.status = st;
-  if (document.activeElement !== $('#tasks-folder') && !$('#tasks-folder').dataset.edited) $('#tasks-folder').value = st.folder || '';
-  $('#tasks-folder').disabled = st.mode === 'live';
+  if (!$('#tasks-folder').dataset.edited) setPath($('#tasks-folder'), st.folder);
   $('#tasks-pick').classList.toggle('hidden', st.mode === 'live');
   $('#tasks-status').textContent = taskStatusText(st);
   $('#tasks-import').classList.toggle('hidden', st.mode === 'live');
@@ -784,20 +803,18 @@ function applyTaskStatus(st) {
   $('#tasks-export-now').classList.toggle('hidden', st.mode === 'off');
   if (TK.counts == null && st.counts) { TK.counts = st.counts; renderTasksNav(); }
 }
-async function saveTaskFolder() {  // Only a folder the user typed or picked (not a field still loading).
+async function saveTaskFolder() {  // Only a folder the user picked (not a field still loading).
   const box = $('#tasks-folder');
   if (!box.dataset.edited) return;
   delete box.dataset.edited;
-  applyTaskStatus(await api('tasksSetFolder', { folder: box.value.trim() }));
+  applyTaskStatus(await api('tasksSetFolder', { folder: box.dataset.path || '' }));
 }
 function openTaskSettings() { openSettings('tasks'); }
 const _tasksOpenSettings = openSettings;
 openSettings = function (...args) { const r = _tasksOpenSettings(...args); api('tasksStatus').then(applyTaskStatus).catch(() => {}); return r; };
-$('#tasks-folder').addEventListener('input', () => { $('#tasks-folder').dataset.edited = '1'; });
-$('#tasks-folder').addEventListener('change', () => saveTaskFolder().catch(fail));
 $('#tasks-pick').onclick = async () => {
   const folder = await api('pickFolder', { title: '选择任务文件夹（其中有 未完成任务.xlsx 和 已完成任务.xlsx）' }).catch(fail);
-  if (folder) { $('#tasks-folder').value = folder; $('#tasks-folder').dataset.edited = '1'; saveTaskFolder().catch(fail); }
+  if (folder) { setPath($('#tasks-folder'), folder); $('#tasks-folder').dataset.edited = '1'; saveTaskFolder().catch(fail); }
 };
 
 function reportBody(p) {
