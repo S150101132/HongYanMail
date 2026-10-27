@@ -228,6 +228,16 @@ class SpellingTest(unittest.TestCase):
         self.assertIn("api('replaceMisspelled'", (WEB / 'compose.js').read_text(encoding='utf-8'))
         self.assertIn("'coremail_desktop/app/dictionaries'", (WEB.parents[2] / 'packaging' / 'desktop.spec').read_text(encoding='utf-8'))
 
+    def test_pictures_in_mail_bodies_can_be_copied(self):
+        # Right-click a picture (reader, its window, attached mail) → 复制图片; a selected picture
+        # copies as itself, not as the whole mail.
+        from coremail_desktop.app import shell
+        self.assertTrue(hasattr(shell.ReaderWindow, 'native_copyImage') and hasattr(shell.AppShell, 'native_copyImage'))
+        app = (WEB / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("on('imageMenu'", app)
+        self.assertIn("api('copyImage')", app)
+        self.assertIn('sel && !sel.isCollapsed', app)
+
 
 if __name__ == '__main__':
     unittest.main()

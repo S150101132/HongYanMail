@@ -19,7 +19,7 @@ from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QMarginsF, QMi
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QPageLayout, QPageSize, QShortcut
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWebEngineCore import (QWebEnginePage, QWebEngineProfile, QWebEngineSettings,
+from PySide6.QtWebEngineCore import (QWebEngineContextMenuRequest, QWebEnginePage, QWebEngineProfile, QWebEngineSettings,
                                      QWebEngineUrlRequestInfo, QWebEngineUrlRequestInterceptor,
                                      QWebEngineUrlRequestJob, QWebEngineUrlScheme, QWebEngineUrlSchemeHandler)
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -274,13 +274,17 @@ def _make_web(owner):
 
 def _spelling_menu(view, bridge):
     """No Chromium menu: the page draws its own. A right-click on a misspelled word in the
-    composer (spellcheck on, page did not take the click) sends the suggestions to it."""
+    composer (spellcheck on, page did not take the click) sends the suggestions to it; one
+    on a picture in a mail body asks the page for its 复制图片 menu (native copyImage)."""
     view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
-    def requested(_pos):
+    def requested(pos):
         request = view.lastContextMenuRequest()
-        if request is not None and request.isContentEditable() and request.misspelledWord():
+        if request is None: return
+        if request.isContentEditable() and request.misspelledWord():
             bridge.emit_event('spelling', {'word': request.misspelledWord(), 'suggestions': list(request.spellCheckerSuggestions())[:6]})
+        elif request.mediaType() == QWebEngineContextMenuRequest.MediaType.MediaTypeImage and not request.isContentEditable():
+            bridge.emit_event('imageMenu', {'x': pos.x(), 'y': pos.y()})
     view.customContextMenuRequested.connect(requested)
 
 
@@ -515,6 +519,10 @@ class ReaderWindow(_PrintHost, QMainWindow):
 
     def native_replaceMisspelled(self, word=''):
         self.page.replaceMisspelledWord(str(word))
+        return True
+
+    def native_copyImage(self):
+        self.page.triggerAction(QWebEnginePage.WebAction.CopyImageToClipboard)  # The picture of the last right-click.
         return True
 
     def native_findText(self, text='', backward=False):
@@ -1029,6 +1037,10 @@ class AppShell(_PrintHost, QMainWindow):
 
     def native_replaceMisspelled(self, word=''):
         self.page.replaceMisspelledWord(str(word))
+        return True
+
+    def native_copyImage(self):
+        self.page.triggerAction(QWebEnginePage.WebAction.CopyImageToClipboard)  # The picture of the last right-click.
         return True
 
     def native_findText(self, text='', backward=False):

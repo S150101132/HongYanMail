@@ -1520,7 +1520,9 @@ class MailBackend:
         shared = [b['email'] for b in self._shared.values() if b.get('send')]
         return own + [a for a in shared if a.casefold() not in {o.casefold() for o in own}]
 
-    def compose(self, mode='new', mid=None, mailbox=None):
+    def compose(self, mode='new', mid=None, mailbox=None, mids=None):
+        if mode == 'forward_attach' and mids:
+            mid = mids[0]  # Several selected mails: all go as .eml attachments of one message.
         box = self._locate(mid)[1] if mid else (mailbox if mailbox in self._shared else None)
         info = self._shared.get(box) if box else None
         own = self._from_choices()[0]
@@ -1548,12 +1550,21 @@ class MailBackend:
         if mode == 'forward_attach':
             # 作为附件转发: the original exactly as stored (an encrypted one stays encrypted).
             subject = next(iter(document.headers.get('subject', ())), '')
-            raw = self._raw(mid)
+            ids = list(dict.fromkeys(mids or [mid]))
+            attachments, names, encrypted = [], set(), False
+            for one in ids:
+                raw, stem = self._raw(one), self.file_stem(one)
+                name, k = stem + '.eml', 2
+                while name.casefold() in names:  # Same subject twice: keep both files.
+                    name, k = f'{stem} ({k}).eml', k + 1
+                names.add(name.casefold())
+                attachments.append({'name': name, 'type': 'message/rfc822', 'size': len(raw),
+                                    'data': base64.b64encode(raw).decode('ascii')})
+                encrypted = encrypted or (self._document(one) if one != mid else document).encryption_state != 'none'
+            more = f' 等 {len(ids)} 封' if len(ids) > 1 else ''
             return {**base, 'mode': 'forward', 'title': 'forward_attach',
-                    'subject': ('' if subject.lower().startswith('fwd:') else 'Fwd: ') + subject,
-                    'attachments': [{'name': self.file_stem(mid) + '.eml', 'type': 'message/rfc822', 'size': len(raw),
-                                     'data': base64.b64encode(raw).decode('ascii')}],
-                    'encryptedOriginal': document.encryption_state != 'none'}
+                    'subject': ('' if subject.lower().startswith('fwd:') else 'Fwd: ') + subject + more,
+                    'attachments': attachments, 'encryptedOriginal': encrypted}
         if mode == 'forward':
             subject = next(iter(document.headers.get('subject', ())), '')
             attachments = [{'name': a.name, 'type': a.media_type, 'size': len(document.attachment_payloads[a.part_id]),

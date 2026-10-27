@@ -644,6 +644,7 @@ $('#mail-list').addEventListener('contextmenu', (e) => {
       { label: '添加星标', icon: 'star', run: () => batchFlags({ flagged: true }), write: true },
       { label: '取消星标', icon: 'star', run: () => batchFlags({ flagged: false }), write: true },
       { label: '移动到…', icon: 'folder', run: () => pickBatchFolder(), write: true },
+      { label: `作为附件转发（${S.multi.size} 封）`, icon: 'clip', run: () => startCompose('forward_attach', null, {}, [...S.multi]) },
       ...(typeof mailTaskItems === 'function' ? mailTaskItems([...S.multi]) : []),
       '-',
       { label: '删除', icon: 'trash', run: () => batchMove(null, { delete: true }), write: true },
@@ -1042,7 +1043,8 @@ async function exportPdf(m) {
 // a chat or another mail. Selected text still copies as text. Encrypted mail goes as its original.
 function copyMail(e) {
   const t = e.target, doc = (t && t.ownerDocument) || document;
-  if (isTyping(t) || String(doc.getSelection() || '').trim()) return false;
+  const sel = doc.getSelection();
+  if (isTyping(t) || (sel && !sel.isCollapsed)) return false;  // A selection (text or a picture) copies as itself.
   const ids = !READER_MID && S.multi.size >= 2 ? [...S.multi]
     : S.message && (READER_MID || !$('#reader-body').classList.contains('hidden')) ? [S.message.id] : [];
   if (!ids.length) return false;
@@ -1052,6 +1054,8 @@ function copyMail(e) {
     (sealed ? '（加密原件，对方需要证书才能打开）' : '') + '，可以粘贴到文件夹或聊天窗口')).catch(fail);
   return true;
 }
+// Right-click on a picture in a mail body (main reader or its own window, attached mail too).
+on('imageMenu', ({ x, y }) => showMenu(x, y, [{ label: '复制图片', icon: 'copy', run: () => api('copyImage').then(() => toast('已复制图片')).catch(fail) }]));
 // 精简工具栏 (A4): the buttons folded away in scope, as they stand for this mail (sent, scheduled,
 // read-only), offered as menu items that click them — the same handlers and checks as on the bar
 // (总结 opens its menu at ⋯ when its own button is folded).
@@ -1188,7 +1192,7 @@ $('#reader-multi').addEventListener('click', (e) => {
   ({
     read: () => batchFlags({ read: true }), unread: () => batchFlags({ read: false }),
     flag: () => batchFlags({ flagged: !(rows.length && rows.every((r) => r.flags.flagged)) }),
-    move: () => pickBatchFolder(), delete: () => batchMove(null, { delete: true }), clear: () => clearSelection(),
+    move: () => pickBatchFolder(), attach: () => startCompose('forward_attach', null, {}, [...S.multi]), delete: () => batchMove(null, { delete: true }), clear: () => clearSelection(),
   }[b.dataset.batch] || (() => {}))();
 });
 
@@ -1346,13 +1350,13 @@ async function deleteLocalDraft(id) {
 
 // ---------------------------------------------------------------- composer
 const C = { draft: null, dirty: false, timer: null, fields: {} };
-async function startCompose(mode, mid, extra = {}) {
+async function startCompose(mode, mid, extra = {}, mids = null) {
   if (C.draft && !$('#composer').classList.contains('hidden')) {
     if (C.dirty) await saveDraft(true);
   }
   try {
-    const box = mode === 'new' && !mid ? currentBox() : null;
-    const draft = await api('compose', box ? { mode, mid, mailbox: box.id } : { mode, mid });
+    const box = mode === 'new' && !mid && !mids ? currentBox() : null;
+    const draft = await api('compose', box ? { mode, mid, mailbox: box.id } : mids ? { mode, mids } : { mode, mid });
     if (mid && mode !== 'new') draft.sourceMid = mid;  // 已回复 / 已转发 on its 要我做 card (understand.js) once it goes out.
     Object.assign(draft, extra);
     openComposer(draft);

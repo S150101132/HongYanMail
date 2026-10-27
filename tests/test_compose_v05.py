@@ -419,6 +419,14 @@ class ForwardAndImportTest(Base):
         self.assertEqual(self.backend.send(value)['state'], 'Accepted')
         self.assertEqual(self.adapter.sent[0].attachments[0].media_type, 'message/rfc822')
 
+    def test_forward_several_as_attachments_in_one_message(self):
+        ids = [r['id'] for r in self.backend.messages('1', 0, 3)['rows']]
+        value = self.backend.compose('forward_attach', mids=ids)
+        self.assertEqual(value['title'], 'forward_attach')
+        self.assertIn(f'等 {len(ids)} 封', value['subject'])
+        self.assertEqual([base64.b64decode(a['data']) for a in value['attachments']], [self.backend._raw(i) for i in ids])
+        self.assertEqual(len({a['name'] for a in value['attachments']}), len(ids))
+
     def test_forward_as_attachment_of_encrypted_mail_keeps_it_encrypted(self):
         mid = self.backend.messages('1', 0, 1)['rows'][0]['id']
         envelope = (b'From: a@example.invalid\r\nTo: demo@example.invalid\r\nSubject: x\r\nMIME-Version: 1.0\r\n'
