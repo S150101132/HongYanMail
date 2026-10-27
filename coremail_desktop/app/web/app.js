@@ -814,6 +814,15 @@ function renderMessage(m) {
   avatar($('#r-avatar'), from.name, from.email);
   const d = m.date ? new Date(String(m.date).replace(' ', 'T')) : null;
   $('#r-date').textContent = d && !isNaN(d) ? longDate(d) : (m.date || '');
+  // Held on the way (the backend only sends sentDate for a gap of 30 minutes or more): show when it left.
+  const s = m.sentDate ? new Date(String(m.sentDate).replace(' ', 'T')) : null;
+  if (s && !isNaN(s) && d && !isNaN(d)) {
+    const mins = Math.round(Math.abs(d - s) / 60000), gap = mins >= 60 ? `${Math.floor(mins / 60)} 小时${mins % 60 ? ` ${mins % 60} 分` : ''}` : `${mins} 分钟`;
+    const sameDay = s.toDateString() === d.toDateString();
+    $('#r-date').append(Object.assign(document.createElement('div'), {
+      className: 'r-sent', title: '对方邮件里写的发出时间；上面是服务器收到的时间',
+      textContent: `对方 ${sameDay ? s.toTimeString().slice(0, 5) : longDate(s)} 发出 · ${s < d ? '晚到' : '时间相差'} ${gap}` }));
+  }
   renderRecipients(m);
   renderFlagButton();
   const role = (folderById(m.fid) || {}).role;

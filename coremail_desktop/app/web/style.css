@@ -272,6 +272,7 @@ button.side-section[aria-expanded="true"] i { transform: rotate(90deg); }
 .r-recipients .r-more { flex: none; color: var(--accent); cursor: pointer; white-space: nowrap; }
 .r-recipients a { color: var(--accent); cursor: pointer; }
 .r-date { white-space: nowrap; }
+.r-sent { text-align: right; margin-top: 2px; color: var(--warn); }
 .r-sec { display: flex; gap: 4px; align-items: center; color: var(--accent); }
 .r-sec:empty { display: none; }
 .r-sec-ic { display: inline-flex; cursor: help; }

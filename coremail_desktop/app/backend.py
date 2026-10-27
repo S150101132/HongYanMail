@@ -187,6 +187,22 @@ def _schedule_ms(iso):
     return int(datetime.strptime(iso, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc).timestamp() * 1000) if iso else None
 
 
+SENT_GAP = timedelta(minutes=30)
+
+
+def _sent_date(header_date, received):
+    """The sender's Date header as a server-zone string, when it is SENT_GAP or more away
+    from the server's received time (a mail held on the way); otherwise ''."""
+    from email.utils import parsedate_to_datetime
+    from coremail_desktop.protocol.coremail import RESPONSE_ZONE
+    try:
+        sent = parsedate_to_datetime(header_date).astimezone(RESPONSE_ZONE)
+        got = datetime.strptime(str(received)[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=RESPONSE_ZONE)
+    except (TypeError, ValueError, IndexError):
+        return ''
+    return sent.strftime('%Y-%m-%d %H:%M:%S') if abs(got - sent) >= SENT_GAP else ''
+
+
 def _image_uri(raw, limit=256 * 1024):
     """A head image as a data: URI, only for real PNG/JPEG/GIF bytes of sane size."""
     if not isinstance(raw, (bytes, bytearray)) or not raw or len(raw) > limit:
@@ -763,6 +779,7 @@ class MailBackend:
         result = {'id': mid, 'fid': summary.get('fid'), 'subject': header('subject') or summary.get('subject', ''),
                   'from': _people(header('from')), 'to': _people(header('to')), 'cc': _people(header('cc')),
                   'replyTo': _people(header('reply-to')), 'date': summary.get('date') or header('date'),
+                  'sentDate': _sent_date(header('date'), summary['date']) if summary.get('date') else '',
                   'html': body_html, 'text': document.text, 'hasRemoteImages': remote,
                   'encryption': document.encryption_state, 'signature': self._signature_view(document),
                   'aiAllowed': document.encryption_state == 'decrypted' and self._encrypted_ok(mid),
