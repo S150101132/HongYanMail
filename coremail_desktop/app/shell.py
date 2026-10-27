@@ -76,8 +76,8 @@ BACKEND_METHODS = {
     'assistantDraftCompose': 'assistant_draft_compose', 'assistantDraftWrite': 'assistant_draft_write', 'assistantSent': 'assistant_sent',
     'assistantNudge': 'assistant_nudge', 'assistantNudgeDismiss': 'assistant_nudge_dismiss', 'assistantLinkRun': 'assistant_link_run',
     'assistantMailRun': 'assistant_mail_run', 'assistantMailUndo': 'assistant_mail_undo',
-    'rewrite': 'rewrite', 'replyIdeas': 'reply_ideas', 'draftReply': 'draft_reply', 'cancelAi': 'cancel_ai',
-    'precheck': 'precheck', 'checkDraft': 'check_draft', 'threadAiStatus': 'thread_ai_status', 'summarizeThread': 'summarize_thread',
+    'replyIdeas': 'reply_ideas', 'draftReply': 'draft_reply', 'writeFromNote': 'write_from_note', 'cancelAi': 'cancel_ai',
+    'precheck': 'precheck', 'threadAiStatus': 'thread_ai_status', 'summarizeThread': 'summarize_thread',
     'archiveStatus': 'archive_status', 'setArchiveFolder': 'set_archive_folder', 'archiveScan': 'archive_scan',
     'archiveView': 'archive_view', 'searchArchive': 'search_archive',
     'tasksStatus': 'tasks_status', 'tasksSetFolder': 'tasks_set_folder', 'tasksOverview': 'tasks_overview', 'taskGet': 'task_get',
@@ -110,10 +110,10 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
                 'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
-              'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
+              'replyIdeas', 'draftReply', 'writeFromNote', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
               'memoryWeekBrief', 'trending', 'dailyNews'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
-STREAM_METHODS = {'rewrite', 'draftReply', 'assistantDraftWrite'}
+STREAM_METHODS = {'draftReply', 'writeFromNote', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
 ARCHIVE_METHODS = {'archiveScan'}
 # 任务中心: one thread, so every task change and its export run one after another.

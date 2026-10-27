@@ -2579,14 +2579,7 @@ class MailBackend:
         self._ai_cancel.set()
         return True
 
-    # 写信助手 / 帮我起草回复 / 发送前检查 (ai/writing.py, ai/precheck.py) ----------
-    def rewrite(self, text, mode, instruction='', req='', progress=None):
-        """The user's own words rewritten (润色、改语气、翻译), streamed. Only what the page
-        sends: it leaves out the signature and the quoted original."""
-        from coremail_desktop.ai.writing import WRITE_TOKENS, rewrite_messages, tidy_draft
-        messages = rewrite_messages(text, mode, instruction)
-        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
-
+    # AI 写信 / 帮我起草回复 / 发送前检查 (ai/writing.py, ai/precheck.py) ----------
     def reply_ideas(self, mid, allow_encrypted=False):
         """2–3 directions to answer this mail ({label, hint})."""
         from coremail_desktop.ai.writing import IDEA_TOKENS, idea_messages, parse_ideas
@@ -2611,6 +2604,32 @@ class MailBackend:
         messages = draft_messages(document, idea, note, (self.cache.summary(mid) or {}).get('date') or '')
         return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
 
+    def write_from_note(self, note, subject='', to=(), cc=(), mid='', how='new', allow_encrypted=False, rounds=(),
+                        req='', progress=None):
+        """口述成信: the user's words into a whole mail body, streamed. to/cc: addresses; only
+        names and （同事）/（外部） go to the AI. mid: the mail being answered or forwarded —
+        left out when it is not on this computer. rounds: [{'text', 'want'}] earlier versions
+        and the user's 修改意见 on each, to go on from."""
+        from coremail_desktop.ai.writing import WRITE_TOKENS, note_messages, tidy_draft
+        if not all(isinstance(v, (list, tuple)) for v in (to, cc, rounds)) or not all(isinstance(r, dict) for r in rounds):
+            raise AppError('AI_INVALID_INPUT')
+        rounds = [(r.get('text'), r.get('want')) for r in rounds]
+        self._ai()  # Not configured: say so before anything else.
+        inside = set(self.internal_domains())
+        who = lambda items: [f'{(p.get("name") or str(p.get("email") or "").partition("@")[0])[:80]}'
+                             f'（{"同事" if str(p.get("email") or "").rpartition("@")[2].casefold() in inside else "外部"}）'
+                             for p in items[:20] if isinstance(p, dict)]
+        document, date = None, ''
+        if mid and self.cache is not None:
+            try:
+                document, _ = self._ai_document(str(mid), allow_encrypted)
+                date = (self.cache.summary(str(mid)) or {}).get('date') or ''
+            except AppError as error:
+                if error.code not in ('AI_MAIL_UNAVAILABLE', 'CERT_LOCKED'):
+                    raise
+        messages = note_messages(note, subject, who(to), who(cc), document, date, how, rounds)
+        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
+
     def precheck(self, text, to=(), recipients=()):
         """本机发送前检查 (no network): past dates, a greeting naming nobody in 主送, outside
         addresses in the body. to: [{'name','email'}]; recipients: every address."""
@@ -2621,15 +2640,6 @@ class MailBackend:
               for p in to[:200] if isinstance(p, dict)]
         return {'issues': check(text[:50000], to, [str(r)[:320] for r in recipients[:500]], self.internal_domains(),
                                 datetime.now().date())}
-
-    def check_draft(self, subject='', to=(), cc=(), text='', attachments=()):
-        """AI 发送前检查: problems to look at, never changes. to/cc: display names and domains."""
-        from coremail_desktop.ai.writing import CHECK_TOKENS, check_messages, parse_issues
-        if not all(isinstance(v, (list, tuple)) for v in (to, cc, attachments)):
-            raise AppError('AI_INVALID_INPUT')
-        messages = check_messages(subject, list(to), list(cc), text, list(attachments), datetime.now().strftime('%Y-%m-%d'))
-        content, _ = self._ai_call(messages, max_tokens=CHECK_TOKENS, json_mode=True)
-        return {'issues': parse_issues(content, text)}
 
     # 总结整个会话 (ai/thread.py) ---------------------------------------------------
     def thread_ai_status(self, mid):

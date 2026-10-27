@@ -175,9 +175,8 @@ function aiBusy(text) {
 }
 
 // ---------------------------------------------------------------- 写信助手
-// Only the user's own words: the selection, or the body above the signature and the
-// quoted original. Those two never go to the AI service.
-const AI_MODES = [['polish', '润色'], ['formal', '更正式'], ['concise', '更简洁'], ['polite', '更客气'], ['en', '译成英文'], ['zh', '译成中文']];
+// The AI button: the user's words above the signature (the signature never goes to the
+// AI service) written into a mail, then changed by talking to it until the user is happy.
 
 function bodyRange() {
   const ed = $('#cmp-editor'), range = document.createRange();
@@ -188,11 +187,6 @@ function bodyRange() {
     stop.previousSibling.nodeType === Node.TEXT_NODE)) stop = stop.previousSibling;
   if (stop) range.setEndBefore(stop);
   return range;
-}
-function ownRange() {
-  const ed = $('#cmp-editor'), sel = getSelection();
-  if (sel.rangeCount && !sel.isCollapsed && ed.contains(sel.getRangeAt(0).commonAncestorContainer)) return { range: sel.getRangeAt(0).cloneRange(), part: '选中的文字', inline: true };
-  return { range: bodyRange(), part: '正文（不含签名和引用的原邮件）' };
 }
 function rangeText(range) {
   const box = document.createElement('div');
@@ -208,41 +202,59 @@ function rangeHasMedia(range) {
   return !!box.querySelector('table, img, .hy-signature, .hy-quote');
 }
 
-function aiComposeMenu(button) {
-  const r = button.getBoundingClientRect();
-  showMenu(r.left, r.bottom + 4, [
-    ...AI_MODES.map(([mode, label]) => ({ label, icon: 'spark', run: () => rewriteOwn(mode, label) })),
-    { label: '自定义要求…', icon: 'pen', run: async () => {
-      const want = await promptDialog({ title: '告诉 AI 怎么改', body: '<input id="ai-want" maxlength="300" placeholder="例如：语气坚决一点，但保持礼貌">',
-        okText: '改写', onOpen: () => $('#ai-want').focus(), collect: () => $('#ai-want').value.trim() || null });
-      if (want) rewriteOwn('custom', want, want);
-    } },
-    '-',
-    { label: '发送前检查（AI）', icon: 'check', run: aiCheckDraft },
-  ]);
-}
-
-async function rewriteOwn(mode, label, instruction = '') {
+// AI 写信 (口述成信): the points the user wrote in the body (above the signature
+// and the quoted original) become the whole mail and replace them; with an empty body a
+// dialog asks for them. Replies and forwards bring the original as context. 修改意见 in
+// the panel goes on from the last version, as many rounds as wanted; the user sends.
+async function writeFromNote() {
   if (C.ai && C.ai.loading) return;
-  const { range, part, inline } = ownRange();
-  if (rangeHasMedia(range)) { toast(`${part}包含表格或图片，请只选中要处理的文字`, { error: true }); return; }
-  const text = rangeText(range);
-  if (!text) { toast('还没有可以处理的文字', { error: true }); return; }
-  if (text.length > 8000) { toast('文字太长（最多 8000 字），请选中一部分再处理', { error: true }); return; }
-  if (!S.aiWriteNoticed && !localStorage.getItem('hy-ai-write')) {
-    if (!(await confirmDialog('写信助手', `${part}会发送到「设置 → AI 助手」中配置的 AI 服务。签名和引用的原邮件不会发送。` +
-      '如果这封邮件要加密发送，请注意改写前的文字会离开本机。', '继续'))) return;
-    S.aiWriteNoticed = true; try { localStorage.setItem('hy-ai-write', '1'); } catch (e) { /* private window */ }
+  const body = bodyRange(), media = rangeHasMedia(body), source = !!(C.draft.sourceMid || C.draft.replySourceId);
+  let note = media ? '' : rangeText(body);
+  if (!note) {
+    note = await promptDialog({ title: 'AI 写信',
+      body: '<textarea id="ai-note" rows="6" maxlength="8000" placeholder="写下大概要说什么，可以分条、很口语，例如：&#10;1. 同意周四上线&#10;2. 测试报告明天发&#10;3. 有问题找我"></textarea>' +
+        `<p class="muted small">AI 会整理成正式的邮件正文${source ? '，并参考原邮件' : ''}；中文还是英文按收件人和原邮件判断，也可以在话里说明。也可以直接写在正文里再点这里。</p>`,
+      okText: '写成邮件', onOpen: () => $('#ai-note').focus(), collect: () => $('#ai-note').value.trim() || null });
+    if (!note) return;
   }
-  C.ai = { mode, label, instruction, range, part, inline, text: '', loading: true };
+  if (note.length > 8000) { toast('文字太长（最多 8000 字）', { error: true }); return; }
+  if (!(await aiWriteNotice(`你写的要点${source ? '和要回复的原邮件' : ''}会发送到「设置 → AI 助手」中配置的 AI 服务，签名不会发送。`))) return;
+  // A table or picture in the body stays: the mail goes in above it.
+  const range = body.cloneRange(); if (media) range.collapse(true);
+  const d = C.draft, people = (field) => chipsValue(field).map((a) => parseAddressList(a)[0]).filter(Boolean).map((p) => ({ name: p.name || '', email: p.email }));
+  const how = /^reply/.test(d.mode) ? 'reply' : /^forward/.test(d.mode) ? 'forward' : 'new';
+  noteRun({ label: 'AI 写信', range, part: source ? '结合原邮件整理' : '整理成正式邮件',
+    params: { note, subject: $('#cmp-subject').value, to: people('to'), cc: people('cc'), mid: d.sourceMid || d.replySourceId || '', how }, rounds: [], allow: false });
+}
+async function noteRun(base) {
+  const state = C.ai = { ...base, text: '', error: null, loading: true };
   renderComposeAi();
-  const state = C.ai;
+  const run = () => streamCall('writeFromNote', { ...state.params, rounds: state.rounds, allow_encrypted: state.allow },
+    (x) => { if (C.ai === state) { state.text += x; renderComposeAi(true); } });
   try {
-    const res = await streamCall('rewrite', { text, mode, instruction }, (d) => { if (C.ai === state) { state.text += d; renderComposeAi(true); } });
-    state.text = res.text;
+    try { state.text = (await run()).text; } catch (err) {
+      if (err.code !== 'AI_ENCRYPTED_CONFIRM') throw err;
+      if (!(await confirmDialog('把加密邮件发送给 AI 服务？', '要回复的原邮件是加密的。一并参考需要把解密后的正文发送到外部 AI 服务。仅这一次、仅这一封。', '发送'))) {
+        state.error = { code: 'AI_CANCELLED' };
+      } else { state.allow = true; state.text = (await run()).text; }
+    }
   } catch (err) { state.error = err; }
   state.loading = false;
   if (C.ai === state) renderComposeAi();
+}
+// 修改意见 on the version shown: the next round goes on from it.
+function noteRevise(a) {
+  const input = $('#cmp-ai-want'), want = input.value.trim();
+  if (!want) { input.focus(); return; }
+  noteRun({ ...a, rounds: [...a.rounds, { text: a.text, want }].slice(-5) });
+}
+
+// Once per computer: what goes to the AI service and what never does.
+async function aiWriteNotice(what) {
+  if (S.aiWriteNoticed || localStorage.getItem('hy-ai-write')) return true;
+  if (!(await confirmDialog('写信助手', what + '如果这封邮件要加密发送，请注意改写前的文字会离开本机。', '继续'))) return false;
+  S.aiWriteNoticed = true; try { localStorage.setItem('hy-ai-write', '1'); } catch (e) { /* private window */ }
+  return true;
 }
 
 function renderComposeAi(onlyText) {
@@ -257,33 +269,35 @@ function renderComposeAi(onlyText) {
     (a.error && !cancelled ? `<p class="ai-error">${esc(a.error.message)}</p>` : '') +
     `<div class="cmp-ai-text">${esc(a.text)}</div>` +
     (a.loading ? '<div class="ai-wait"><span></span><span></span><span></span></div>' :
-      (a.text ? '<p class="muted small">替换后，原文中的加粗、颜色等格式会去掉；替换后可以撤销。</p>' +
-        '<div class="row-gap"><button class="btn primary sm" data-cai="replace">替换</button><button class="btn ghost sm" data-cai="below">插入到下方</button>' +
-        '<button class="btn ghost sm" data-cai="again">再来一次</button><button class="btn ghost sm" data-cai="close">放弃</button></div>' :
+      (a.text ? '<div class="ai-reply-row"><input id="cmp-ai-want" maxlength="300" placeholder="还想怎么改？例如：更正式、译成英文、加上下周一前回复">' +
+        '<button class="btn ghost sm" data-cai="revise">按意见修改</button>' +
+        '<button class="btn primary sm" data-cai="replace" title="替换正文里你写的要点（签名和原邮件不动），可以撤销">用这一版</button></div>' :
         '<div class="row-gap"><button class="btn ghost sm" data-cai="again">再试一次</button></div>'));
   renderIcons(box);
+  const want = $('#cmp-ai-want', box);
+  if (want) want.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); noteRevise(a); } };
   $$('[data-cai]', box).forEach((b) => (b.onclick = () => ({
     stop: () => api('cancelAi').catch(() => {}),
     close: () => { if (a.loading) api('cancelAi').catch(() => {}); C.ai = null; renderComposeAi(); },
-    again: () => { C.ai = null; rewriteOwn(a.mode, a.label, a.instruction); },
-    replace: () => placeAi(a, false), below: () => placeAi(a, true),
+    again: () => noteRun(a),
+    revise: () => noteRevise(a),
+    replace: () => placeAi(a),
   }[b.dataset.cai])()));
 }
 
 // Placed by hand, not execCommand: Chromium would merge the last paragraph with the
 // signature below it. 撤销 restores the editor as it was.
-function placeAi(a, below) {
+function placeAi(a) {
   const ed = $('#cmp-editor'), range = a.range;
-  if (!ed.contains(range.commonAncestorContainer)) { toast('原来的文字已经改动，请重新选择后再试', { error: true }); return; }
+  if (!ed.contains(range.commonAncestorContainer)) { toast('正文已经改动，请重新点 AI', { error: true }); return; }
   const before = ed.innerHTML;
-  const html = a.inline ? (below ? '<br>' : '') + esc(a.text).replace(/\n/g, '<br>') : textHtml(a.text);
-  const piece = range.createContextualFragment(html), last = piece.lastChild;
-  if (below) range.collapse(false); else range.deleteContents();
+  const piece = range.createContextualFragment(textHtml(a.text)), last = piece.lastChild;
+  range.deleteContents();
   range.insertNode(piece);
   if (last) { const r = document.createRange(); r.setStartAfter(last); r.collapse(true); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
   ed.focus();
   C.dirty = true; C.ai = null; renderComposeAi();
-  toast(below ? '已插入' : '已替换', { ms: 8000, action: { label: '撤销', run: () => { ed.innerHTML = before; C.dirty = true; } } });
+  toast('已放入正文', { ms: 8000, action: { label: '撤销', run: () => { ed.innerHTML = before; C.dirty = true; } } });
 }
 
 // ---------------------------------------------------------------- 发送前检查
@@ -312,21 +326,6 @@ async function precheckBeforeSend(value) {
     '<p class="muted small">这些只是提示，可能并不是问题。可以在「设置」的「发送前检查」中关闭。</p>', okText: '仍然发送', collect: () => true }));
 }
 
-async function aiCheckDraft() {
-  const value = collectDraft(false), text = wholeOwnText();
-  if (!text) { toast('还没有正文可以检查', { error: true }); return; }
-  const who = (list) => list.map((a) => parseAddressList(a)[0]).filter(Boolean)
-    .map((p) => `${p.name || p.email.split('@')[0]}（${p.email.split('@')[1] || ''}）`);
-  aiBusy('AI 正在检查…（正文已发送到 AI 服务）');
-  let res;
-  try {
-    res = await api('checkDraft', { subject: value.subject, to: who(value.to), cc: who(value.cc), text,
-      attachments: (value.attachments || []).map((a) => a.name) });
-  } catch (err) { aiBusy(''); fail(err); return; }
-  aiBusy('');
-  if (!res.issues.length) { toast('AI 没有发现明显的问题'); return; }
-  await promptDialog({ title: 'AI 发送前检查', text: '点击一条可以在正文中定位（只是提示，鸿雁不会自动修改）：', body: issueList(res.issues) });
-}
 $('#prompt-body').addEventListener('click', (e) => {
   const li = e.target.closest('.precheck-list li');
   if (!li) return;
@@ -334,7 +333,7 @@ $('#prompt-body').addEventListener('click', (e) => {
   $('#prompt [data-close]').click();
   findInEditor(quote && quote.textContent);
 });
-$('#cmp-ai').onclick = (e) => aiComposeMenu(e.currentTarget);
+$('#cmp-ai').onclick = () => writeFromNote();
 
 async function summarizeMessage(m, opts = {}) {
   const current = S.ai.get(m.id);

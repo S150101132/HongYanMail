@@ -228,16 +228,16 @@ STEPS += [
     (2500, "document.body.offsetWidth", 'ai-reply-draft'),
     (600, "closeComposer(true); startCompose('new', null, { to: ['李华 <lihua@example.invalid>'], subject: '接口联调安排' })", None),
     (900, "$('#cmp-editor').focus(); const s = getSelection(); s.selectAllChildren($('#cmp-editor').firstChild); s.collapseToStart();"
-          " document.execCommand('insertText', false, '张总，你好：'); document.execCommand('insertParagraph');"
-          " document.execCommand('insertText', false, '接口联调请在10月15日前完成，有问题可以联系 vendor@partner.example 。')", None),
-    (600, "localStorage.setItem('hy-ai-write', '1'); rewriteOwn('polish', '润色')", None),
-    (2500, "document.body.offsetWidth", 'ai-rewrite'),
+          " document.execCommand('insertText', false, '1. 联调10月15日前完成'); document.execCommand('insertParagraph');"
+          " document.execCommand('insertText', false, '2. 有问题可以联系 vendor@partner.example')", None),
+    (600, "localStorage.setItem('hy-ai-write', '1'); $('#cmp-ai').click()", None),
+    (2500, "document.body.offsetWidth", 'ai-write'),
+    (500, "$('#cmp-ai-want').value = '更正式'; $('[data-cai=revise]').click()", None),
+    (2500, "document.body.offsetWidth", 'ai-write-revised'),
     (500, "$('[data-cai=replace]').click()", None),
-    (700, "document.body.offsetWidth", 'ai-rewrite-replaced'),
+    (700, "document.body.offsetWidth", 'ai-write-replaced'),
     (500, "C.encrypt = false; C.sign = false; renderEncrypt(); sendMail()", None),
     (1200, "document.body.offsetWidth", 'precheck'),
-    (500, "$('#prompt [data-close]').click(); aiCheckDraft()", None),
-    (1500, "document.body.offsetWidth", 'ai-check'),
     (500, "$('#prompt').classList.add('hidden'); closeComposer(true)", None),
 ]
 # 理解层 M1: 要点, 待我处理 / 需要知道, the reader's strip, corrections (HONGYAN_WALK_U1=1 runs only these; demo AI).

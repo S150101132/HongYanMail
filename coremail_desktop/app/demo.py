@@ -656,9 +656,6 @@ class DemoAiClient:
             return json.dumps({'ideas': [{'label': '同意并确认', 'hint': '答应对方的要求，确认时间（演示）'},
                                          {'label': '先问清楚', 'hint': '请对方补充缺少的信息（演示）'},
                                          {'label': '婉拒或改期', 'hint': '说明原因，提出别的时间（演示）'}]}, ensure_ascii=False), 0
-        if '鸿雁发送前检查' in messages[0]['content']:
-            return json.dumps({'issues': [] if '附件' not in text or '（没有附件）' not in text else
-                               [{'kind': 'attachment', 'quote': '附件', 'advice': '正文提到附件，但没有添加附件（演示）。'}]}, ensure_ascii=False), 0
         if '今天 GitHub Trending' in messages[0]['content']:
             from coremail_desktop.ai.trending import demo
             return demo(messages), 0
@@ -754,6 +751,10 @@ class DemoAiClient:
             points = [line[2:] for line in text.splitlines() if line.startswith('- ')]
             if points:  # 助理 drafts carry their points.
                 out = '您好：\n\n' + '\n'.join(f'{i}. {p}' for i, p in enumerate(points, 1)) + '\n\n盼复，谢谢。\n\n（演示模式：由本机生成，没有联网。）'
+        elif '用户口述了这封邮件要说什么' in system:  # 口述成信: the words, as a letter.
+            said = messages[1]['content'].partition('用户的口述：\n')[2].split('\n\n要')[0].split('\n<<<')[0].strip()
+            want = text.partition('修改意见：')[2].split('\n')[0]
+            out = f'您好：\n\n{said}\n\n如有问题，请随时与我联系。谢谢！\n\n（演示模式：由本机生成，没有联网{f"；已按「{want}」修改" if want else ""}。）'
         elif '起草一封新邮件的正文' in system:
             out = 'Dear all,\n\nFollowing up on this task: 【待补充：具体内容】.\n\nBest regards\n\n（演示模式：由本机生成，没有联网。）'
         else:

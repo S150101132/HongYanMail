@@ -308,7 +308,7 @@ class WiringTest(unittest.TestCase):
         for name in ('aiSettings', 'setAiSettings', 'aiTest', 'summarize'):
             self.assertIn(name, shell.BACKEND_METHODS)
         self.assertEqual(shell.AI_METHODS, {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
-                                            'rewrite', 'replyIdeas', 'draftReply', 'checkDraft', 'summarizeThread', 'understandMail',
+                                            'replyIdeas', 'draftReply', 'writeFromNote', 'summarizeThread', 'understandMail',
                                             'assistantDraftWrite', 'memoryWeekBrief', 'trending', 'dailyNews'})
         self.assertFalse(shell.AI_METHODS & shell.FAST_METHODS)
 

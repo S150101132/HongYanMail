@@ -768,6 +768,10 @@ img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cmp-ai-panel { flex: none; max-height: 45%; overflow-y: auto; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
 .cmp-ai-panel > .ai-error, .cmp-ai-panel > .muted, .cmp-ai-panel > .row-gap, .cmp-ai-panel > .ai-wait { margin: 6px 14px; }
 .cmp-ai-text { white-space: pre-wrap; padding: 8px 14px; line-height: 1.7; }
+.cmp-ai-panel > .ai-reply-row { margin: 6px 14px; }
+.cmp-ai-panel > .cmp-ai-text { max-height: 200px; overflow-y: auto; }  /* 修改意见 and 替换 stay in view. */
+.cmp-ai-panel > .ai-reply-row input { height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: var(--panel); outline: none; }
+.cmp-ai-panel > .ai-reply-row input:focus { border-color: var(--accent); }
 .precheck-list { margin: 8px 0; padding-left: 0; list-style: none; }
 .precheck-list li { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer; line-height: 1.6; }
 .precheck-list li:hover { border-color: var(--accent); }
