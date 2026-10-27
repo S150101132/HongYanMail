@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from email import policy
 from email.parser import BytesParser
 import json
+import logging
 import re
 import ssl
 import uuid
@@ -14,6 +15,17 @@ from coremail_desktop.protocol.keepalive import KeepAliveHTTPSHandler
 from coremail_desktop.models import Folder, MessageSummary
 from coremail_desktop.errors import AppError
 from coremail_desktop.compose.recipients import normalize_recipients
+
+NETWORK_LOG = logging.getLogger('hongyan.network')
+
+def _log_failure(request,code,error):
+    """Which request failed and how: endpoint, size, exception kind and the TLS/socket
+    reason. Never the URL query (it carries sid), headers or content."""
+    parts=urlsplit(request.full_url)
+    func=','.join(parse_qs(parts.query).get('func',()))
+    reason=getattr(error,'reason',error)
+    detail=f'HTTP {error.code}' if isinstance(error,HTTPError) else f'{type(reason).__name__} {getattr(reason,"reason",None) or getattr(reason,"winerror",None) or getattr(reason,"errno",None) or ""}'
+    NETWORK_LOG.warning('%s %s%s bytes=%d -> %s (%s)',request.get_method(),parts.path.rsplit('/',1)[-1],f'?func={func}' if func else '',len(request.data or b''),code,detail.strip())
 
 class DesktopSession(CoremailSession):
     """Retain the verified login/redirect parser, classify production failures."""
@@ -49,15 +61,16 @@ class DesktopSession(CoremailSession):
         except AppError:
             raise
         except HTTPError as error:
-            code = 'SESSION_EXPIRED' if error.code in (401,403) else 'NETWORK_ERROR'
+            code, failure = ('SESSION_EXPIRED' if error.code in (401,403) else 'NETWORK_ERROR'), error
         except URLError as error:
-            code = 'TLS_ERROR' if isinstance(error.reason,ssl.SSLError) else 'NETWORK_ERROR'
-        except ssl.SSLError:
-            code = 'TLS_ERROR'
+            code, failure = ('TLS_ERROR' if isinstance(error.reason,ssl.SSLError) else 'NETWORK_ERROR'), error
+        except ssl.SSLError as error:
+            code, failure = 'TLS_ERROR', error
         except CoremailError as error:
-            code = error.code
-        except (OSError,ValueError):
-            pass
+            code, failure = error.code, None
+        except (OSError,ValueError) as error:
+            failure = error
+        if failure is not None: _log_failure(request,code,failure)
         raise AppError(code)
     def call(self,func,payload):
         if func not in self.ALLOWED: raise AppError('RPC_NOT_ALLOWED')

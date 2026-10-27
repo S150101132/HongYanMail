@@ -6,6 +6,7 @@ from the web view is blocked except remote images the user allowed per message.
 """
 import base64
 import json
+import logging
 import mimetypes
 import os
 import time
@@ -549,6 +550,7 @@ class AppShell(_PrintHost, QMainWindow):
         super().__init__()
         self.backend = backend
         backend.convert_image = _png_from_image
+        self._network_log()
         self.demo = demo
         self.sandboxed = sandboxed
         self._relaunch_without_sandbox = relaunch_without_sandbox
@@ -771,6 +773,18 @@ class AppShell(_PrintHost, QMainWindow):
         if self.push is not None:
             self.push.stop()
             self.push = None
+
+    def _network_log(self):
+        # Failed server requests: endpoint, size and error kind only (protocol/coremail.py).
+        log = logging.getLogger('hongyan.network')
+        if not log.handlers:
+            try:
+                handler = logging.FileHandler(self.backend.data_dir / 'hongyan-network.log', encoding='utf-8', delay=True)
+            except OSError:
+                return
+            handler.setFormatter(logging.Formatter('%(asctime)s %(message)s', '%Y-%m-%d %H:%M:%S'))
+            log.addHandler(handler)
+            log.propagate = False
 
     def _push_log(self, line):
         # States, failure codes and event arrival times only.
