@@ -164,7 +164,7 @@ const confirmDialog = (title, text, okText = '确定') => promptDialog({ title, 
 // ---------------------------------------------------------------- theme
 function applyTheme(theme, density) {
   const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.documentElement.dataset.theme = theme === 'color' ? 'color' : dark ? 'dark' : 'light';
   if (density) document.documentElement.dataset.density = density;
   document.documentElement.classList.toggle('tb-lean', (S.prefs || {}).toolbar !== 'full');  // A4: 精简 unless 完整 was chosen.
   try { localStorage.setItem('hy-theme', theme); if (density) localStorage.setItem('hy-density', density); } catch (e) { /* optional */ }

@@ -134,6 +134,7 @@ if (typeof document !== 'undefined') {
     theme('dark', '深色模式', ['暗色', '夜间模式', '黑色主题']);
     theme('light', '浅色模式', ['亮色', '白色主题']);
     theme('system', '主题跟随系统', ['跟随系统']);
+    theme('color', '多彩模式', ['彩色', '多彩主题']);
     const density = (d, label, names) => add('外观', 'settings', label, async () => {
       applyTheme(S.prefs.theme, d); try { S.prefs = await api('setPrefs', { values: { density: d } }); } catch (err) { fail(err); }
     }, names);

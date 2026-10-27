@@ -72,6 +72,44 @@
   --toast-line: #3a4252;
   color-scheme: dark;
 }
+/* 多彩: the light theme with a violet accent, a gradient sidebar and coloured folder icons; panels stay white for reading. */
+:root[data-theme="color"] {
+  --bg: #f5f2ff;
+  --panel-2: #faf8ff;
+  --side: linear-gradient(170deg, #dfe6ff 0%, #ebe2ff 45%, #fde4f1 100%);
+  --text: #1c1936;
+  --text-2: #4a4766;
+  --muted: #85829f;
+  --line: #e6e0f5;
+  --line-2: #f0ecfa;
+  --accent: #7c3aed;
+  --accent-2: #6d28d9;
+  --accent-soft: #f0e8ff;
+  --sel: #efe6ff;
+  --hover: #f6f1ff;
+  --grad: linear-gradient(135deg, #6366f1 0%, #a855f7 55%, #ec4899 100%);
+  --shadow: 0 10px 30px rgba(76, 29, 149, .14), 0 2px 6px rgba(76, 29, 149, .07);
+}
+:root[data-theme="color"] .btn.primary, :root[data-theme="color"] .logo, :root[data-theme="color"] .boot-logo { background: var(--grad); border-color: transparent; }
+:root[data-theme="color"] .btn.primary:hover { background: var(--grad); filter: brightness(1.08); }
+:root[data-theme="color"] .compose-btn { box-shadow: 0 4px 12px rgba(168, 85, 247, .35); }
+:root[data-theme="color"] .sidebar { border-right-color: transparent; }
+:root[data-theme="color"] .sidebar .folder:hover, :root[data-theme="color"] .account-btn:hover { background: rgba(255, 255, 255, .55); }
+:root[data-theme="color"] .sidebar .folder.on { background: #fff; box-shadow: 0 1px 4px rgba(76, 29, 149, .12); }
+:root[data-theme="color"] .side-foot { border-top-color: rgba(124, 58, 237, .15); }
+:root[data-theme="color"] .row.unread::before { background: var(--grad); }
+:root[data-theme="color"] .row.sel { border-left-color: #a855f7; }
+:root[data-theme="color"] .folder i[data-icon] { color: #8b5cf6; }
+:root[data-theme="color"] .folder i[data-icon="inbox"] { color: #3b82f6; }
+:root[data-theme="color"] .folder i[data-icon="drafts"], :root[data-theme="color"] .folder i[data-icon="draft"] { color: #f59e0b; }
+:root[data-theme="color"] .folder i[data-icon="sent"], :root[data-theme="color"] .folder i[data-icon="send"] { color: #10b981; }
+:root[data-theme="color"] .folder i[data-icon="trash"] { color: #ef4444; }
+:root[data-theme="color"] .folder i[data-icon="spam"], :root[data-theme="color"] .folder i[data-icon="virus"] { color: #f97316; }
+:root[data-theme="color"] .folder i[data-icon="spark"] { color: #ec4899; }
+:root[data-theme="color"] .folder i[data-icon="clock"] { color: #06b6d4; }
+:root[data-theme="color"] .folder i[data-icon="tasks"] { color: #14b8a6; }
+:root[data-theme="color"] .folder i[data-icon="archive"] { color: #a16207; }
+:root[data-theme="color"] .folder i[data-icon="contacts"] { color: #6366f1; }
 :root[data-density="compact"] { --row-pad: 7px; }
 
 * { box-sizing: border-box; }
