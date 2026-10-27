@@ -979,14 +979,27 @@ $('#r-frame').addEventListener('load', () => {
   let last = 0;
   // The frame grows to its content and never scrolls itself: one scroll area (the
   // reading pane) is easier to read long mail in than a scroller inside a scroller.
+  // Measure the content itself, not body/document scrollHeight: those are never smaller
+  // than the frame (each fit then grew it 8px), and mail CSS can pin <body> to the viewport
+  // so body never resizes while its content still grows (fallback fonts for Arabic/CJK
+  // load late). So watch body's children too.
   const fit = () => {
-    const h = Math.max(120, doc.documentElement.scrollHeight, doc.body.scrollHeight) + 8;
+    const body = doc.body, range = doc.createRange(); range.selectNodeContents(body);
+    const kids = [...body.children].map((k) => k.getBoundingClientRect().bottom);
+    const pad = parseFloat(doc.defaultView.getComputedStyle(body).paddingBottom) || 0;
+    const bar = body.offsetHeight - body.clientHeight;  // Horizontal scrollbar of wide mail.
+    const bottom = Math.max(range.getBoundingClientRect().bottom, ...kids) + doc.defaultView.scrollY + pad + bar;
+    const h = Math.ceil(Math.max(120, bottom)) + 8;
     if (Math.abs(h - last) > 2) { last = h; frame.style.height = h + 'px'; }
   };
   fit();
-  setTimeout(fit, 250); setTimeout(fit, 1000);  // Fonts and data: images settle after load.
+  [250, 1000, 3000].forEach((t) => setTimeout(fit, t));  // Fonts and data: images settle after load.
   $$('img', doc).forEach((img) => img.addEventListener('load', fit));
-  try { new ResizeObserver(() => requestAnimationFrame(fit)).observe(doc.body); } catch (e) { /* optional */ }
+  try { doc.fonts.ready.then(fit); doc.fonts.addEventListener('loadingdone', fit); } catch (e) { /* optional */ }
+  try {
+    const ro = new ResizeObserver(() => requestAnimationFrame(fit));
+    [doc.body, ...doc.body.children].forEach((el) => ro.observe(el));
+  } catch (e) { /* optional */ }
   doc.addEventListener('keydown', (e) => handleKey(e));
   externalLinks(doc);
 });
