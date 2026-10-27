@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QMarginsF, QMimeData, QObject, QSize, QTimer, QUrl, Qt, Signal, Slot
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QPageLayout, QPageSize, QShortcut
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence, QPageLayout, QPageSize, QShortcut
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import (QWebEngineContextMenuRequest, QWebEnginePage, QWebEngineProfile, QWebEngineSettings,
@@ -583,8 +583,8 @@ class AppShell(_PrintHost, QMainWindow):
         self._last_new = None
         self.setWindowTitle('鸿雁 · 工作邮箱')
         self.setWindowIcon(app_icon())
-        self.resize(1360, 860)
         self.setMinimumSize(960, 600)
+        self._fit_screen()
 
         self.readers = []  # Pop-out reader windows.
         self.profile, self.interceptor, self.page = _make_web(self)
@@ -617,6 +617,17 @@ class AppShell(_PrintHost, QMainWindow):
         self._flush_busy = False
         self._make_tray()
         QShortcut(QKeySequence('Ctrl+Shift+I'), self, activated=self._devtools)
+
+    def _fit_screen(self):
+        """1360×860 when the screen has room; on a smaller or scaled screen start maximized,
+        so the window never runs under the taskbar."""
+        screen = QGuiApplication.primaryScreen()
+        area = screen.availableGeometry() if screen else None
+        if area is None or (area.width() >= 1360 + 40 and area.height() >= 860 + 60):
+            self.resize(1360, 860)
+            return
+        self.resize(min(1360, area.width()), min(860, area.height()))
+        self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
 
     # Renderer health ---------------------------------------------------------
     def _load_finished(self, ok):
