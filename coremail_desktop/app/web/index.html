@@ -383,6 +383,11 @@
             <button class="btn ghost danger hidden" id="ai-clear">清除 Key</button></div>
           <label class="check"><input id="ai-actions" type="checkbox"> 允许 AI 在对话里提议邮件操作（标为已读、星标、移动、移到已删除）</label>
           <p class="muted small">AI 只提出计划，在对话里点「执行」才会操作，执行后可以撤销；不会彻底删除，也不会发信。</p>
+          <label class="check"><input id="mcp-on" type="checkbox"> 允许本机 AI 工具读取邮箱（MCP，只读）</label>
+          <p class="muted small">打开后，这台电脑上的 Claude Code 等 AI 工具可以在鸿雁运行时搜索、阅读邮件和附件文字、查通讯录和任务，读到的内容会交给那个工具所用的 AI 服务；不能发信、移动、删除或修改任何东西。加密邮件按上面的设置。关掉后立即失效，再打开会换新密钥。</p>
+          <div id="mcp-how" class="hidden"><p class="muted small">在终端里运行一次，把鸿雁加到 Claude Code：</p>
+            <div class="tk-commit"><code id="mcp-command"></code><button class="btn ghost sm" id="mcp-copy">复制</button></div>
+            <p class="muted small" id="mcp-use"></p></div>
           <h3>加密邮件</h3>
           <label class="check"><input id="uc-enc-allow" type="checkbox"> 允许 AI 读取加密邮件（不再逐封询问）</label>
           <p class="muted small">打开后，总结、AI 回复、问鸿雁、任务中心和「理解新邮件」都可以读取加密邮件解密后的正文，正文会发送到上面的 AI 服务。下面排除的文件夹和发件人仍然每封先询问，「理解新邮件」会跳过它们。</p>

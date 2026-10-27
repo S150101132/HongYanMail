@@ -165,6 +165,17 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(len(box.reads), 5)
         self.assertEqual(tools.read_refs, ['M1', 'M2', 'M3', 'M4', 'M5'])
 
+    def test_read_mail_reads_the_attachments_too(self):
+        mail = document('详见附件')
+        mail.attachments = [SimpleNamespace(name='报价.txt', part_id='2')]
+        mail.attachment_payloads = {'2': '单价 42 元'.encode('utf-8')}
+        box = FakeMailbox(docs={'mid1': mail})
+        tools = box.tools()
+        tools.run('search_mail', '{"keywords": "a"}')
+        result, _ = tools.run('read_mail', '{"ref": "M1"}')
+        self.assertEqual(result['attachmentText'], [{'name': '报价.txt', 'text': '单价 42 元', 'truncated': False}])
+        self.assertNotIn('attachmentText', tools.run('read_mail', '{"ref": "M2"}')[0])
+
     def test_encrypted_mail_needs_the_users_agreement(self):
         docs = {'mid1': document('机密内容', 'decrypted'), 'mid2': document('机密', 'locked')}
         box = FakeMailbox(docs=docs)

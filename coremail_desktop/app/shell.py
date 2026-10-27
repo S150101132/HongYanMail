@@ -72,6 +72,7 @@ BACKEND_METHODS = {
     'previewAttachment': 'attachment_preview', 'openAttachment': 'open_attachment',
     'threadCounts': 'thread_counts', 'thread': 'thread',
     'aiSettings': 'ai_settings', 'setAiSettings': 'set_ai_settings', 'aiTest': 'ai_test', 'summarize': 'summarize',
+    'mcpStatus': 'mcp_status', 'setMcp': 'set_mcp',
     'askMailbox': 'ask_mailbox', 'cancelAsk': 'cancel_ask', 'assistantPlanRun': 'assistant_plan_run',
     'assistantDraftCompose': 'assistant_draft_compose', 'assistantDraftWrite': 'assistant_draft_write', 'assistantSent': 'assistant_sent',
     'assistantNudge': 'assistant_nudge', 'assistantNudgeDismiss': 'assistant_nudge_dismiss', 'assistantLinkRun': 'assistant_link_run',
@@ -104,7 +105,7 @@ BACKEND_METHODS = {
 # wait behind other mail work: the backend's hold lock decides between undo and release.
 FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', 'suggest', 'encryptionCheck', 'certificateStatus',
                 'searchCapabilities', 'directory', 'members', 'personalContacts', 'findPeople', 'person',
-                'recipientGroups', 'aiSettings', 'cancelAsk', 'cancelAi', 'precheck', 'archiveStatus', 'archiveView', 'searchArchive',
+                'recipientGroups', 'aiSettings', 'mcpStatus', 'setMcp', 'cancelAsk', 'cancelAi', 'precheck', 'archiveStatus', 'archiveView', 'searchArchive',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment',
                 'aiEncrypted', 'understandStatus', 'understandPending', 'understandCards', 'understandView', 'understandRules',
                 'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups'}
@@ -182,6 +183,31 @@ def _png_from_image(data):
     out.open(QIODevice.OpenModeFlag.WriteOnly)
     image.save(out, 'PNG')
     return bytes(out.data())
+
+
+def _pdf_text(data, limit=20000, pages=30):
+    """The text of a PDF (附件速读), page by page until limit characters; None when it
+    cannot be read (damaged, password-protected, scanned). Called on the AI thread."""
+    from PySide6.QtPdf import QPdfDocument
+    buffer = QBuffer()
+    buffer.setData(QByteArray(bytes(data)))
+    buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+    document = QPdfDocument(None)
+    try:
+        document.load(buffer)
+        if document.status() != QPdfDocument.Status.Ready:
+            return None
+        out, size = [], 0
+        for page in range(min(document.pageCount(), pages)):
+            text = document.getAllText(page).text()
+            out.append(text)
+            size += len(text)
+            if size >= limit:
+                break
+        return '\n'.join(out).strip() or None
+    finally:
+        document.close()
+        buffer.close()
 
 
 class _SchemeHandler(QWebEngineUrlSchemeHandler):
@@ -318,6 +344,21 @@ class Bridge(QObject):
             self._serial, self._fast, self._background, self._ai = share._serial, share._fast, share._background, share._ai
             self._archive, self._tasks, self._send = share._archive, share._tasks, share._send
         self._done.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
+        self._mcp = None
+        if share is None:  # 本机只读 MCP 服务 (X1): one listener, its calls on the AI thread.
+            from coremail_desktop.mcp.server import Host
+            self._mcp = Host(self.backend.mcp_answer, lambda fn: self._ai.submit(fn).result())
+            self.mcp_sync()
+
+    def mcp_sync(self):
+        """Listen while 允许本机 AI 工具读取邮箱 is on (a new key each time it is turned on)."""
+        if self._mcp is None:
+            return
+        record = self.backend.mcp_record()
+        try:
+            self._mcp.start(record['pipe'], record['key'].encode('ascii')) if record else self._mcp.stop()
+        except OSError as error:
+            self.shell.log_internal_error('mcp', error)
 
     def emit_event(self, name, value=None):
         self.event.emit(name, json.dumps(value, ensure_ascii=False))
@@ -344,6 +385,8 @@ class Bridge(QObject):
                     # The undo delay runs in the main window, so closing to the tray (or
                     # closing the pop-out that sent it) still sends when it ends.
                     self.shell.send_held.emit(result['localId'], result['revision'], result['delayMs'])
+                if name == 'setMcp':
+                    self.mcp_sync()  # 设置 is in the main window, whose bridge holds the listener.
                 self._done.emit(request_id, True, json.dumps(result, ensure_ascii=False, default=str))
             except Exception as error:  # Only fixed codes and fixed text reach the page.
                 code = getattr(error, 'code', 'INTERNAL_ERROR') if isinstance(error, AppError) or hasattr(error, 'code') else 'INTERNAL_ERROR'
@@ -395,6 +438,8 @@ class Bridge(QObject):
     def shutdown(self):
         if not self._owns_pools:
             return
+        if self._mcp is not None:
+            self._mcp.stop()
         self._serial.shutdown(wait=False, cancel_futures=True)
         self._fast.shutdown(wait=False, cancel_futures=True)
         self._background.shutdown(wait=False, cancel_futures=True)
@@ -570,6 +615,7 @@ class AppShell(_PrintHost, QMainWindow):
         super().__init__()
         self.backend = backend
         backend.convert_image = _png_from_image
+        backend.pdf_text = _pdf_text
         self._network_log()
         self.demo = demo
         self.sandboxed = sandboxed

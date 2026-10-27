@@ -404,6 +404,16 @@ STEPS += [
     (300, "$('.net-again') && $('.net-again').click()", None),
     (1200, "document.body.offsetWidth", 'n1-online'),
 ]
+# X1 本机只读 MCP: the setting off and on (HONGYAN_WALK_X1=1 runs only these).
+X1 = len(STEPS)
+STEPS += [
+    (2500, "openSettings(); $('#st-nav [data-tab=ai]').click(); setTimeout(() => $('#mcp-on').scrollIntoView({ block: 'center' }), 300)", None),
+    (1200, "document.body.offsetWidth", 'x1-off'),
+    (300, "$('#mcp-on').click()", None),
+    (1200, "document.body.offsetWidth", 'x1-on'),
+    (300, "$('#mcp-on').click()", None),
+    (900, "$('#settings').classList.add('hidden')", None),
+]
 
 
 def render_pdf(mid):
@@ -441,6 +451,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

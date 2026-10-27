@@ -224,6 +224,36 @@ class BackendTest(unittest.TestCase):
         with self.assertRaises(AppError):
             self.backend.write_from_note('原文', rounds=['译成英文'])
 
+    def test_write_follows_the_users_own_sent_mail(self):
+        ai = self.backend.ai_client = FakeStreamAi()
+        colleague, outside = [{'name': '张晓明', 'email': 'zhangxm@example.invalid'}], [{'name': 'P', 'email': 'p@external.example'}]
+        self.backend.write_from_note('原文', to=colleague)
+        self.assertNotIn('风格样例', ai.calls[-1][1]['content'])  # Nothing sent is on this computer yet.
+        rows = self.backend.messages('3')['rows']
+        for r in rows:
+            self.backend.open_message(r['id'], mark_read=False)
+        self.backend.write_from_note('原文', to=colleague)
+        system, user = ai.calls[-1][0]['content'], ai.calls[-1][1]['content']
+        self.assertIn('写作风格样例', system)
+        self.assertIn('用户以前写的邮件（风格样例 1）：\n各位同事', user)
+        self.assertNotIn('@example.invalid', user)
+        self.assertLessEqual(user.count('风格样例'), writing.SAMPLES)
+        self.backend.write_from_note('原文', to=colleague + outside)  # Any outside recipient: mail that went outside.
+        self.assertIn('风格样例 1', ai.calls[-1][1]['content'])
+
+    def test_style_sample_drops_signature_quote_and_contacts(self):
+        mail = SimpleNamespace(html='<p>王总您好：</p><p>方案已更新，请查收，有问题打 13812345678 或写信 wb@inspur.com。</p>'
+                                    '<div class="hy-signature">王彪 · 浪潮</div><div class="hy-quote">原邮件</div>', text='')
+        sample = writing.style_sample(mail)
+        self.assertIn('王总您好：', sample)
+        self.assertIn('【电话】', sample)
+        self.assertIn('【邮箱】', sample)
+        for gone in ('王彪', '原邮件', '13812345678', 'wb@'):
+            self.assertNotIn(gone, sample)
+        elsewhere = SimpleNamespace(html=None, text='李工：\n\n收到，测试环境周四前准备好，到时给您答复。\n\n王彪\n平台部\n\n发件人: 李工\n发送时间: 昨天\n原文')
+        self.assertEqual(writing.style_sample(elsewhere, '王彪\n平台部'), '李工：\n\n收到，测试环境周四前准备好，到时给您答复。')
+        self.assertEqual(writing.style_sample(SimpleNamespace(html=None, text='好的')), '')
+
     def test_cancel_while_streaming(self):
         self.backend.ai_client = FakeStreamAi()
         with self.assertRaises(AppError) as raised:

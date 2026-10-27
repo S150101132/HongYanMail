@@ -408,6 +408,8 @@ class MailBackend:
         self.autostart = None  # Set by the app (not in demo mode): reads and writes the Windows Run key.
         self.open_file = shell_open  # 打开 for attachments; tests replace it.
         self.convert_image = None  # Set by the app: image bytes -> PNG bytes (Qt), for TIFF previews.
+        self.pdf_text = None  # Set by the app: PDF bytes -> its text (QtPdf), for 附件速读.
+        self._mcp_tools, self._mcp_use = None, {'calls': 0, 'last': ''}  # 本机只读 MCP 服务 (X1).
         # 撤销发送: drafts waiting out their undo delay, local id -> {revision, subject, until}.
         # Memory only on purpose: if the app ends during the delay nothing is sent and
         # the draft stays in 本机草稿 (abandon_held records which ones).
@@ -478,6 +480,7 @@ class MailBackend:
         return {**self.profile(), 'offline': True}
 
     def logout(self, forget=False):
+        self._mcp_tools = None  # Its mail refs belong to this account.
         self.adapter.close()
         self._password = None
         self._signed_in = False
@@ -2495,6 +2498,7 @@ class MailBackend:
     def summarize(self, mid, allow_encrypted=False, refresh=False):
         """「总结这封」. Decrypted mail goes to the AI service only when the user agreed
         for this message (allow_encrypted), and its summary is never kept."""
+        from coremail_desktop.ai.attachments import attachment_texts
         from coremail_desktop.ai.summary import SUMMARY_TOKENS, SUMMARY_VERSION, build_messages, parse_summary
         mid = str(mid)
         if self.cache is None:
@@ -2506,7 +2510,8 @@ class MailBackend:
         if (not encrypted or self._encrypted_ok(mid)) and not refresh and saved.get(mid, {}).get('v') == SUMMARY_VERSION:
             return {**saved[mid], 'cached': True}
         summary = self.cache.summary(mid) or {}
-        messages = build_messages(document, summary.get('date') or '', self.display_name, [self.account or '', *self.identities])
+        messages = build_messages(document, summary.get('date') or '', self.display_name, [self.account or '', *self.identities],
+                                  attachment_texts(document, self.pdf_text))
         content, _ = self._ai_call(messages, max_tokens=SUMMARY_TOKENS, json_mode=True)
         result = {**parse_summary(content), 'model': model, 'at': datetime.now().strftime('%Y-%m-%d %H:%M'), 'encrypted': encrypted,
                   'v': SUMMARY_VERSION}
@@ -2653,8 +2658,35 @@ class MailBackend:
             except AppError as error:
                 if error.code not in ('AI_MAIL_UNAVAILABLE', 'CERT_LOCKED'):
                     raise
-        messages = note_messages(note, subject, who(to), who(cc), document, date, how, rounds)
+        external = any(str(p.get('email') or '').rpartition('@')[2].casefold() not in inside
+                       for p in [*to, *cc] if isinstance(p, dict) and p.get('email'))
+        messages = note_messages(note, subject, who(to), who(cc), document, date, how, rounds, self._style_samples(external))
         return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
+
+    def _style_samples(self, external):
+        """学习写作风格 (W6): what the user wrote in their latest sent mail to the same kind of
+        people (外部 / 同事) — only mail already on this computer and not encrypted."""
+        from coremail_desktop.ai.summary import visible_text
+        from coremail_desktop.ai.writing import SAMPLES, style_sample
+        sent = next((f['id'] for f in self._folders if f['role'] == 'sent'), '3')
+        if self.cache is None:
+            return []
+        inside, signature = set(self.internal_domains()), visible_text(self.prefs().get('signature') or '')
+        samples = []
+        for row in self.cache.summaries(str(sent), 0, 40)[0]:
+            domains = {p['email'].rpartition('@')[2].casefold() for p in _people(row.get('to') or '') if p['email']}
+            if not domains or bool(domains - inside) != external or self.cache.get_body(row['id']) is None:
+                continue
+            try:
+                document = self._document(row['id'])
+            except AppError:
+                continue
+            text = style_sample(document, signature) if document.encryption_state == 'none' else ''
+            if text and text not in samples:
+                samples.append(text)
+            if len(samples) >= SAMPLES:
+                break
+        return samples
 
     def precheck(self, text, to=(), recipients=()):
         """本机发送前检查 (no network): past dates, a greeting naming nobody in 主送, outside
@@ -2750,6 +2782,7 @@ class MailBackend:
         restarted = bool(chat) and state is None
         if state is None:
             tools = AssistantTools(self._ask_search, self._document, self._ask_match, {},  # Folders: below, each question.
+                                   pdf_text=self.pdf_text,
                                    archive=self._ask_archive if self._archive_on() else None, auto_allow=self._encrypted_ok,
                                    tasks=self._assist_tasks, task=self._assist_task, mine=self._assist_mine,
                                    pending=self._assist_pending if self._understand_on() else None, plan=self._assist_preview,
@@ -3166,6 +3199,72 @@ class MailBackend:
 
     def _ask_match(self, name):
         return self._online(self.adapter.match_contacts, name, 5) if hasattr(self.adapter, 'match_contacts') else []
+
+    # 本机只读 MCP 服务 (X1, mcp/) ----------------------------------------------------
+    # 设置 → 允许本机 AI 工具读取邮箱: off by default. On, the key in mcp.key (DPAPI) lets a
+    # relay started by an AI tool on this computer use the 问邮箱 tools, read-only.
+    def _mcp_path(self):
+        from coremail_desktop.mcp.server import KEY_FILE
+        return self.data_dir / KEY_FILE
+
+    def mcp_record(self):
+        """{'pipe', 'key'} while MCP is on, else None (the shell listens only then)."""
+        try:
+            return json.loads(self.protector.unprotect(self._mcp_path().read_bytes()).decode('utf-8'))
+        except (OSError, ValueError, AppError):
+            return None
+
+    def mcp_status(self):
+        """On or off, the command that adds the relay to Claude Code, and this run's use."""
+        import sys
+        root = Path(__file__).resolve().parents[2]
+        python = root / '.venv' / 'Scripts' / 'python.exe'
+        python = python if python.is_file() else Path(sys.executable).with_name('python.exe')
+        command = '' if getattr(sys, 'frozen', False) else (
+            f'claude mcp add hongyan --scope user -e PYTHONPATH="{root}" -e HONGYAN_DATA_DIR="{self.data_dir.resolve()}"'
+            f' -- "{python}" -m coremail_desktop.mcp')
+        return {'enabled': self.mcp_record() is not None, 'command': command, **self._mcp_use}
+
+    def set_mcp(self, enabled):
+        if type(enabled) is not bool:
+            raise AppError('AI_INVALID_INPUT')
+        from coremail_desktop.mcp.server import new_key
+        if enabled and self.mcp_record() is None:
+            self._mcp_path().write_bytes(self.protector.protect(json.dumps(new_key()).encode('utf-8')))
+        elif not enabled:
+            self._mcp_path().unlink(missing_ok=True)
+            self._mcp_tools = None
+        return self.mcp_status()
+
+    def mcp_answer(self, message):
+        """One MCP message from the relay (runs on the AI thread) -> the response or None."""
+        from coremail_desktop import __version__
+        from coremail_desktop.ai.tools import SPECS, TASK_SPECS
+        from coremail_desktop.mcp.server import handle, mcp_specs
+        return handle(message, lambda: mcp_specs(SPECS + TASK_SPECS), self._mcp_call, __version__)
+
+    def _mcp_call(self, name, arguments):
+        from coremail_desktop.ai.tools import SPECS, TASK_SPECS, AssistantTools
+        from coremail_desktop.ui.messages import user_message
+        if self.mcp_record() is None or self.cache is None:
+            code = 'MCP_OFF' if self.cache is not None else 'NOT_AUTHENTICATED'
+            return {'code': code, 'message': user_message(code)}, True
+        if name not in {s['function']['name'] for s in SPECS + TASK_SPECS}:
+            return {'error': '没有这个工具'}, True  # Drafting, plans and mail operations stay inside the app.
+        if self._mcp_tools is None:
+            self._mcp_tools = AssistantTools(self._ask_search, self._document, self._ask_match, {}, pdf_text=self.pdf_text,
+                                             archive=self._ask_archive if self._archive_on() else None, auto_allow=self._encrypted_ok,
+                                             tasks=self._assist_tasks, task=self._assist_task, mine=self._assist_mine)
+        tools = self._mcp_tools
+        tools.begin()
+        known = self._folders or self.cache.get('folders') or []
+        tools.folders.update(names={f['id']: f['name'] for f in known}, **{f['role']: f['id'] for f in known if f.get('role') in ('inbox', 'sent')})
+        try:
+            result, _ = tools.run(name, json.dumps(arguments, ensure_ascii=False))
+        except AppError as error:
+            return {'code': error.code, 'message': user_message(error.code)}, True
+        self._mcp_use = {'calls': self._mcp_use['calls'] + 1, 'last': datetime.now().strftime('%Y-%m-%d %H:%M')}
+        return result, 'error' in result
 
     # 本地存档 -----------------------------------------------------------------
     # The official client's local archive (archmails/*.cmpack) and an Outlook .pst,

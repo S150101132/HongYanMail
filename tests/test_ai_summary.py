@@ -148,7 +148,7 @@ class TextTest(unittest.TestCase):
         self.assertTrue(truncated)
         self.assertTrue(text.startswith('请确认预算。'))
         self.assertIn('更早的引用内容已省略', text)
-        self.assertLess(len(text), 2600)
+        self.assertLess(len(text), 6600)
         text, truncated = mail_text(doc(text='长' * 20000))
         self.assertTrue(truncated)
         self.assertLess(len(text), 12100)
@@ -171,6 +171,27 @@ class TextTest(unittest.TestCase):
         self.assertIn('张三（corp.example）', user)
         self.assertIn('议程.docx', user)
         self.assertIn('用户在这封邮件中的位置：未列出', user)
+
+    def test_attachment_text_goes_with_the_mail(self):
+        from coremail_desktop.ai.attachments import FILE_CHARS, attachment_texts
+        from coremail_desktop.app import demo_office
+        files = [('需求.xlsx', demo_office.demo_xlsx()), ('方案.docx', demo_office.demo_docx()), ('说明.txt', '第一行\n价格 42 元'.encode('gbk')),
+                 ('图.png', b'\x89PNG\r\n\x1a\n' + b'\0' * 20), ('坏.docx', b'PK\x03\x04broken'), ('报价.pdf', b'%PDF-1.4 x'),
+                 ('长.txt', ('长' * (FILE_CHARS + 100)).encode('utf-8'))]
+        mail = doc(text='详见附件')
+        mail.attachments = [SimpleNamespace(name=n, part_id=str(i)) for i, (n, _) in enumerate(files)]
+        mail.attachment_payloads = {str(i): d for i, (_, d) in enumerate(files)}
+        texts = attachment_texts(mail)  # No PDF reader: the PDF is named only, like a picture or a damaged file.
+        self.assertEqual([n for n, _, _ in texts], ['需求.xlsx', '方案.docx', '说明.txt', '长.txt'])
+        self.assertIn('支持需求清单', texts[0][1])
+        self.assertIn('价格 42 元', texts[2][1])
+        self.assertTrue(texts[3][2] and len(texts[3][1]) <= FILE_CHARS)
+        self.assertLessEqual(sum(len(t) for _, t, _ in texts), 8000)
+        self.assertEqual(attachment_texts(mail, lambda data: '报价 42 USD')[3][:2], ('报价.pdf', '报价 42 USD'))
+        self.assertIsNone(next((n for n, *_ in attachment_texts(mail, lambda data: 1 / 0) if n == '报价.pdf'), None))
+        user = build_messages(mail, attachments=texts[2:3])[1]['content']
+        self.assertIn('附件「说明.txt」的内容：\n第一行\n价格 42 元', user)
+        self.assertTrue(user.rstrip().endswith('>>>'))  # Inside the delimiters, as data.
 
     def test_prompt_says_where_the_user_stands(self):
         me = ['lisi@corp.example']

@@ -6,6 +6,7 @@ mail. The model never picks recipients; drafts are plain text the user edits.
 """
 import json
 import re
+from types import SimpleNamespace
 
 from coremail_desktop.ai.summary import mail_material, marks
 from coremail_desktop.errors import AppError
@@ -45,6 +46,30 @@ NOTE_SYSTEM = '''你是鸿雁写信助手。用户口述了这封邮件要说什
 不要增加口述和原邮件都没有的事实、数字、日期或承诺；需要用户自己补充的信息用【待补充：…】标出。人名、编号、金额、日期和链接原样保留。
 不要写邮箱地址，不要建议增加收件人。不要写签名和落款（撰写窗口会自动加签名）。
 只输出邮件正文（纯文本，用空行分段），不要加解释、标题或 Markdown 标记。'''
+
+STYLE_NOTE = '''
+资料里「用户以前写的邮件」是用户本人的写作风格样例：模仿其中的称呼、开头结尾的习惯、语气和句子长短，让这封读起来像他本人写的；不要照抄样例里的内容、事实和落款。'''
+
+SAMPLES, SAMPLE_CHARS = 3, 600
+_SIGNATURE_AT = re.compile(r'<[a-z]+[^>]*class="[^"]*\bhy-(?:signature|quote)\b', re.I)
+_ADDRESS = re.compile(r'[\w.+-]+@[\w-]+(?:\.[\w-]+)+')
+_PHONE = re.compile(r'(?<!\d)\+?\d[\d -]{7,}\d(?!\d)')
+
+
+def style_sample(document, signature=''):
+    """What the user wrote in a sent mail, as a 写作风格 sample: no quoted mail, no signature
+    (鸿雁 marks it; signature: its plain text, for mail sent elsewhere), addresses and phone
+    numbers masked, at most SAMPLE_CHARS. '' when there is too little to go by."""
+    from coremail_desktop.ai.thread import own_text
+    html = document.html
+    if html and _SIGNATURE_AT.search(html):
+        html = html[:_SIGNATURE_AT.search(html).start()]
+    text = own_text(SimpleNamespace(html=html, text=document.text))
+    if signature.strip() and signature.strip() in text:
+        text = text[:text.index(signature.strip())]
+    text = _PHONE.sub('【电话】', _ADDRESS.sub('【邮箱】', text)).strip()
+    return text[:SAMPLE_CHARS] if len(text) >= 20 else ''
+
 
 def _clean(value, limit):
     return re.sub(r'\s+', ' ', value).strip()[:limit] if isinstance(value, str) else ''
@@ -107,19 +132,23 @@ def new_messages(purpose, points, names, task):
             {'role': 'user', 'content': f'{open_mark}\n{material}{close_mark}\n\n收件人：{who}\n{want}请起草邮件正文。'}]
 
 
-def note_messages(note, subject='', to=(), cc=(), document=None, date='', how='new', rounds=()):
+def note_messages(note, subject='', to=(), cc=(), document=None, date='', how='new', rounds=(), samples=()):
     """口述成信: the user's words into a whole mail. to/cc: display names marked （同事）/（外部）;
     document: the mail being answered or forwarded, if any. rounds: [(earlier text, the
-    user's 修改意见)], oldest first — each goes in as the model's answer and the next ask."""
+    user's 修改意见)], oldest first — each goes in as the model's answer and the next ask.
+    samples: style_sample texts of the user's own sent mail to the same kind of people (W6)."""
     open_mark, close_mark = marks()
     names = lambda items: '、'.join(_clean(x, 80) for x in (items or [])[:20] if isinstance(x, str)) or '（无）'
     material = f'用户的口述：\n{check_text(note)}\n'
     if document is not None:
         material += f'\n要{"转发" if how == "forward" else "回复"}的原邮件：\n{mail_material(document, date)}\n'
+    samples = [s[:SAMPLE_CHARS] for s in samples if isinstance(s, str) and s.strip()][:SAMPLES]
+    material += ''.join(f'\n用户以前写的邮件（风格样例 {n}）：\n{s}\n' for n, s in enumerate(samples, 1))
     material = material.replace(open_mark, '').replace(close_mark, '')
     kind = {'reply': '回复', 'forward': '转发'}.get(how, '新邮件')
     head = f'这封邮件是{kind}。\n主题：{_clean(subject, 200) or "（未填）"}\n主送：{names(to)}\n抄送：{names(cc)}\n'
-    messages = [{'role': 'system', 'content': NOTE_SYSTEM.format(open=open_mark, close=close_mark)},
+    system = NOTE_SYSTEM.format(open=open_mark, close=close_mark) + (STYLE_NOTE if samples else '')
+    messages = [{'role': 'system', 'content': system},
                 {'role': 'user', 'content': f'{head}{open_mark}\n{material}{close_mark}\n\n请写成邮件正文。'}]
     for text, want in list(rounds)[-ROUNDS:]:
         want = _clean(want, MAX_NOTE)

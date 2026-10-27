@@ -364,6 +364,7 @@ function renderAiSettings() {
     $('#ai-key').placeholder = a.hasKey ? '已保存（不可查看），输入新 Key 可替换' : '未设置';
     $('#ai-clear').classList.toggle('hidden', !a.hasKey);
     $('#ai-actions').checked = a.actions;
+    renderMcp();
     status.textContent = (a.demo ? '演示模式：摘要由本机生成，不联网。' : a.hasKey ? '已设置 API Key。' : '未设置 API Key，「总结」和「问鸿雁」暂不可用。') +
       ` 本月已调用 ${a.usage.calls} 次，共 ${a.usage.tokens} tokens。`;
   }).catch(fail);
@@ -379,6 +380,22 @@ $('#ai-save').onclick = async () => {
 $('#ai-actions').onchange = async (e) => {
   try { await api('setAiSettings', { actions: e.target.checked }); toast(e.target.checked ? '对话里可以提议邮件操作' : '对话里不再提议邮件操作'); } catch (err) { fail(err); renderAiSettings(); }
 };
+// 本机只读 MCP 服务 (X1): off by default; on shows the command that adds 鸿雁 to Claude Code.
+function renderMcp(st) {
+  const show = (s) => {
+    $('#mcp-on').checked = s.enabled;
+    $('#mcp-how').classList.toggle('hidden', !s.enabled);
+    $('#mcp-command').textContent = s.command || '安装版暂不支持，请从源码运行鸿雁。';
+    $('#mcp-copy').classList.toggle('hidden', !s.command);
+    $('#mcp-use').textContent = s.calls ? `本次运行已被读取 ${s.calls} 次，最近一次 ${s.last}。` : '本次运行还没有被读取。';
+  };
+  if (st) show(st); else api('mcpStatus').then(show).catch(fail);
+}
+$('#mcp-on').onchange = async (e) => {
+  try { renderMcp(await api('setMcp', { enabled: e.target.checked })); toast(e.target.checked ? '本机 AI 工具可以读取邮箱' : '已关闭，本机 AI 工具不能再读取邮箱'); }
+  catch (err) { fail(err); renderMcp(); }
+};
+$('#mcp-copy').onclick = () => copyText($('#mcp-command').textContent, '命令');
 $('#ai-test').onclick = async () => {
   const b = $('#ai-test'); b.disabled = true; b.textContent = '正在测试…';
   try {

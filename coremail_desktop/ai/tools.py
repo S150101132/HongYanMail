@@ -9,6 +9,7 @@ import json
 import re
 from datetime import datetime
 
+from coremail_desktop.ai.attachments import attachment_texts
 from coremail_desktop.ai.summary import _who, mail_text
 from coremail_desktop.errors import AppError
 
@@ -33,7 +34,7 @@ SPECS = [
             'page': {'type': 'integer', 'description': '页码，从 1 开始'}}}}},
     {'type': 'function', 'function': {
         'name': 'read_mail',
-        'description': '阅读一封邮件的正文（纯文本，较长时截断）、收件人和附件名。最多读 5 封。',
+        'description': '阅读一封邮件的正文（纯文本，较长时截断）、收件人、附件名和附件里的文字（Word、Excel、PPT、PDF、文本，较长时截断）。最多读 5 封。',
         'parameters': {'type': 'object', 'properties': {
             'ref': {'type': 'string', 'description': 'search_mail 返回的邮件编号，如 M3'}}, 'required': ['ref']}}},
     {'type': 'function', 'function': {
@@ -54,10 +55,12 @@ class MailboxTools:
     folders: {'inbox': fid, 'sent': fid, 'names': {fid: name}};
     allowed: mail ids whose decrypted text the user agreed to send."""
 
-    def __init__(self, search, read, match, folders, allowed=(), archive=None, auto_allow=None):
+    def __init__(self, search, read, match, folders, allowed=(), archive=None, auto_allow=None, pdf_text=None):
         """archive: like search, over the local archive (no folders); None when there is none.
-        auto_allow(mid): encrypted mail the user allowed once for all (设置 → AI 助手)."""
+        auto_allow(mid): encrypted mail the user allowed once for all (设置 → AI 助手).
+        pdf_text(bytes) -> str: the text of a PDF attachment (QtPdf), or None."""
         self._search, self._read, self._match, self._archive = search, read, match, archive
+        self._pdf_text = pdf_text
         self.folders, self.allowed = folders, set(allowed)
         self._auto_allow = auto_allow or (lambda mid: False)
         self.mails, self._refs = {}, {}  # ref -> summary row; mid -> ref
@@ -211,10 +214,13 @@ class MailboxTools:
         text, truncated = mail_text(document)
         if len(text) > READ_CHARS:
             text, truncated = text[:READ_CHARS] + '\n……（后面的内容已省略）', True
-        return ({'ref': ref, 'subject': header('subject') or row.get('subject', ''), 'from': _who(header('from') or row.get('from'), 1),
-                 'to': _who(header('to')), 'cc': _who(header('cc')), 'date': str(row.get('date') or header('date'))[:16],
-                 'attachments': [a.name for a in document.attachments][:20], 'text': text or '（没有正文）', 'truncated': truncated},
-                label)
+        result = {'ref': ref, 'subject': header('subject') or row.get('subject', ''), 'from': _who(header('from') or row.get('from'), 1),
+                  'to': _who(header('to')), 'cc': _who(header('cc')), 'date': str(row.get('date') or header('date'))[:16],
+                  'attachments': [a.name for a in document.attachments][:20], 'text': text or '（没有正文）', 'truncated': truncated}
+        attached = attachment_texts(document, self._pdf_text, READ_CHARS)
+        if attached:
+            result['attachmentText'] = [{'name': n, 'text': t, 'truncated': cut} for n, t, cut in attached]
+        return result, label
 
     def find_contact(self, args):
         name = _clip(args.get('name'), 50)

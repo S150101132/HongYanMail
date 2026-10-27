@@ -152,6 +152,7 @@ MESSAGES = {
     'INVALID_QUESTION': '请输入要问的问题（不超过 500 字）。',
     'AI_CANCELLED': '已取消。',
     'AI_INVALID_INPUT': '没有可以交给 AI 处理的文字，或者请求无效。',
+    'MCP_OFF': '没有在「设置 → AI 助手」里打开「允许本机 AI 工具读取邮箱」。',
     'AI_TEXT_TOO_LONG': '文字太长（最多 8000 字），请分段处理。',
     'AI_NOT_A_THREAD': '这封邮件不属于多封邮件的会话。',
     'AI_PLAN_EXPIRED': '这个计划已过期或已被新的计划取代，请在对话里重新说一遍。',
