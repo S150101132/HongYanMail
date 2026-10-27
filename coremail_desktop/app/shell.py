@@ -127,6 +127,10 @@ POPOUT_EVENTS = {'mailChanged', 'authRequired'}
 # One-shot documents for printing, served at hongyan://app/print/<token>.html.
 _PRINT_DOCS = {}
 BACKGROUND_METHODS = {'prefetch'}
+# Sending (encrypting, uploading attachments) takes seconds to minutes: its own thread, so
+# reading and moving mail never waits behind it. 'send' first passes the mail thread, so
+# the composer's earlier saves land before it.
+SEND_METHODS = {'send', 'releaseSend', 'flushOutbox'}
 _LAST_SAVE_DIR = []  # Folder of the last successful save this session.
 
 
@@ -309,9 +313,10 @@ class Bridge(QObject):
             self._ai = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-ai')
             self._archive = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-archive')
             self._tasks = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-tasks')
+            self._send = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hongyan-send')
         else:
             self._serial, self._fast, self._background, self._ai = share._serial, share._fast, share._background, share._ai
-            self._archive, self._tasks = share._archive, share._tasks
+            self._archive, self._tasks, self._send = share._archive, share._tasks, share._send
         self._done.connect(self._deliver, Qt.ConnectionType.QueuedConnection)
 
     def emit_event(self, name, value=None):
@@ -350,9 +355,15 @@ class Bridge(QObject):
                 self._done.emit(request_id, False, json.dumps({'code': code, 'message': text}, ensure_ascii=False))
         pool = (self._background if name in BACKGROUND_METHODS else self._fast if name in FAST_METHODS
                 else self._ai if name in AI_METHODS else self._archive if name in ARCHIVE_METHODS
-                else self._tasks if name in TASK_METHODS else self._serial)
+                else self._tasks if name in TASK_METHODS else self._send if name in SEND_METHODS else self._serial)
+
+        def hop():
+            try:
+                self._send.submit(work)
+            except RuntimeError:
+                pass
         try:
-            pool.submit(work)
+            self._serial.submit(hop) if name == 'send' else pool.submit(work)
         except RuntimeError:
             pass  # The window is closing: its mail thread no longer takes work.
 
@@ -389,6 +400,7 @@ class Bridge(QObject):
         self._background.shutdown(wait=False, cancel_futures=True)
         self._ai.shutdown(wait=False, cancel_futures=True)
         self._archive.shutdown(wait=False, cancel_futures=True)
+        self._send.shutdown(wait=False, cancel_futures=True)
         self._tasks.shutdown(wait=False)  # Task changes already asked for still run (and export).
 
 

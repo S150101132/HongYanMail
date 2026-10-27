@@ -526,6 +526,35 @@ class ShellTest(unittest.TestCase):
         self.assertNotIn('releaseSend', self.shell.BACKEND_METHODS)
         self.assertIn('cancelSend', self.shell.FAST_METHODS)
 
+    def test_mail_work_does_not_wait_behind_a_send(self):
+        import threading
+        res = self.held()
+        gate, real = threading.Event(), self.backend._dispatch
+        self.backend._dispatch = lambda draft: (gate.wait(5), real(draft))[1]  # A slow upload.
+        self.addCleanup(gate.set)
+        replies = {}
+        self.window.bridge.reply.connect(lambda rid, ok, payload: replies.setdefault(rid, ok))
+        self.window.hold_send(res['localId'], res['revision'], 0)
+        self.wait(lambda: False, 100)
+        self.window.bridge.call('f', 'folders', '{}')
+        self.assertTrue(self.wait(lambda: 'f' in replies, 2000))
+        self.assertNotIn('sendResult', self.events)  # Still sending.
+        gate.set()
+        self.assertTrue(self.wait(lambda: 'sendResult' in self.events))
+
+    def test_page_send_waits_for_earlier_mail_work(self):
+        order, gate = [], __import__('threading').Event()
+        self.window.bridge._serial.submit(lambda: (gate.wait(5), order.append('save')))
+        value = self.backend.compose('new')
+        value.update(to=['zhangxm@example.invalid'], subject='s', html='<p>b</p>')
+        real = self.backend.send
+        self.backend.send = lambda **kw: (order.append('send'), real(**kw))[1]
+        self.window.bridge.call('s', 'send', __import__('json').dumps({'value': value}))
+        self.wait(lambda: False, 200)
+        gate.set()
+        self.assertTrue(self.wait(lambda: len(order) == 2))
+        self.assertEqual(order, ['save', 'send'])
+
     def test_hidden_window_still_sends_when_the_delay_ends(self):
         res = self.held()
         self.window.hide()  # Closed to the tray.
