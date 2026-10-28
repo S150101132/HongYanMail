@@ -21,13 +21,13 @@ class TitleBarTests(unittest.TestCase):
         for bad in ('', 'linear-gradient(#fff, #000)', '#fff', '#zzzzzz', None):
             self.assertIsNone(_colorref(bad))
 
-    def test_own_colour_is_kept_and_checked(self):
+    def test_own_colour_for_the_colour_theme_is_kept_and_checked(self):
         backend = MailBackend(scratch(self), adapter_factory=DemoAdapter, protector=XorProtector(), services_factory=local_services_stub)
         backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'pw', remember=True)
         self.addCleanup(backend.logout)
-        self.assertEqual(backend.prefs()['titleBar'], '')  # Follows the theme.
-        self.assertEqual(backend.set_prefs({'titleBar': '#7C3AED'})['titleBar'], '#7c3aed')
-        self.assertEqual(backend.set_prefs({'titleBar': 'red; x'})['titleBar'], '')
+        self.assertEqual(backend.prefs()['colorAccent'], '')  # The built-in violet.
+        self.assertEqual(backend.set_prefs({'colorAccent': '#0EA5E9'})['colorAccent'], '#0ea5e9')
+        self.assertEqual(backend.set_prefs({'colorAccent': 'red; x'})['colorAccent'], '')
 
 
 if __name__ == '__main__':

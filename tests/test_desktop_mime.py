@@ -67,6 +67,18 @@ class MimeTests(unittest.TestCase):
         self.assertIn('photo.png', names)              # A real attachment.
         self.assertIn('image001.png@01DC', doc.cid_resources)
 
+    def test_generic_attachment_names_get_the_extension_their_content_shows(self):
+        msg = EmailMessage()
+        msg.set_content('正文')
+        msg.add_attachment(b'\x89PNG\r\n\x1a\nabc', maintype='application', subtype='octet-stream', filename='reply_1_95_att4.blob')
+        msg.add_attachment(b'\xff\xd8\xffabc', maintype='application', subtype='octet-stream', filename='att5')
+        msg.add_attachment(b'%PDF-1.4 x', maintype='application', subtype='octet-stream', filename='data.BIN')
+        msg.add_attachment(b'plain bytes', maintype='application', subtype='octet-stream', filename='keep.blob')
+        msg.add_attachment(b'\x89PNG\r\n\x1a\nabc', maintype='text', subtype='plain', filename='notes.txt')
+        found = [(a.name, a.media_type) for a in parse_mime(msg.as_bytes(), 'x').attachments]
+        self.assertEqual(found, [('reply_1_95_att4.png', 'image/png'), ('att5.jpg', 'image/jpeg'), ('data.pdf', 'application/pdf'),
+                                 ('keep.blob', 'application/octet-stream'), ('notes.txt', 'text/plain')])
+
     def test_limits_return_visible_reason_and_never_partial_body(self):
         with patch('coremail_desktop.mime.parser.MAX_RAW_BYTES', 8):
             doc = parse_mime(b'Subject: Summary\r\n\r\nSecret body', 'x')

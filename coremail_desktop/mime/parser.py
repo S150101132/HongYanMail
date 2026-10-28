@@ -1,5 +1,6 @@
 """MIME is parsed on the session worker, never inside the reader widget."""
 import hashlib
+import os
 import re
 import base64
 import quopri
@@ -13,6 +14,20 @@ MAX_RAW_BYTES = 40 * 1024 * 1024
 MAX_DECODED_BYTES = 64 * 1024 * 1024
 MAX_DEPTH = 30
 IMAGE_TYPES = {'image/png', 'image/jpeg', 'image/gif', 'image/webp'}
+# Some senders lose a file's name when quoting (reply_..._att4.blob): such names get the
+# extension the content itself shows, so the icon, preview and 打开 all work.
+GENERIC_EXTENSIONS = {'', '.blob', '.bin', '.dat', '.tmp', '.octet-stream'}
+CONTENT_MAGIC = ((b'\x89PNG\r\n\x1a\n', '.png', 'image/png'), (b'\xff\xd8\xff', '.jpg', 'image/jpeg'),
+                 (b'GIF87a', '.gif', 'image/gif'), (b'GIF89a', '.gif', 'image/gif'), (b'%PDF-', '.pdf', 'application/pdf'))
+
+
+def _true_name(name, media_type, payload):
+    ext = os.path.splitext(name)[1]
+    if ext.lower() not in GENERIC_EXTENSIONS or not payload: return name, media_type
+    stem, head = name[:len(name) - len(ext)], bytes(payload[:16])
+    found = next(((e, t) for magic, e, t in CONTENT_MAGIC if head.startswith(magic)), None)
+    if found is None and head[:4] == b'RIFF' and head[8:12] == b'WEBP': found = ('.webp', 'image/webp')
+    return (stem + found[0], found[1]) if found else (name, media_type)
 
 
 def _raw_body(raw):
@@ -82,7 +97,8 @@ def parse_mime(raw: bytes, message_id: str, rich: bool = False) -> MessageDocume
             if attached and not hidden:
                 name = re.sub(r'[\x00-\x1f\x7f]', '', (filename or '未命名附件').replace('\\', '/').split('/')[-1])[:255]
                 size = len(payload) if payload is not None else None
-                attachments.append(AttachmentInfo(part_id, name or '未命名附件', part.get_content_type(), size))
+                name, media_type = _true_name(name or '未命名附件', part.get_content_type(), payload)
+                attachments.append(AttachmentInfo(part_id, name, media_type, size))
                 if payload is not None: attachment_payloads[part_id] = payload
                 cid = normalize_cid(str(part.get('Content-ID', '')))
                 if cid and part.get_content_type() in IMAGE_TYPES and part.get_content_disposition() != 'attachment':

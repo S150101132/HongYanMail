@@ -167,14 +167,49 @@ function applyTheme(theme, density) {
   document.documentElement.dataset.theme = theme === 'color' ? 'color' : dark ? 'dark' : 'light';
   if (density) document.documentElement.dataset.density = density;
   document.documentElement.classList.toggle('tb-lean', (S.prefs || {}).toolbar !== 'full');  // A4: 精简 unless 完整 was chosen.
-  tintTitleBar();
+  let accent = (S.prefs || {}).colorAccent;  // Before signing in: the last one used, so 多彩 does not flash violet.
+  if (accent === undefined) { try { accent = localStorage.getItem('hy-accent') || ''; } catch (e) { accent = ''; } }
+  else { try { localStorage.setItem('hy-accent', accent); } catch (e) { /* optional */ } }
+  applyAccent(accent);
   try { localStorage.setItem('hy-theme', theme); if (density) localStorage.setItem('hy-density', density); } catch (e) { /* optional */ }
   if (S.message) renderBody(S.message);
 }
-function tintTitleBar(color) {  // The window's native title bar: the user's colour, else the theme's.
+// 多彩 with the user's own colour: the theme's tokens worked out from one colour, at the
+// hue offsets and lightness of the built-in violet palette (style.css), so any colour reads the same way.
+const ACCENT_DEFAULT = '#7c3aed';
+function hexHsl(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (!d) return [0, 0, l * 100];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s * 100, l * 100];
+}
+function hslHex(h, s, l) {
+  h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(100, s)) / 100; l = Math.max(0, Math.min(100, l)) / 100;
+  const f = (n) => { const k = (n + h / 30) % 12; return Math.round(255 * (l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  return '#' + [f(0), f(8), f(4)].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+function accentTokens(hex) {
+  const [h, s, l] = hexHsl(hex), soft = Math.min(100, s * 1.2);
+  const side = [hslHex(h - 36, soft, 94), hslHex(h - 4, soft, 94), hslHex(h + 67, soft * 0.9, 94.5)];
+  return {
+    '--accent': hex, '--accent-2': hslHex(h, s * 0.85, Math.max(15, l - 8)), '--accent-soft': hslHex(h, soft, 95.5),
+    '--sel': hslHex(h, soft, 94.5), '--hover': hslHex(h, soft, 97.5), '--bg': hslHex(h - 10, soft, 97.5), '--panel-2': hslHex(h, soft, 98.5),
+    '--line': hslHex(h, s * 0.6, 92), '--line-2': hslHex(h, s * 0.6, 95.5), '--titlebar': side[0],
+    '--side': `linear-gradient(170deg, ${side[0]} 0%, ${side[1]} 45%, ${side[2]} 100%)`,
+    '--grad': `linear-gradient(135deg, ${hslHex(h - 23, s, 67)} 0%, ${hslHex(h + 9, s, 65)} 55%, ${hslHex(h + 68, s, 60)} 100%)`,
+  };
+}
+function applyAccent(hex) {  // '' or another theme: the stylesheet's own values.
+  const root = document.documentElement.style, tokens = accentTokens(ACCENT_DEFAULT);
+  Object.keys(tokens).forEach((k) => root.removeProperty(k));
+  if (hex && document.documentElement.dataset.theme === 'color') Object.entries(accentTokens(hex)).forEach(([k, v]) => root.setProperty(k, v));
+  tintTitleBar();
+}
+function tintTitleBar() {  // The window's native title bar follows the theme.
   if (!bridge) return;
-  color = color || (S.prefs || {}).titleBar || getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim();
-  api('setTitleBar', { color }).catch(() => {});
+  api('setTitleBar', { color: getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim() }).catch(() => {});
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(S.prefs.theme || 'system'));
 
@@ -1840,9 +1875,9 @@ function openSettings() {
   $$('#theme-seg button').forEach((b) => b.classList.toggle('on', b.dataset.theme === p.theme));
   $$('#density-seg button').forEach((b) => b.classList.toggle('on', b.dataset.density === p.density));
   $$('#toolbar-seg button').forEach((b) => b.classList.toggle('on', b.dataset.toolbar === (p.toolbar === 'full' ? 'full' : 'lean')));
-  $('#pref-titlebar-auto').checked = !p.titleBar;
-  $('#pref-titlebar').value = p.titleBar || getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim();
-  $('#pref-titlebar').disabled = !p.titleBar;
+  $('#pref-accent').value = p.colorAccent || ACCENT_DEFAULT;
+  $('#pref-accent').dataset.custom = p.colorAccent ? '1' : '';
+  $('#pref-accent-row').classList.toggle('hidden', p.theme !== 'color');
   $('#pref-poll').value = String(p.pollSeconds);
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-autostart').checked = !!p.autostart;
@@ -1871,18 +1906,20 @@ function renderCertStatus() {
   $('#btn-cert-forget').classList.toggle('hidden', !c.remembered && !c.unlocked);
 }
 $('#btn-cert-forget').onclick = async () => { S.profile.certificate = await api('forgetCertificate').catch(() => S.profile.certificate); renderCertStatus(); toast('已忘记证书'); };
-$$('#theme-seg button').forEach((b) => (b.onclick = () => { $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); applyTheme(b.dataset.theme); }));
+$$('#theme-seg button').forEach((b) => (b.onclick = () => {
+  $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); applyTheme(b.dataset.theme); applyAccent(accentDraft());
+  $('#pref-accent-row').classList.toggle('hidden', b.dataset.theme !== 'color');
+}));
 $$('#density-seg button').forEach((b) => (b.onclick = () => { $$('#density-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.dataset.density = b.dataset.density; }));
 $$('#toolbar-seg button').forEach((b) => (b.onclick = () => { $$('#toolbar-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.classList.toggle('tb-lean', b.dataset.toolbar !== 'full'); }));
-$('#pref-titlebar-auto').onchange = (e) => {  // Previewed at once; 取消 puts the saved colour back (applyTheme).
-  $('#pref-titlebar').disabled = e.target.checked;
-  tintTitleBar(e.target.checked ? getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim() : $('#pref-titlebar').value);
-};
-$('#pref-titlebar').oninput = (e) => tintTitleBar(e.target.value);
+// 多彩主题色: previewed at once; 取消 puts the saved colour back (applyTheme).
+const accentDraft = () => ($('#pref-accent').dataset.custom ? $('#pref-accent').value : '');
+$('#pref-accent').oninput = (e) => { e.target.dataset.custom = '1'; applyAccent(e.target.value); };
+$('#pref-accent-reset').onclick = () => { $('#pref-accent').value = ACCENT_DEFAULT; $('#pref-accent').dataset.custom = ''; applyAccent(''); };
 $('#btn-account').onclick = () => openSettings();  // Through the wrappers the other files add.
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
-  const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, toolbar: $('#toolbar-seg .on').dataset.toolbar, titleBar: $('#pref-titlebar-auto').checked ? '' : $('#pref-titlebar').value, pollSeconds: +$('#pref-poll').value,
+  const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, toolbar: $('#toolbar-seg .on').dataset.toolbar, colorAccent: accentDraft(), pollSeconds: +$('#pref-poll').value,
     notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, precheck: $('#pref-precheck').checked, signature: signatureHtml(),
     closeAction: $('#pref-close').value, startPage: $('#pref-start').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
   try {
