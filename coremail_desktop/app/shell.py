@@ -26,6 +26,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, QMenu, QSystemTrayIcon
 
 from coremail_desktop.errors import AppError
+from coremail_desktop.app.quotes import today_quote
 from coremail_desktop.app.tray_check import tray_registered
 from coremail_desktop.ui.branding import app_icon
 from coremail_desktop.ui.messages import login_message, user_message
@@ -449,9 +450,44 @@ class Bridge(QObject):
         self._tasks.shutdown(wait=False)  # Task changes already asked for still run (and export).
 
 
+def _colorref(value):
+    """'#rrggbb' → Windows COLORREF (0x00bbggrr); None for anything else."""
+    value = str(value or '').strip()
+    if len(value) != 7 or value[0] != '#':
+        return None
+    try:
+        r, g, b = bytes.fromhex(value[1:])
+    except ValueError:
+        return None
+    return r | g << 8 | b << 16
+
+
+def _tint_caption(window, color):
+    """The native title bar takes the theme's or the user's colour, with dark or light
+    text to match (Windows 11; older Windows ignores the attributes and keeps its own bar)."""
+    caption = _colorref(color)
+    if os.name != 'nt' or caption is None:
+        return False
+    import ctypes
+    hwnd = ctypes.c_void_p(int(window.winId()))
+    dark = (caption & 0xff) * 0.3 + (caption >> 8 & 0xff) * 0.59 + (caption >> 16) * 0.11 < 140
+    text = 0xf7f4f2 if dark else 0x281810  # #f2f4f7 / #101828.
+    values = [(20, int(dark)), (35, caption), (34, caption), (36, text)]  # Dark mode, caption, border, title text.
+    try:
+        for attribute, value in values:
+            value = ctypes.c_uint(value)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(value), ctypes.sizeof(value))
+    except (AttributeError, OSError):
+        return False
+    return True
+
+
 class _PrintHost:
     """Print and export for a window with a profile, a bridge and the backend.
     The document is built by the backend and laid out by a hidden, script-less view."""
+
+    def native_setTitleBar(self, color=''):
+        return _tint_caption(self, color)
 
     def _render_print(self, mid, remote, ready):
         token = os.urandom(12).hex()
@@ -627,7 +663,7 @@ class AppShell(_PrintHost, QMainWindow):
         self._unread = 0
         self._poll_busy = False
         self._last_new = None
-        self.setWindowTitle('鸿雁 · 工作邮箱')
+        self._show_title()
         self.setWindowIcon(app_icon())
         self.setMinimumSize(960, 600)
         self._fit_screen()
@@ -742,10 +778,15 @@ class AppShell(_PrintHost, QMainWindow):
     def _notification_clicked(self):
         self._to_page('openMessage', self._last_new)
 
+    def _show_title(self):
+        """Unread count, name and 今日一句 (refreshed with every unread update, so it turns over after midnight)."""
+        title = f'鸿雁 · 工作邮箱　　{today_quote()}'
+        self.setWindowTitle(f'({self._unread}) {title}' if self._unread else title)
+
     def _set_unread(self, count):
         self._unread = count
         title = '鸿雁 · 工作邮箱'
-        self.setWindowTitle(f'({count}) {title}' if count else title)
+        self._show_title()
         self.tray.setToolTip(f'{title} · {count} 封未读' if count else title)
 
     def _tray_shown(self):

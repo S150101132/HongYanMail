@@ -32,6 +32,7 @@ DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify'
                  'closeAction': '',  # ✕ of the main window: '' asks, 'tray' keeps running, 'quit' exits.
                  'understand': '',  # 理解层: '' not asked yet, 'on', 'off'.
                  'listGist': True,  # The list's second line shows the card's 要点 instead of the body's start.
+                 'titleBar': '',  # U2: window title bar colour '#rrggbb'; '' follows the theme.
                  'toolbar': 'lean',  # A4: 'lean' folds low-use buttons into ⋯ / 格式 / the send menu; 'full' shows them all.
                  'startPage': 'inbox',  # R2a/R3b: 'inbox' opens the 收件箱 after signing in, 'today' GitHub Trending (G1).
                  'memoryFacts': False,  # R3c: the 理解层 also keeps project facts (工作记忆); off: it only sorts mail.
@@ -593,6 +594,9 @@ class MailBackend:
             prefs['startPage'] = 'inbox'
         if prefs['toolbar'] not in ('lean', 'full'):
             prefs['toolbar'] = 'lean'
+        if not re.fullmatch(r'#[0-9a-fA-F]{6}', prefs['titleBar']):
+            prefs['titleBar'] = ''
+        prefs['titleBar'] = prefs['titleBar'].lower()
         if prefs['undoSeconds'] not in UNDO_CHOICES:
             prefs['undoSeconds'] = DEFAULT_PREFS['undoSeconds']
         for key, (low, high) in WIDTH_LIMITS.items():

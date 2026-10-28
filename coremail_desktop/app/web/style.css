@@ -3,6 +3,7 @@
   --panel: #ffffff;
   --panel-2: #f8f9fc;
   --side: #eef1f7;
+  --titlebar: #eef1f7;  /* The native window title bar (shell.py _tint_caption). */
   --text: #101828;
   --text-2: #475467;
   --muted: #8a94a6;
@@ -46,6 +47,7 @@
   --panel: #161a22;
   --panel-2: #1b2029;
   --side: #12161d;
+  --titlebar: #12161d;
   --text: #e6e9ef;
   --text-2: #b3bac7;
   --muted: #7c8595;
@@ -77,6 +79,7 @@
   --bg: #f5f2ff;
   --panel-2: #faf8ff;
   --side: linear-gradient(170deg, #dfe6ff 0%, #ebe2ff 45%, #fde4f1 100%);
+  --titlebar: #dfe6ff;
   --text: #1c1936;
   --text-2: #4a4766;
   --muted: #85829f;
@@ -415,6 +418,9 @@ body.moving, body.moving * { cursor: move !important; user-select: none; }
 .st-page h3:first-child { margin-top: 4px; }
 .st-page .pref-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .st-page .pref-row select { width: 140px; }
+.tb-color { display: inline-flex; align-items: center; gap: 10px; }
+.tb-color input[type=color] { width: 40px; height: 28px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; }
+.tb-color input[type=color]:disabled { opacity: .4; cursor: not-allowed; }
 .st-page .check { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .sig-editor { min-height: 200px; border: 1px solid var(--line); border-radius: 8px; padding: 12px; outline: none; user-select: text; }
 .sig-editor:focus { border-color: var(--accent); }
@@ -473,6 +479,7 @@ body.moving, body.moving * { cursor: move !important; user-select: none; }
 .reader-pane { container-type: inline-size; }
 .reader-toolbar .tb span { white-space: nowrap; }
 @container (max-width: 860px) { .reader-toolbar .tb.sent-only span, .reader-toolbar .tb.sched-only span { display: none; } }
+@container (max-width: 800px) { html:not(.tb-lean) .reader-toolbar .tb span { display: none; } }  /* 完整 toolbar: icons only rather than a second row. */
 @container (max-width: 1100px) { .app.chatting .reader-toolbar .tb span { display: none; } }  /* One row beside the conversation. */
 @container (max-width: 640px) { .reader-toolbar .tb span { display: none; } .reader-toolbar { padding: 8px 8px; } .reader-toolbar .tb { padding: 0 7px; } .reader-toolbar .tb-sep { margin: 0 3px; } .reader-scroll { padding: 18px 18px 32px; } }
 .sched-chip button { border: 0; background: transparent; cursor: pointer; color: var(--muted); width: 20px; height: 20px; border-radius: 50%; }

@@ -167,8 +167,14 @@ function applyTheme(theme, density) {
   document.documentElement.dataset.theme = theme === 'color' ? 'color' : dark ? 'dark' : 'light';
   if (density) document.documentElement.dataset.density = density;
   document.documentElement.classList.toggle('tb-lean', (S.prefs || {}).toolbar !== 'full');  // A4: 精简 unless 完整 was chosen.
+  tintTitleBar();
   try { localStorage.setItem('hy-theme', theme); if (density) localStorage.setItem('hy-density', density); } catch (e) { /* optional */ }
   if (S.message) renderBody(S.message);
+}
+function tintTitleBar(color) {  // The window's native title bar: the user's colour, else the theme's.
+  if (!bridge) return;
+  color = color || (S.prefs || {}).titleBar || getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim();
+  api('setTitleBar', { color }).catch(() => {});
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(S.prefs.theme || 'system'));
 
@@ -1834,6 +1840,9 @@ function openSettings() {
   $$('#theme-seg button').forEach((b) => b.classList.toggle('on', b.dataset.theme === p.theme));
   $$('#density-seg button').forEach((b) => b.classList.toggle('on', b.dataset.density === p.density));
   $$('#toolbar-seg button').forEach((b) => b.classList.toggle('on', b.dataset.toolbar === (p.toolbar === 'full' ? 'full' : 'lean')));
+  $('#pref-titlebar-auto').checked = !p.titleBar;
+  $('#pref-titlebar').value = p.titleBar || getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim();
+  $('#pref-titlebar').disabled = !p.titleBar;
   $('#pref-poll').value = String(p.pollSeconds);
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-autostart').checked = !!p.autostart;
@@ -1865,10 +1874,15 @@ $('#btn-cert-forget').onclick = async () => { S.profile.certificate = await api(
 $$('#theme-seg button').forEach((b) => (b.onclick = () => { $$('#theme-seg button').forEach((x) => x.classList.toggle('on', x === b)); applyTheme(b.dataset.theme); }));
 $$('#density-seg button').forEach((b) => (b.onclick = () => { $$('#density-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.dataset.density = b.dataset.density; }));
 $$('#toolbar-seg button').forEach((b) => (b.onclick = () => { $$('#toolbar-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.classList.toggle('tb-lean', b.dataset.toolbar !== 'full'); }));
+$('#pref-titlebar-auto').onchange = (e) => {  // Previewed at once; 取消 puts the saved colour back (applyTheme).
+  $('#pref-titlebar').disabled = e.target.checked;
+  tintTitleBar(e.target.checked ? getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim() : $('#pref-titlebar').value);
+};
+$('#pref-titlebar').oninput = (e) => tintTitleBar(e.target.value);
 $('#btn-account').onclick = () => openSettings();  // Through the wrappers the other files add.
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
-  const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, toolbar: $('#toolbar-seg .on').dataset.toolbar, pollSeconds: +$('#pref-poll').value,
+  const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, toolbar: $('#toolbar-seg .on').dataset.toolbar, titleBar: $('#pref-titlebar-auto').checked ? '' : $('#pref-titlebar').value, pollSeconds: +$('#pref-poll').value,
     notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, precheck: $('#pref-precheck').checked, signature: signatureHtml(),
     closeAction: $('#pref-close').value, startPage: $('#pref-start').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
   try {
@@ -2012,6 +2026,7 @@ on('openMessage', async (id) => {
       const value = payload ? JSON.parse(payload) : null;
       ok ? p.resolve(value) : p.reject(value || { message: '操作未完成' });
     });
+    tintTitleBar();
     bridge.event.connect((name, payload) => { const fn = handlers[name]; if (fn) fn(payload ? JSON.parse(payload) : null); });
     if (READER_MID) { await enterReader(READER_MID); return; }
     const saved = await api('savedLogin').catch(() => ({}));
