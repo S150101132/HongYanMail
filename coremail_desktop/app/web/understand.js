@@ -49,7 +49,8 @@ UC.menu = (r) => {
   const info = { sender: r.fromEmail || '', subject: r.subject || '' };
   return ['-', ...Object.keys(UC_KIND).filter((k) => k !== c.kind || !c.sure).map((k) => ({ label: `改为「${UC_KIND[k]}」`, icon: k === 'act' ? 'flag' : k === 'know' ? 'spark' : 'check', run: () => ucCorrect(r.id, { kind: k }, info) })),
     ...(c.kind === 'act' ? [{ label: c.done ? '取消「已处理」' : '标为已处理', icon: 'check', run: () => ucCorrect(r.id, { done: !c.done }, info) }] : []),
-    { label: '改项目…', icon: 'folder', run: () => ucProject(r.id, c, info) }];
+    { label: '改项目…', icon: 'folder', run: () => ucProject(r.id, c, info) },
+    ...(typeof meWhy === 'function' ? [{ label: '告诉鸿雁为什么…', icon: 'user', run: () => meWhy(r.id, c) }] : [])];
 };
 
 // Cards for the rows on screen, asked once per row.

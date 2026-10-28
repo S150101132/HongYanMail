@@ -278,6 +278,11 @@ class AgentTest(unittest.TestCase):
         model = Script(('answer', '答'))
         ask('新问题', model, tools)  # No history: no conversation note, as before.
         self.assertEqual([m['role'] for m in model.seen[0][0]], ['system', 'user'])
+        model = Script(('answer', '答'))
+        ask('表里我那一行写了什么', model, tools, me='王彪、wangbiao@corp.example')
+        note = model.seen[0][0][0]['content']
+        self.assertIn('用户本人：王彪、wangbiao@corp.example', note)
+        self.assertIn('不要反问用户叫什么', note)
 
     def test_begin_resets_reads_and_agreements(self):
         box = FakeMailbox(docs={'mid1': document('机密', 'decrypted')})
@@ -320,6 +325,7 @@ class BackendTest(unittest.TestCase):
         mid = result['sources'][0]['mid']
         self.assertIsNotNone(self.backend.cache.summary(mid))  # A source card opens like a listed mail.
         self.assertEqual(self.backend.ai_settings()['usage']['calls'], 3)
+        self.assertIn('demo@example.invalid', self.backend._me())
 
     def test_server_search_asks_for_snippets_and_scopes_folders(self):
         seen = []

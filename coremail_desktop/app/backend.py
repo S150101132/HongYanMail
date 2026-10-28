@@ -260,6 +260,7 @@ def _summary_dict(item):
             'scheduleAt': _schedule_ms(getattr(item, 'schedule_at', None)), 'tags': list(getattr(item, 'tags', ()) or ())}
 
 
+SENT_PAGES = 5  # 关于我初版: pages of the sent folder looked at, 100 each, until three months back.
 # 理解层: which mail is read, how far back and how much per round (design 4.2 / 4.4).
 UNDERSTAND_SKIP = ('sent', 'drafts', 'trash', 'spam', 'virus')
 UNDERSTAND_DAYS, UNDERSTAND_ROUND = 30, 10
@@ -2495,6 +2496,10 @@ class MailBackend:
             except OSError:
                 pass  # A blocked data folder must not hide the result.
 
+    def _me(self):
+        """The user's own display name and addresses, for 问鸿雁's 「我」."""
+        return '、'.join(dict.fromkeys(v for v in (self.display_name, self.account, *self.identities) if v))
+
     def ai_models(self):
         """Model ids the configured service offers, for the settings drop-down."""
         client = self._ai()
@@ -2521,8 +2526,8 @@ class MailBackend:
         if (not encrypted or self._encrypted_ok(mid)) and not refresh and saved.get(mid, {}).get('v') == SUMMARY_VERSION:
             return {**saved[mid], 'cached': True}
         summary = self.cache.summary(mid) or {}
-        messages = build_messages(document, summary.get('date') or '', self.display_name, [self.account or '', *self.identities],
-                                  attachment_texts(document, self.pdf_text))
+        messages = self._with_about(build_messages(document, summary.get('date') or '', self.display_name, [self.account or '', *self.identities],
+                                                   attachment_texts(document, self.pdf_text)))
         content, _ = self._ai_call(messages, max_tokens=SUMMARY_TOKENS, json_mode=True)
         result = {**parse_summary(content), 'model': model, 'at': datetime.now().strftime('%Y-%m-%d %H:%M'), 'encrypted': encrypted,
                   'v': SUMMARY_VERSION}
@@ -2630,7 +2635,7 @@ class MailBackend:
             raise AppError('NOT_AUTHENTICATED')
         self._ai()
         document, encrypted = self._ai_document(mid, allow_encrypted)
-        content, _ = self._ai_call(idea_messages(document, (self.cache.summary(mid) or {}).get('date') or ''),
+        content, _ = self._ai_call(self._with_about(idea_messages(document, (self.cache.summary(mid) or {}).get('date') or '')),
                                    max_tokens=IDEA_TOKENS, json_mode=True)
         return {'ideas': parse_ideas(content), 'encrypted': encrypted}
 
@@ -2643,7 +2648,7 @@ class MailBackend:
             raise AppError('NOT_AUTHENTICATED')
         self._ai()
         document, _ = self._ai_document(mid, allow_encrypted)
-        messages = draft_messages(document, idea, note, (self.cache.summary(mid) or {}).get('date') or '')
+        messages = self._with_about(draft_messages(document, idea, note, (self.cache.summary(mid) or {}).get('date') or ''))
         return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
 
     def write_from_note(self, note, subject='', to=(), cc=(), mid='', how='new', allow_encrypted=False, rounds=(),
@@ -2671,7 +2676,7 @@ class MailBackend:
                     raise
         external = any(str(p.get('email') or '').rpartition('@')[2].casefold() not in inside
                        for p in [*to, *cc] if isinstance(p, dict) and p.get('email'))
-        messages = note_messages(note, subject, who(to), who(cc), document, date, how, rounds, self._style_samples(external))
+        messages = self._with_about(note_messages(note, subject, who(to), who(cc), document, date, how, rounds, self._style_samples(external)))
         return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
 
     def _style_samples(self, external):
@@ -2752,7 +2757,7 @@ class MailBackend:
                 skipped += 1
                 continue
             mails.append({'id': row['id'], 'date': row.get('date') or '', 'document': document, 'encrypted': encrypted})
-        content, _ = self._ai_call(build_messages(mails, left_out), max_tokens=THREAD_TOKENS, json_mode=True)
+        content, _ = self._ai_call(self._with_about(build_messages(mails, left_out)), max_tokens=THREAD_TOKENS, json_mode=True)
         result = parse(content, len(mails))
         for step in result['timeline']:
             mail = mails[step['n'] - 1]
@@ -2799,7 +2804,8 @@ class MailBackend:
                                    pending=self._assist_pending if self._understand_on() else None, plan=self._assist_preview,
                                    thread=self._assist_thread, groups=self._assist_groups,
                                    memory=self._memory_search if self._understand_on() else None,
-                                   followups=self.followups if self._understand_on() else None)
+                                   followups=self.followups if self._understand_on() else None,
+                                   about=self._about_known if self.memory is not None else None)
             chat, state = uuid.uuid4().hex[:16], {'tools': tools, 'turns': [], 'shown': []}
             while len(self._chats) >= self.CHATS:
                 self._chats.pop(next(iter(self._chats)))
@@ -2830,7 +2836,7 @@ class MailBackend:
                 self._count_ai(tokens)
         result = ask(question, call, tools, progress or (lambda step: None), self._ask_cancel.is_set,
                      today=datetime.now().strftime('%Y-%m-%d'), history=turns, known=state['shown'], current=here,
-                     current_task=task_here)
+                     current_task=task_here, me=self._me(), about=self._about(numbered=True))
         state['turns'] = turns + [(question, result['answer'])]
         refs = [s['ref'] for s in result['sources']] + [t['ref'] for t in result['tasks']]
         state['shown'] = ([r for r in state['shown'] if r not in refs] + refs)[-60:]
@@ -2860,6 +2866,10 @@ class MailBackend:
         if kind == 'link':
             return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'],
                     'link': {'task': plan['task'], 'mails': [{k: m[k] for k in ('mid', 'subject', 'fromName', 'date')} for m in plan['mails']]}}
+        if kind == 'remember':
+            from coremail_desktop.memory.profile import GROUPS
+            return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'],
+                    'remember': {'group': GROUPS[plan['group']][0], 'text': plan['text'], 'was': plan['was']}}
         if kind == 'mail':
             return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'], 'basis': question[:200],
                     'mail': {'op': plan['op'], 'what': plan['what'], 'count': len(plan['mids']), 'folder': plan['folderName'],
@@ -3013,6 +3023,31 @@ class MailBackend:
         self._tasks().store.set(f'assist_nudge:{int(entry["task"])}', entry['mid'])  # Only the mail's id.
         return True
 
+    def assistant_remember_run(self, plan):
+        """记住 on a 关于我 card (Me2): the user's own words, kept at once (by 'user'); what it
+        updates is kept as past."""
+        from coremail_desktop.memory.profile import entry, keep_one, same, state
+        card = self._plan_entry(plan, 'remember')
+        items = self._profile_items()
+        if not any(state(e) == 'current' and e['group'] == card['group'] and same(e['text'], card['text']) for e in items):
+            made = entry(card['group'], card['text'], 'user', 'chat', state='pending')
+            if card['replaces']:
+                made['replaces'] = card['replaces']
+            items = keep_one(items + [made], made['id'], by='user')
+            self._memory().set('profile', items)
+        self._plans.pop(plan)
+        self._chat_note(card, f'\n（用户已记住：{card["text"]}）')
+        return {'kept': True}
+
+    def _about_known(self):
+        """问鸿雁's remember_me: {'A1': {'id', 'text'}}, as the numbered profile it was sent."""
+        from coremail_desktop.memory.profile import entries, refs
+        try:
+            items = {e['id']: e for e in entries(self.memory.get('profile'))}
+            return {ref: {'id': i, 'text': items[i]['text']} for ref, i in refs(list(items.values())).items()}
+        except AppError:
+            return {}
+
     def assistant_link_run(self, plan, picks):
         """关联 on a candidates card (W4): the picked mails linked to the task by hand's path."""
         entry = self._plan_entry(plan, 'link')
@@ -3135,6 +3170,7 @@ class MailBackend:
             from coremail_desktop.tasks.center import _shown
             fields = {k: str(_shown(task[k]))[:600] for k in ('system', 'content', 'latest', 'next') if task and task.get(k)}
             messages = new_messages(entry['purpose'], points, [c['name'] for c in entry['contacts']], fields)
+        messages = self._with_about(messages)
         return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
 
     def assistant_sent(self, plan):
@@ -3620,8 +3656,8 @@ class MailBackend:
             center.get(target)  # TASK_NOT_FOUND before any mail goes out.
         self._ai()  # Not configured: say so before reading the mail.
         mails = [self._task_mail(mid, {str(a) for a in allow}) for mid in dict.fromkeys(mids)]
-        messages = assistant.build_mail_messages(mails, target, text, history, list(center.store.tasks.values()), center.today(),
-                                                 check=check and isinstance(target, int))
+        messages = self._with_about(assistant.build_mail_messages(mails, target, text, history, list(center.store.tasks.values()), center.today(),
+                                                                  check=check and isinstance(target, int)))
         content, _ = self._ai_call(messages, max_tokens=assistant.PLAN_TOKENS, json_mode=True)
         plan = assistant.parse_plan(content)
         refs = [{k: m[k] for k in assistant.MAIL_KEYS} for m in mails]
@@ -3712,7 +3748,7 @@ class MailBackend:
         center = self._tasks()
         if center.status()['mode'] == 'off':
             raise AppError('TASK_NOT_IMPORTED')
-        messages = assistant.build_messages(text, history, list(center.store.tasks.values()), center.today())
+        messages = self._with_about(assistant.build_messages(text, history, list(center.store.tasks.values()), center.today()))
         content, _ = self._ai_call(messages, max_tokens=assistant.PLAN_TOKENS, json_mode=True)
         plan = assistant.parse_plan(content)
         preview = center.preview(plan['actions'])
@@ -3826,16 +3862,21 @@ class MailBackend:
             brief = [(t['id'], ' '.join(filter(None, (t.get('system'), t.get('content'))))) for t in sorted(tasks, key=lambda t: t['id'])][-understand.TASKS:]
             messages = understand.build_messages(document, self.display_name, [self.account or '', *self.identities], projects,
                                                  row.get('date') or '', datetime.now().date(), tasks=brief, facts=refs)
+            messages = self._with_about(messages, projects=False, numbered=True)  # The card lists the projects itself.
             content, _ = self._ai_call(messages, max_tokens=understand.CARD_TOKENS, json_mode=True)
+            me_refs = self._about_refs()
             try:
-                card = understand.apply_rule(understand.parse(content, {i for i, _ in brief}, refs), rule)
+                card = understand.apply_rule(understand.parse(content, {i for i, _ in brief}, refs, me_refs), rule)
             except AppError:
                 self._understand_failed[mid] = 'AI_BAD_RESPONSE'  # Not asked again this session.
                 raise
             card['model'] = getattr(client, 'model', '')
         card.update(v=understand.CARD_VERSION, at=datetime.now().strftime('%Y-%m-%d %H:%M'), actor='ai',
                     messageId=(self._docs[mid].headers.get('message-id', ('',))[0].strip('<> ') if mid in self._docs else ''))
+        ideas = card.pop('me', None)
         memory.put_card(mid, card)
+        if ideas and card['kind'] != 'ignore':
+            self._about_propose(mid, ideas, self._internal(row.get('fromEmail') or parseaddr(row.get('from') or '')[1]), me_refs)
         if card.get('facts') and card['kind'] != 'ignore' and self.prefs()['memoryFacts']:
             self._remember(mid, card, row, refs)
         month = datetime.now().strftime('%Y-%m')
@@ -4156,6 +4197,248 @@ class MailBackend:
                     memory.put_fact({**fact, 'project': found['name']})
         return self.memory_projects()
 
+    # 关于我 (Me1, memory/profile.py): the user's profile, sent along with the AI calls that
+    # judge or write for the user. Drafted once by the AI from what is on this computer;
+    # only what the user saves is kept, and the AI never changes it on its own.
+    def _profile_items(self):
+        from coremail_desktop.memory.profile import entries
+        return entries(self._memory().get('profile'))
+
+    def _about(self, projects=True, numbered=False):
+        """The 关于我 text for an AI call's system prompt ('' without one). projects: add the
+        project list (理解新邮件 lists it itself); numbered: lines carry their A1… refs, for
+        the calls that may propose a change (理解新邮件, 问鸿雁's remember_me)."""
+        from coremail_desktop.memory.profile import entries, prompt
+        if self.memory is None:
+            return ''
+        try:
+            return prompt(entries(self.memory.get('profile')), self._projects() if projects else (), numbered)
+        except AppError:
+            return ''  # A help only: no AI call fails for want of it.
+
+    def _with_about(self, messages, projects=True, numbered=False):
+        from coremail_desktop.memory.profile import with_profile
+        return with_profile(messages, self._about(projects, numbered))
+
+    def _about_refs(self):
+        """{'A1': entry id}: the numbering _about(numbered=True) sent."""
+        from coremail_desktop.memory.profile import entries, refs
+        try:
+            return refs(entries(self.memory.get('profile'))) if self.memory is not None else {}
+        except AppError:
+            return {}
+
+    def _about_propose(self, mid, ideas, inside, numbered):
+        """Me2: what the 理解层 read about the user in this mail waits in 关于我 (鸿雁想记住)."""
+        from coremail_desktop.memory.profile import propose
+        try:
+            items, added = propose(self._profile_items(), ideas, mid, inside, self.memory.get('profileRejected') or [], numbered)
+            if added:
+                self.memory.set('profile', items)
+        except AppError:
+            pass  # Never in the way of the card itself.
+
+    def about_me(self):
+        """The profile page: the four groups (with how many lines are too long to be sent)
+        and their entries."""
+        from coremail_desktop.memory.profile import GROUPS, cut
+        items = self._profile_items()
+        fitted = cut(items)
+        try:
+            ai = bool(self._ai())
+        except AppError:
+            ai = False
+        texts = {e['id']: e['text'] for e in items}
+        view = lambda e: {**{k: e.get(k, '') for k in ('id', 'group', 'text', 'email', 'by', 'src', 'mid')}, 'state': e.get('state') or 'current',
+                          'replaces': texts.get(e.get('replaces'), ''),
+                          'until': datetime.fromtimestamp(e['until']).strftime('%Y-%m-%d') if e.get('until') else ''}
+        return {'groups': [{'key': k, 'title': title, 'left': fitted[k][1]} for k, (title, _, _) in GROUPS.items()],
+                'entries': [view(e) for e in items], 'ai': ai}
+
+    def about_remove(self, ids=()):
+        """批量删除: the ticked entries, at once (any state)."""
+        if not isinstance(ids, list) or not 0 < len(ids) <= 200 or not all(isinstance(i, str) for i in ids):
+            raise AppError('PROFILE_INVALID')
+        gone = set(ids)
+        self._memory().set('profile', [e for e in self._profile_items() if e['id'] not in gone])
+        return self.about_me()
+
+    def about_pending(self, id='', keep=True):
+        """鸿雁想记住: 记住 (keep) or 不用 (the same words are never proposed again)."""
+        from coremail_desktop.memory.profile import REJECTED, keep_one, state
+        memory, items = self._memory(), self._profile_items()
+        found = next((e for e in items if e['id'] == id and state(e) == 'pending'), None) if isinstance(id, str) else None
+        if found is None or not isinstance(keep, bool):
+            raise AppError('PROFILE_INVALID')
+        if keep:
+            items = keep_one(items, id)
+        else:
+            items = [e for e in items if e['id'] != id]
+            memory.set('profileRejected', ((memory.get('profileRejected') or []) + [found['text']])[-REJECTED:])
+        memory.set('profile', items)
+        return self.about_me()
+
+    def about_restore(self, id=''):
+        """恢复 a replaced (past) entry."""
+        from coremail_desktop.memory.profile import restore
+        if not isinstance(id, str):
+            raise AppError('PROFILE_INVALID')
+        self._memory().set('profile', restore(self._profile_items(), id))
+        return self.about_me()
+
+    def about_entry(self, id='', group='', text='', email='', remove=False, src='', mid=''):
+        """Add (no id), change or remove one entry; what the user writes or changes is theirs
+        (by 'user'). src 'fix' with mid: the reason given when correcting that mail's card (Me2)."""
+        from coremail_desktop.memory.profile import clean_text, entry, merged
+        memory, items = self._memory(), self._profile_items()
+        if not isinstance(id, str) or len(id) > 20 or not isinstance(remove, bool) or src not in ('', 'fix') or (
+                not isinstance(mid, str) or (mid and (src != 'fix' or self.cache.summary(mid) is None))):
+            raise AppError('PROFILE_INVALID')
+        if id:
+            found = next((e for e in items if e['id'] == id), None)
+            if found is None:
+                raise AppError('PROFILE_INVALID')
+            if remove:
+                items = [e for e in items if e['id'] != id]
+            else:
+                made = entry(group or found['group'], text, 'user', found.get('src', ''), email)
+                items = [{**made, 'id': id} if e['id'] == id else e for e in items]
+        else:
+            items, _ = merged(items, [entry(group, clean_text(text), 'user', src, email, mid=mid)])
+        memory.set('profile', items)
+        return self.about_me()
+
+    def about_add(self, entries=()):
+        """Keep the draft lines the user ticked: as the AI wrote them (by 'ai') or as the user
+        changed them (edited: by 'user'). Lines already there are skipped."""
+        from coremail_desktop.memory.profile import CURRENT, entry, merged
+        if not isinstance(entries, list) or len(entries) > CURRENT or not all(isinstance(e, dict) for e in entries):
+            raise AppError('PROFILE_INVALID')
+        made = [entry(e.get('group'), e.get('text'), 'user' if e.get('edited') is True else 'ai',
+                      e.get('src') if e.get('src') in ('ref', 'mail', 'dir', 'task') else '', e.get('email') or '') for e in entries]
+        items, added = merged(self._profile_items(), made)
+        self._memory().set('profile', items)
+        return {**self.about_me(), 'added': added}
+
+    def _about_sent(self):
+        """My sent mail of the last SENT_DAYS days on this computer, newest first."""
+        from coremail_desktop.ai.profile import SENT_DAYS
+        sent = next((f['id'] for f in self._folders if f['role'] == 'sent'), '3')
+        cutoff = time.time() - SENT_DAYS * 86400
+        return [r for r in self.cache.summaries(str(sent), 0, 1000)[0] if (r.get('ts') or 0) >= cutoff and not r['flags'].get('draft')]
+
+    def _about_people(self, rows):
+        """Whom I wrote to most (To only), with the directory card when it is on this computer."""
+        from coremail_desktop.ai.profile import PEOPLE
+        own, counts, names = {i.casefold() for i in [self.account or '', *self.identities] if i}, {}, {}
+        for r in rows:
+            for p in _people(r.get('to') or ''):
+                email = p['email'].casefold()
+                if email and email not in own:
+                    counts[email] = counts.get(email, 0) + 1
+                    names.setdefault(email, p['name'])
+        top = sorted(counts, key=lambda e: (-counts[e], e))[:PEOPLE]
+        result = []
+        for email in top:
+            card = self._cached_person(email) if self._internal(email) else {}
+            result.append({'email': email, 'name': card.get('name') or names[email], 'count': counts[email], 'internal': self._internal(email),
+                           'dept': card.get('dept', ''), 'title': card.get('title', '')})
+        return result
+
+    def _cached_person(self, email):
+        """A directory card already kept on this computer ({} when there is none): the AI
+        thread never asks the server."""
+        key = 'person:' + hashlib.sha256((email or '').casefold().encode('utf-8')).hexdigest()[:24]
+        value = (self.cache.get(key) if self.cache else None) or {}
+        data = value.get('data') or {}
+        return data if data.get('found') else {}
+
+    def about_prepare(self):
+        """Before 生成初版 (mail thread): list the sent folder, download the newest SENT_READ
+        bodies of the last SENT_DAYS days and the directory cards of the user and of the
+        colleagues written to most. Read-only, never marks anything. -> counts."""
+        from coremail_desktop.ai.profile import SENT_DAYS, SENT_READ
+        if self.cache is None:
+            raise AppError('NOT_AUTHENTICATED')
+        sent, cutoff = next((f['id'] for f in self._folders if f['role'] == 'sent'), '3'), time.time() - SENT_DAYS * 86400
+        for offset in range(0, SENT_PAGES * 100, 100):  # The server lists at most 100 a page.
+            page = self.messages(str(sent), offset, 100)
+            if not page['more'] or min((r.get('ts') or 0) for r in page['rows']) < cutoff:
+                break
+        rows, failed = self._about_sent(), 0
+        for r in rows[:SENT_READ]:
+            if self.cache.get_body(r['id']) is None:
+                try:
+                    self._raw(r['id'])
+                except AppError as error:
+                    if error.code in REAUTH_CODES + NETWORK_CODES:
+                        raise
+                    failed += 1
+        for email in [self.account or ''] + [p['email'] for p in self._about_people(rows) if p['internal']]:
+            try:
+                self.person(email)
+            except AppError as error:
+                if error.code in REAUTH_CODES:
+                    raise
+        return {'sent': len(rows), 'failed': failed}
+
+    def about_draft(self, reference=''):
+        """生成初版 (AI thread): one call over the reference file (a path the user picked; read,
+        never kept), the directory, my sent mail, tasks, the project list and the 理解 rules.
+        -> {entries: the draft, not kept, used: what went in}. Without the AI: the directory only."""
+        from coremail_desktop.ai import profile as draft
+        from coremail_desktop.ai.summary import visible_text
+        from coremail_desktop.ai.writing import style_sample
+        from coremail_desktop.memory.profile import entry, same
+        memory = self._memory()
+        if not isinstance(reference, str) or len(reference) > 1000:
+            raise AppError('PROFILE_REFERENCE')
+        text = ''
+        if reference:
+            path = Path(reference)
+            if path.suffix.casefold() not in ('.md', '.markdown', '.txt'):
+                raise AppError('PROFILE_REFERENCE')
+            try:
+                text = draft.reference_text(path.read_bytes())
+            except OSError:
+                raise AppError('PROFILE_REFERENCE') from None
+        me = self._cached_person(self.account or '')
+        directory = {'name': me.get('name') or self.display_name, 'dept': me.get('dept', ''),
+                     'title': ' · '.join(v for v in (me.get('title', ''), f'上级 {me["manager"]}' if me.get('manager') else '') if v)}
+        try:
+            self._ai()
+        except AppError as error:
+            if error.code != 'AI_NOT_CONFIGURED':
+                raise
+            line = ' · '.join(v for v in (directory['dept'], directory['title']) if v)
+            return {'entries': [entry('role', line, 'ai', 'dir')] if line else [], 'ai': False, 'used': {'directory': bool(line)}}
+        rows = self._about_sent()
+        people, signature = self._about_people(rows), visible_text(self.prefs().get('signature') or '')
+        sent, skipped = [], 0
+        for r in rows[:draft.SENT_READ]:
+            try:
+                document, _ = self._ai_document(r['id'], False)
+            except AppError as error:
+                skipped += error.code == 'AI_ENCRYPTED_CONFIRM'
+                continue
+            body = style_sample(document, signature)
+            if body:
+                to = '、'.join(p['name'] or p['email'] for p in _people(r.get('to') or ''))[:80]
+                sent.append({'date': (r.get('date') or '')[:10], 'to': to, 'subject': (r.get('subject') or '')[:120], 'text': body})
+        tasks = [(t['id'], str(t.get('system') or ''), str(t.get('content') or '')) for t in sorted(self._open_tasks(), key=lambda t: t['id'])]
+        kinds = {'act': '要我做', 'know': '要我知道', 'ignore': '可以忽略'}
+        rules = [((r['sender'] or '任何发件人') + (f'，主题含「{r["keyword"]}」' if r['keyword'] else ''), kinds.get(r['kind'], ''))
+                 for r in memory.rules.values()]
+        from coremail_desktop.memory.profile import GROUPS, current
+        known = [(GROUPS[e['group']][0], e['text']) for e in current(self._profile_items())]
+        material = draft.material(text, directory, people, sent, tasks, self._projects(), rules, skipped, known)
+        content, _ = self._ai_call(draft.build_messages(self.display_name, material), max_tokens=draft.DRAFT_TOKENS, json_mode=True)
+        current = self._profile_items()
+        items = [i for i in draft.parse(content, [p['email'] for p in people])
+                 if not any(e['group'] == i['group'] and same(e['text'], i['text']) for e in current)]
+        return {'entries': items, 'ai': True, 'used': {'reference': bool(text), 'directory': bool(directory['dept'] or directory['title']),
+                                                       'sent': len(sent), 'skipped': skipped, 'people': len(people), 'tasks': len(tasks)}}
+
     def memory_facts(self, project):
         """One project's memory (a project with its systems'), newest first, with what each
         fact replaced (the 时间线); 'parent' names the project of a system."""
@@ -4285,7 +4568,8 @@ class MailBackend:
             if (r.get('fromEmail') or '').casefold() == email and card.get('kind') == 'act' and card.get('sure') and not card.get('done'):
                 waiting.append({**light(r), 'ask': card.get('ask') or card.get('gist') or ''})
         chase = [{**light(r), 'waiting': r['waiting']} for r in self.followups() if email in (r.get('to') or '').casefold()]
-        return {'on': True, 'owner': owner[:5], 'recent': [light(r) for r in rows[:5]], 'waiting': waiting[:5], 'chase': chase[:5]}
+        about = [e['text'] for e in self._profile_items() if e['group'] == 'people' and e.get('email') == email]  # 关于我 first.
+        return {'on': True, 'about': about[:3], 'owner': owner[:5], 'recent': [light(r) for r in rows[:5]], 'waiting': waiting[:5], 'chase': chase[:5]}
 
     def followups(self):
         """催办: mail I sent in the last 30 days, at least FOLLOWUP_DAYS ago, that asked

@@ -54,11 +54,15 @@ MEMORY_RULES = '''
 24. 问某个项目的进展、决定、谁负责、什么时候时，先用 memory_search 查工作记忆（从已读邮件中记下的事实），回答时标出事实出处的邮件编号；记忆里没有或不够时，再按第 1–5 条搜索邮件。记忆可能过时，以出处邮件为准。'''
 FOLLOWUP_RULES = '''
 25. 问"哪些邮件对方还没回""要催谁"时用 followups：用户发出、在主送里提了问、几天没有回复的邮件。要起草跟进时按第 16 条用 draft_reply 回复那封邮件（mail 用 followups 返回的编号），purpose 写「礼貌地跟进进展」。'''
+REMEMBER_RULES = '''
+26. 用户说「记住……」「以后……」「我现在负责 / 不负责……」「某某是我的……」这类关于自己的长期情况时，调用 remember_me 提议记进「关于我」：group 选最合适的一组，text 用一句话写清楚（不超过 100 字），更新了「关于用户」里的某一条就在 replaces 写它的 A 编号。只是提议：用户点「记住」才写入，回答里一两句话说明，不要说已经记住。一次性的待办不要记，那是任务。对话里写着「用户已记住」的确实已经记下。'''
 WRAP_UP = '搜索和阅读的次数已用完。请只根据上面已经得到的信息回答，并说明还有哪些没能查到。'
 CHAT_NOTE = ('这是连续对话。用户追问里的「第二封」「那封」「他」等指前面回答里提到的邮件、任务和人；'
              '下面这些编号仍然有效，可以直接用 read_mail / read_task 阅读，不必重新搜索：\n')
 CURRENT_NOTE = '用户正在看的邮件是 {line}。问题里的「这封」「这件事」指它；需要正文时用 read_mail 阅读。'
 CURRENT_TASK_NOTE = '用户附带了当前任务 {line}。问题里的「这个任务」「该任务」指它；需要详情时用 read_task。'
+ME_NOTE = ('用户本人：{me}。问题里的「我」「我的」「我自己」指用户本人；在邮件、表格、名单里找用户时按这些姓名和地址找'
+           '（英文邮件里中文名常写成拼音，姓和名的顺序可能颠倒，也可能只写邮箱前缀），不要反问用户叫什么。')
 CHAT_TURNS = 6  # Earlier questions and answers sent with each new one.
 CHAT_REFS = 30  # Known mails and tasks listed for the follow-ups, most recent first.
 
@@ -75,19 +79,25 @@ def _cited(answer, known):
 
 
 def ask(question, call, tools, progress=lambda step: None, cancelled=lambda: False, today='', clock=time.monotonic,
-        history=(), known=(), current=None, current_task=None):
+        history=(), known=(), current=None, current_task=None, me='', about=''):
     """call(messages, specs) -> {content, tool_calls}. -> {answer, sources, tasks, steps, ...}
     history: the conversation's earlier [(question, answer)]; known: refs shown in it;
     current: the ref of the mail open in the reader; current_task: of the task selected in
-    任务 (AssistantTools only). Only the answers' text goes back, never mail bodies: a
+    任务 (AssistantTools only); me: the user's own names and addresses; about: 关于我
+    (memory/profile.prompt). Only the answers' text goes back, never mail bodies: a
     follow-up reads again by ref."""
     tasks = getattr(tools, 'task_refs', None)
     plans = getattr(tools, 'plans', None)
     names = {s['function']['name'] for s in tools.specs}
     rules = TASK_RULES + ((PLAN_RULES + (DRAFT_RULES if 'draft_reply' in names else NO_DRAFT_RULES)) if 'plan_tasks' in names
                           else READ_ONLY_RULES) + (MAIL_RULES if 'plan_mail' in names else '') + \
-        (MEMORY_RULES if 'memory_search' in names else '') + (FOLLOWUP_RULES if 'followups' in names else '')
+        (MEMORY_RULES if 'memory_search' in names else '') + (FOLLOWUP_RULES if 'followups' in names else '') + \
+        (REMEMBER_RULES if 'remember_me' in names else '')
     messages = [{'role': 'system', 'content': SYSTEM_PROMPT.format(today=today) + (rules if tasks is not None else '')}]
+    if me:
+        messages[0]['content'] += '\n' + ME_NOTE.format(me=me)
+    if about:
+        messages[0]['content'] += '\n\n' + about
     note = lambda r: tools.task_note(r) if r.startswith('T') else tools.note(r)
     known = [r for r in known if (r in tools.mails or tasks and r in tasks) and r not in (current, current_task)][-CHAT_REFS:]
     if history and known:

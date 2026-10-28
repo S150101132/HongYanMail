@@ -344,7 +344,7 @@ class WiringTest(unittest.TestCase):
             self.assertIn(name, shell.BACKEND_METHODS)
         self.assertEqual(shell.AI_METHODS, {'summarize', 'aiTest', 'aiModels', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
                                             'replyIdeas', 'draftReply', 'writeFromNote', 'summarizeThread', 'understandMail',
-                                            'assistantDraftWrite', 'memoryWeekBrief', 'trending', 'dailyNews'})
+                                            'assistantDraftWrite', 'memoryWeekBrief', 'trending', 'dailyNews', 'aboutDraft'})
         self.assertFalse(shell.AI_METHODS & shell.FAST_METHODS)
 
     def test_page_renders_ai_text_escaped(self):

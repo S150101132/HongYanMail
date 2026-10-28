@@ -220,7 +220,8 @@ window.personExtra = async function (pop, person) {
   try { card = await api('memoryPerson', { email: person.email, name: person.name || '' }); } catch (err) { return; }
   if (!card.on || !pop.isConnected) return;
   const list = (title, rows, text) => rows.length ? `<div class="pp-mem"><b class="small">${title}</b><ul>${rows.map((r) => `<li${r.id ? ` data-mid="${esc(r.id)}"` : ''}>${text(r)}</li>`).join('')}</ul></div>` : '';
-  const html = list('负责', card.owner, (f) => `${esc(f.text)}<span class="muted small"> · ${esc(f.project)}</span>`) +
+  const html = list('关于我', (card.about || []).map((text) => ({ text })), (r) => esc(r.text)) +
+    list('负责', card.owner, (f) => `${esc(f.text)}<span class="muted small"> · ${esc(f.project)}</span>`) +
     list('等我处理', card.waiting, (r) => esc(r.ask || r.subject)) +
     list('等他回复', card.chase, (r) => `${esc(r.subject)}<span class="muted small"> · 已等 ${r.waiting} 天</span>`) +
     list('最近往来', card.recent, (r) => `${esc(r.subject || '（无主题）')}<span class="muted small"> · ${esc(String(r.date).slice(5, 10))}</span>`);
@@ -286,3 +287,169 @@ $('#mem-add').onclick = async () => {
   try { await api('memoryProject', { name }); $('#mem-new').value = ''; memReset(); renderMemProjects(true); } catch (err) { fail(err); }
 };
 $('#mem-new').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#mem-add').click(); } });
+
+// ---------------------------------------------------------------- 设置 → 关于我 (Me1)
+// What Hongyan knows about the user, sent along with the AI calls. The AI drafts it once
+// (生成初版, optionally from the user's own notes); only the lines the user keeps are saved.
+const ME = { ref: '', data: null, busy: false, picked: new Set() };
+const ME_SRC = { ref: '参考资料', mail: '邮件', dir: '通讯录', task: '任务', fix: '纠正', chat: '问鸿雁' };
+const ME_EMPTY = {
+  role: '还没有。例如「浪潮集团，常驻利雅得 NG 项目现场；具体职级未确认」。',
+  projects: '还没有。每个系统写一句你做什么、不归你什么，例如「NG BI：报表口径和开发归我；源系统故障不归我修」。',
+  people: '还没有。例如「沙特分公司领导：直接领导（姓名未确认）」「TNOC：BI 报表问题的来源之一」。',
+  ways: '还没有。例如「客户邮件用英文，同事用中文」「DBA、网络、AD 的专业操作我只协调」。',
+};
+const meSource = (e) => e.by === 'user' ? (e.src === 'fix' ? '你纠正时写的' : e.src === 'chat' ? '你在问鸿雁里说的' : e.src ? '你改过' : '你写的') : `AI 整理自${ME_SRC[e.src] || '资料'}`;
+// The run shows on the page itself — step and seconds, then the outcome — not only in a toast.
+const meStatus = (text, kind = '') => {
+  const el = $('#me-status');
+  el.className = 'me-status small' + (kind ? ' ' + kind : '');
+  el.innerHTML = (kind === 'busy' ? '<span class="tk-spin"></span>' : '') + esc(text);
+};
+
+async function renderMe() {
+  try { ME.data = await api('aboutMe'); } catch (err) { ME.data = null; meStatus((err && err.message) || ''); }
+  const d = ME.data;
+  $('#me-draft').disabled = $('#me-ref').disabled = !d || !!ME.busy;
+  if (!d) { ['pending', 'role', 'projects', 'people', 'ways'].forEach((k) => { $('#me-' + k).innerHTML = ''; }); return; }
+  const titles = Object.fromEntries(d.groups.map((g) => [g.key, g.title]));
+  const waiting = d.entries.filter((e) => e.state === 'pending');
+  $('#me-pending').innerHTML = waiting.length ? `<div class="me-head"><b>鸿雁想记住 ${waiting.length} 条</b><span class="muted small">从最近的邮件里读到的、关于你的新情况；点「记住」才会生效</span></div>` +
+    '<ul class="uc-rule-list me-list">' + waiting.map((e) => `<li data-me="${esc(e.id)}"><span><span class="muted small">${esc(titles[e.group])} · </span>${esc(e.text)}` +
+      `${e.replaces ? `<span class="muted small">（取代：${esc(e.replaces)}）</span>` : ''}` +
+      `${e.mid ? ` <a href="#" class="small" data-me-mail="${esc(e.mid)}">来源邮件</a>` : ''}</span>` +
+      '<button class="btn ghost sm" data-me-act="no">不用</button><button class="btn sm" data-me-act="keep">记住</button></li>').join('') + '</ul>' : '';
+  if (!ME.busy) $('#me-draft').textContent = d.entries.length ? '重新生成' : '生成初版';
+  $('#me-draft').title = d.entries.length ? '再起草一次：只列出还没有的条目，已有的不会被改动' : 'AI 根据参考资料、通讯录、最近 3 个月的已发邮件和任务起草，你确认后才保存';
+  for (const g of d.groups) {
+    const items = d.entries.filter((e) => e.group === g.key && e.state === 'current');
+    const past = d.entries.filter((e) => e.group === g.key && e.state === 'past');
+    $('#me-' + g.key).innerHTML = `<div class="me-head"><b>${esc(g.title)}</b><span class="muted small">${items.length ? `${items.length} 条` : ''}` +
+      `${g.left ? `，太长，AI 只看到前 ${items.length - g.left} 条` : ''}</span><span class="spacer"></span>` +
+      (items.length > 1 ? `<button class="btn ghost sm" data-me-all="${g.key}" title="选中这一组的全部条目，再在上面点「删除所选」">全选</button>` : '') +
+      `<button class="btn ghost sm" data-me-add="${g.key}">添加</button></div>` +
+      (items.length ? '<ul class="uc-rule-list me-list">' + items.map((e) => `<li data-me="${esc(e.id)}">` +
+        `<input type="checkbox" class="me-tick" data-me-tick="${esc(e.id)}"${ME.picked.has(e.id) ? ' checked' : ''} title="选中，可批量删除"><span>${esc(e.text)}` +
+        `${e.email ? ` <span class="muted small">${esc(e.email)}</span>` : ''}<span class="muted small"> · ${esc(meSource(e))}</span></span>` +
+        '<button class="btn ghost sm" data-me-act="edit">编辑</button><button class="btn ghost sm" data-me-act="del">删除</button></li>').join('') + '</ul>'
+        : `<p class="muted small">${esc(ME_EMPTY[g.key])}</p>`) +
+      (past.length ? `<details class="me-past"><summary class="muted small">以前的 ${past.length} 条</summary><ul class="uc-rule-list me-list">` +
+        past.map((e) => `<li data-me="${esc(e.id)}"><span class="muted">${esc(e.text)}<span class="small"> · ${esc(e.until)} 被取代</span></span>` +
+          '<button class="btn ghost sm" data-me-act="restore">恢复</button></li>').join('') + '</ul></details>' : '');
+  }
+  $$('[data-me-mail]').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); $('#settings').classList.add('hidden'); memOpenMail(a.dataset.meMail); }));
+  const live = new Set(d.entries.filter((e) => e.state === 'current').map((e) => e.id));
+  ME.picked.forEach((id) => { if (!live.has(id)) ME.picked.delete(id); });
+  $$('[data-me-tick]').forEach((c) => (c.onchange = () => { c.checked ? ME.picked.add(c.dataset.meTick) : ME.picked.delete(c.dataset.meTick); meBulk(); }));
+  $$('[data-me-all]').forEach((b) => (b.onclick = () => {
+    const ids = d.entries.filter((e) => e.group === b.dataset.meAll && e.state === 'current').map((e) => e.id);
+    const all = ids.every((id) => ME.picked.has(id));
+    ids.forEach((id) => (all ? ME.picked.delete(id) : ME.picked.add(id)));
+    $$('[data-me-tick]').forEach((c) => { c.checked = ME.picked.has(c.dataset.meTick); });
+    meBulk();
+  }));
+  meBulk();
+  $$('[data-me-add]').forEach((b) => (b.onclick = () => meEdit(b.dataset.meAdd)));
+  $$('[data-me-act]').forEach((b) => (b.onclick = () => {
+    const e = d.entries.find((x) => x.id === b.closest('[data-me]').dataset.me);
+    if (b.dataset.meAct === 'edit') { meEdit(e.group, e); return; }
+    if (b.dataset.meAct === 'keep' || b.dataset.meAct === 'no') { api('aboutPending', { id: e.id, keep: b.dataset.meAct === 'keep' }).then(() => renderMe()).catch(fail); return; }
+    if (b.dataset.meAct === 'restore') { api('aboutRestore', { id: e.id }).then(() => renderMe()).catch(fail); return; }
+    api('aboutEntry', { id: e.id, remove: true }).then(() => renderMe()).catch(fail);
+  }));
+}
+
+async function meEdit(group, e) {
+  const title = ME.data.groups.find((g) => g.key === group).title;
+  const value = await promptDialog({ title: `${e ? '编辑' : '添加'} · ${title}`, okText: '保存',
+    body: `<textarea id="me-text" rows="3" maxlength="120" spellcheck="false" placeholder="${esc(ME_EMPTY[group].replace(/^还没有。/, ''))}">${esc(e ? e.text : '')}</textarea>` +
+      (group === 'people' ? `<input id="me-email" type="text" maxlength="200" spellcheck="false" placeholder="邮箱（可不填）" value="${esc(e ? e.email : '')}">` : ''),
+    collect: () => ({ text: $('#me-text').value.trim(), email: $('#me-email') ? $('#me-email').value.trim() : '' }) });
+  if (!value || !value.text) return;
+  try { await api('aboutEntry', { id: e ? e.id : '', group, text: value.text, email: value.email }); renderMe(); } catch (err) { fail(err); }
+}
+
+$('#me-ref').onclick = async () => {
+  const path = await api('pickReference').catch(fail);
+  if (!path) return;
+  ME.ref = path;
+  $('#me-ref-name').innerHTML = `${esc(path.split(/[\\/]/).pop())} <a href="#" id="me-ref-clear">不用</a>`;
+  $('#me-ref-clear').onclick = (ev) => { ev.preventDefault(); ME.ref = ''; $('#me-ref-name').textContent = ''; };
+};
+
+$('#me-draft').onclick = async () => {
+  if (ME.busy) return;
+  const button = $('#me-draft'), started = Date.now();
+  let step = '第 1 步，共 2 步：读取最近 3 个月的已发邮件和通讯录（只读）';
+  const tick = () => meStatus(`${step}… 已用 ${Math.round((Date.now() - started) / 1000)} 秒`, 'busy');
+  ME.busy = true; button.disabled = true; button.textContent = '正在生成…';
+  tick();
+  const timer = setInterval(tick, 1000);
+  try {
+    const read = await api('aboutPrepare');
+    step = `第 2 步，共 2 步：AI 正在起草（读取了 ${read.sent} 封已发邮件${read.failed ? `，${read.failed} 封没能下载` : ''}），通常要一分钟左右`;
+    tick();
+    const draft = await api('aboutDraft', { reference: ME.ref });
+    clearInterval(timer);
+    if (!draft.entries.length) {
+      meStatus(draft.ai ? '起草完成，但没有新的条目：已有的都写过了。' : '还没有设置 AI（设置 → AI 助手），通讯录里也没有你的部门和职务，没有可起草的内容。', 'warn');
+      return;
+    }
+    meStatus(`起草了 ${draft.entries.length} 条，请在弹出的窗口里检查。`, 'ok');
+    const picked = await meReview(draft);
+    if (!picked || !picked.length) { meStatus(`起草了 ${draft.entries.length} 条，这次没有保存；可以再点「生成初版」。`, 'warn'); return; }
+    const saved = await api('aboutAdd', { entries: picked });
+    meStatus(`已保存 ${saved.added} 条。`, 'ok');
+  } catch (err) {
+    meStatus(`没有完成：${(err && err.message) || '操作未完成，请稍后重试。'}`, 'error');
+  } finally { clearInterval(timer); ME.busy = false; renderMe(); }
+};
+
+function meReview(draft) {
+  const u = draft.used || {};
+  const from = [u.reference && '参考资料', u.directory && '通讯录', u.sent && `${u.sent} 封已发邮件`, u.people && `${u.people} 位常联系的人`, u.tasks && `${u.tasks} 条任务`].filter(Boolean);
+  const titles = Object.fromEntries(ME.data.groups.map((g) => [g.key, g.title]));
+  const rows = ME.data.groups.map((g) => {
+    const items = draft.entries.map((e, i) => [e, i]).filter(([e]) => e.group === g.key);
+    return items.length ? `<b class="small">${esc(titles[g.key])}</b>` + items.map(([e, i]) => `<label class="me-pick"><input type="checkbox" data-mi="${i}" checked>` +
+      `<input type="text" data-mt="${i}" maxlength="120" spellcheck="false" value="${esc(e.text)}">${e.email ? `<span class="muted small">${esc(e.email)}</span>` : ''}</label>`).join('') : '';
+  }).join('');
+  const note = (from.length ? `参考了${from.join('、')}` : '没有可参考的材料') + (u.skipped ? `；${u.skipped} 封加密邮件没有读取（可在「AI 助手」里允许）` : '') +
+    '。逐条检查：不对的改掉或取消勾选，只有勾选的会保存。' + (draft.ai ? '' : '还没有设置 AI，只取了通讯录。');
+  return promptDialog({ title: '「关于我」初版', okText: '保存勾选的', body: `<p class="muted small">${esc(note)}</p><div class="me-review">${rows}</div>`,
+    collect: () => draft.entries.map((e, i) => {
+      if (!$(`[data-mi="${i}"]`).checked) return null;
+      const text = $(`[data-mt="${i}"]`).value.trim();
+      return text ? { group: e.group, text, email: e.email, src: e.src, edited: text !== e.text } : null;
+    }).filter(Boolean) });
+}
+
+const _meRenderAiSettings = renderAiSettings;
+renderAiSettings = function () { _meRenderAiSettings(); renderMe(); };
+
+// 纠正时说为什么 (Me2): from the reading strip's menu; kept in 关于我 at once, as the user's own.
+async function meWhy(mid, c) {
+  const guess = c.kind === 'act' ? 'ways' : c.project ? 'projects' : 'ways';
+  const value = await promptDialog({ title: '告诉鸿雁为什么', okText: '记住',
+    body: '<p class="muted small">写一句为什么这封判断错了，鸿雁会记进「关于我」，以后理解邮件、回答和写信都参考它。例如「MAXIMO 宕机不归我修，我只协调」。</p>' +
+      `<textarea id="me-why" rows="3" maxlength="120" spellcheck="false"></textarea>` +
+      `<label class="pref-row">记在<select id="me-why-group">${[['ways', '工作方式'], ['projects', '项目和系统'], ['people', '人'], ['role', '我的岗位']]
+        .map(([k, t]) => `<option value="${k}"${k === guess ? ' selected' : ''}>${t}</option>`).join('')}</select></label>`,
+    collect: () => ({ text: $('#me-why').value.trim(), group: $('#me-why-group').value }) });
+  if (!value || !value.text) return;
+  try { await api('aboutEntry', { group: value.group, text: value.text, src: 'fix', mid }); toast('已记进「关于我」'); } catch (err) { fail(err); }
+}
+
+// 批量删除: tick entries (or 全选 a group), then 删除所选 once.
+function meBulk() {
+  const bar = $('#me-bulk'), n = ME.picked.size;
+  bar.classList.toggle('hidden', !n);
+  if (!n) { bar.innerHTML = ''; return; }
+  bar.innerHTML = `<span>已选 ${n} 条</span><span class="spacer"></span><button class="btn ghost sm" id="me-bulk-none">取消选择</button>` +
+    `<button class="btn sm danger" id="me-bulk-del">删除所选</button>`;
+  $('#me-bulk-none').onclick = () => { ME.picked.clear(); $$('[data-me-tick]').forEach((c) => { c.checked = false; }); meBulk(); };
+  $('#me-bulk-del').onclick = async () => {
+    if (!await confirmDialog(`删除 ${n} 条？`, '删除后 AI 就不再参考这些条目；不能撤销，需要时可以重新添加。', '删除')) return;
+    try { await api('aboutRemove', { ids: [...ME.picked] }); toast(`已删除 ${n} 条`); ME.picked.clear(); renderMe(); } catch (err) { fail(err); }
+  };
+}

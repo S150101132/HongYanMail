@@ -208,6 +208,8 @@ class DemoAdapter:
 
     def list_messages(self, folder_id, offset, limit=50, mboxa=''):
         self._need()
+        if not 1 <= limit <= 100:  # As the real server (protocol/coremail.py).
+            raise AppError('INVALID_PAGE')
         rows = sorted((r for r in self._store(mboxa)[1].values() if r['fid'] == str(folder_id)), key=lambda r: r['date'], reverse=True)
         self.last_folder_total, self.last_folder_id = len(rows), str(folder_id) + mboxa
         return [self._summary(r) for r in rows[offset:offset + limit]]
@@ -682,6 +684,14 @@ class DemoAiClient:
             return json.dumps({'conclusion': f'这个会话共 {count} 封邮件（演示模式：由本机生成，没有联网）。',
                                'timeline': [{'n': n, 'text': f'第 {n} 封邮件。'} for n in range(1, count + 1)][:8],
                                'open': [], 'actions': []}, ensure_ascii=False), 0
+        if '起草一份「关于我」资料' in messages[0]['content']:  # 关于我初版: lines from the material's own headings.
+            entries = [{'group': 'role', 'text': '演示：实施工程师，负责项目交付与协调（直属领导未确认）', 'src': 'dir'}]
+            for name, role in re.findall(r'^(.+?)（(我负责|我关注)）$', text, re.M)[:3]:
+                entries.append({'group': 'projects', 'text': f'{name}：{"需求、部署和测试协调" if role == "我负责" else "只需了解进展"}（演示）', 'src': 'task'})
+            for name, email in re.findall(r'^(.+?) <([^>]+)>：', text, re.M)[:3]:
+                entries.append({'group': 'people', 'text': f'{name}：常联系的同事（演示）', 'email': email, 'src': 'mail'})
+            entries.append({'group': 'ways', 'text': '客户邮件用英文，同事邮件用中文（演示）', 'src': 'mail'})
+            return json.dumps({'entries': entries}, ensure_ascii=False), 0
         if '鸿雁的邮件理解助手' in messages[0]['content']:  # 理解层: a card from the subject's words.
             subject = (re.search(r'主题：(.*)', text) or [None, ''])[1].replace('（演示）', '').strip()
             topic = re.sub(r'^(?:Re|回复)\s*[:：]\s*|【[^】]*】', '', subject).strip() or '邮件'
@@ -700,6 +710,8 @@ class DemoAiClient:
                 task = re.search(r'^#(\d+) .*' + re.escape(topic[:2]), text, re.M) if len(topic) >= 2 else None
                 if task:
                     card['task'] = {'id': int(task.group(1)), 'why': '主题相同（演示）'}
+                if '联调' in subject:  # 关于我 (Me2): a mail naming the user's new role.
+                    card['me'] = [{'group': 'projects', 'text': f'{project}：接口联调由我对接、确认时间（演示）', 'replaces': ''}]
             elif re.search(r'通知|培训|维护', subject):
                 card = {'kind': 'ignore', 'sure': True, 'gist': f'{topic}（例行通知）', 'ask': '', 'due': ''}
             else:

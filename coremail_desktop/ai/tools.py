@@ -343,6 +343,17 @@ FOLLOWUP_SPEC = {'type': 'function', 'function': {
     'description': '催办：用户最近 30 天发出、在主送里提了问、几天还没有人回复的邮件（编号、主题、收件人、已等几天）。',
     'parameters': {'type': 'object', 'properties': {}}}}
 MEMORY_ROWS = 20
+# 关于我 (Me2): 「记住……」 in 问鸿雁 becomes a card; the user's 记住 writes it.
+REMEMBER_GROUPS = ('role', 'projects', 'people', 'ways')
+REMEMBER_SPEC = {'type': 'function', 'function': {
+    'name': 'remember_me',
+    'description': '提议把一条关于用户本人的长期情况记进「关于我」（岗位、项目和系统里做什么不做什么、和某人的关系、工作习惯）。'
+                   '只生成卡片，用户点「记住」才写入。一次性的待办不要用它。',
+    'parameters': {'type': 'object', 'properties': {
+        'group': {'type': 'string', 'enum': list(REMEMBER_GROUPS), 'description': 'role 我的岗位、projects 项目和系统、people 人、ways 工作方式'},
+        'text': {'type': 'string', 'description': '一句话，不超过 100 字'},
+        'replaces': {'type': 'string', 'description': '更新了「关于用户」里的哪一条：它的 A 编号，如 A3；新的一条就不填'}},
+        'required': ['group', 'text']}}}
 
 
 class AssistantTools(MailboxTools):
@@ -356,17 +367,17 @@ class AssistantTools(MailboxTools):
     folders['targets'] ([{'id', 'name', 'role'}], the user's own) and folders['trash']."""
 
     def __init__(self, *args, tasks, task, mine, pending=None, plan=None, thread=None, groups=None, actions=False, now=datetime.now,
-                 memory=None, followups=None, **kwargs):
+                 memory=None, followups=None, about=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._tasks, self._task, self._mine, self._pending, self._plan = tasks, task, mine, pending, plan
-        self._memory, self._followups = memory, followups
+        self._memory, self._followups, self._about = memory, followups, about  # about() -> {'A1': {'id', 'text'}}
         self._thread, self._groups, self._actions, self._now = thread, groups, actions, now
         self.task_refs = {}  # T12 -> {'id', 'system', 'content', 'status', 'due'}
         self.plans, self._plan_count = [], 0  # This question's proposals: {'ref', 'kind', 'summary', ...}.
         self.group_refs, self.mail_task, self.thread_people = {}, {}, {}  # G1 -> id; M3 -> task id; T12 -> addresses
         self.specs = SPECS + TASK_SPECS + ([PENDING_SPEC] if pending else []) + ([PLAN_SPEC] if plan else []) + \
             (DRAFT_SPECS if thread and groups else []) + ([MAIL_SPEC] if actions else []) + \
-            ([MEMORY_SPEC] if memory else []) + ([FOLLOWUP_SPEC] if followups else [])
+            ([MEMORY_SPEC] if memory else []) + ([FOLLOWUP_SPEC] if followups else []) + ([REMEMBER_SPEC] if about else [])
 
     def begin(self, allowed=()):
         super().begin(allowed)
@@ -379,7 +390,7 @@ class AssistantTools(MailboxTools):
 
     def run(self, name, arguments):
         drafting = ('task_thread', 'list_groups', 'draft_reply', 'draft_new', 'suggest_links')
-        if name not in ('list_tasks', 'read_task', 'pending_mail', 'plan_tasks', 'plan_mail', 'memory_search', 'followups') + drafting:
+        if name not in ('list_tasks', 'read_task', 'pending_mail', 'plan_tasks', 'plan_mail', 'memory_search', 'followups', 'remember_me') + drafting:
             return super().run(name, arguments)
         try:
             args = json.loads(arguments or '{}')
@@ -395,12 +406,30 @@ class AssistantTools(MailboxTools):
             return {'error': '现在只能查看任务，不能修改'}, '拟定任务操作（不可用）'
         if name in drafting and not (self._thread and self._groups):
             return {'error': '现在不能起草邮件'}, '起草（不可用）'
+        if name == 'remember_me' and not self._about:
+            return {'error': '现在不能记进「关于我」，请告诉用户在 设置 → 关于我 里添加'}, '记住（不可用）'
         if name == 'plan_mail' and not self._actions:
             return {'error': '用户没有允许 AI 提议邮件操作，请告诉用户自己在列表里操作'}, '拟定邮件操作（未开启）'
         return {'list_tasks': self.list_tasks, 'read_task': self.read_task, 'pending_mail': self.pending_mail,
                 'plan_tasks': self.plan_tasks, 'task_thread': self.task_thread, 'list_groups': self.list_groups,
                 'draft_reply': self.draft_reply, 'draft_new': self.draft_new, 'suggest_links': self.suggest_links,
-                'plan_mail': self.plan_mail, 'memory_search': self.memory_search, 'followups': self.followups}[name](args)
+                'plan_mail': self.plan_mail, 'memory_search': self.memory_search, 'followups': self.followups,
+                'remember_me': self.remember_me}[name](args)
+
+    def remember_me(self, args):
+        """Me2: a 关于我 line the user asked to keep, shown as a card; nothing is written here."""
+        group, text = args.get('group'), _clip(args.get('text'), 120)
+        if group not in REMEMBER_GROUPS or not text:
+            return {'error': 'group 是 role / projects / people / ways 之一，text 不能为空'}, '提议记住（参数无效）'
+        known, ref = self._about() or {}, _clip(args.get('replaces'), 6).upper()
+        if ref and ref not in known:
+            return {'error': f'{ref} 不是「关于用户」里的编号；新的一条就不填 replaces'}, '提议记住（编号无效）'
+        was = known.get(ref) or {}
+        plan = self._new_plan('remember', '记进「关于我」', group=group, text=text, replaces=was.get('id', ''), was=was.get('text', ''))
+        if plan is None:
+            return {'error': f'一次回答最多提出 {PLANS_PER_QUESTION} 个计划'}, '提议记住（已达上限）'
+        return ({'plan': plan['ref'], 'note': '已作为卡片显示，用户点「记住」才写入「关于我」。回答里一两句话说明，不要说已经记住。'},
+                f'提议记住：{_clip(text, 30)}')
 
     def add_task(self, task):
         """A task the user brought in (the one selected in 任务), or one a tool returned -> its ref."""

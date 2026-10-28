@@ -1312,3 +1312,34 @@ html:not(.tb-lean) .lean-only { display: none !important; }
 @media (max-width: 1100px) {  /* Narrow: one column under the other, the page scrolls as one. */
   .daily-view { overflow: auto; } .dv-page { height: auto; padding: 16px; } .dv-cols { grid-template-columns: minmax(0, 1fr); } .dv-col { overflow: visible; }
 }
+
+/* 设置 → 关于我 (Me1) */
+.me-group { margin: 14px 0 4px; }
+.me-status { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--text-2); }
+.me-status:empty { display: none; }
+.me-status.busy, .me-status.ok, .me-status.warn, .me-status.error { padding: 8px 12px; border-radius: 8px; border: 1px solid; }
+.me-status.busy { color: var(--text); background: var(--panel); border-color: var(--line); }
+.me-status.ok { color: var(--ok-strong); background: var(--ok-bg); border-color: var(--ok-line); }
+.me-status.warn { color: var(--warn-strong); background: var(--warn-bg); border-color: var(--warn-line); }
+.me-status.error { color: var(--danger); background: var(--danger-bg); border-color: var(--danger-line); }
+.me-status .tk-spin { flex: none; }
+.me-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.me-head .spacer { flex: 1; }
+.me-plist { margin: 4px 0 8px 12px; padding-left: 10px; border-left: 2px solid var(--line-2); }
+#prompt .modal-card:has(.me-review) { width: 720px; }
+.me-review { max-height: 56vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.me-review b { margin-top: 8px; }
+.me-pick { display: flex; align-items: center; gap: 8px; }
+.me-pick input[type=text] { flex: 1; min-width: 0; height: 28px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; background: var(--panel); color: inherit; }
+#prompt #me-text { width: 100%; }
+#prompt #me-email { width: 100%; margin-top: 8px; }
+.me-pending:empty { display: none; }
+.me-pending { padding: 8px 12px; border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: 8px; }
+.me-pending .me-head { border-bottom-color: var(--warn-line); }
+.me-past { margin: 2px 0 6px; }
+.me-past summary { cursor: pointer; }
+.remember-text { padding: 6px 2px; }
+#prompt #me-why { width: 100%; }
+.me-bulk { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 2px 8px rgba(0, 0, 0, .06); font-size: var(--fs-sm); }
+.me-bulk .spacer { flex: 1; }
+.me-tick { flex: none; margin: 0 2px 0 0; }

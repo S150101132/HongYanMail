@@ -574,6 +574,7 @@ function planCard(p, turn, j) {
   if (p.kind === 'draft') return draftCard(p, turn, j);
   if (p.kind === 'link') return linkCard(p, turn, j);
   if (p.kind === 'mail') return mailCard(p, turn, j);
+  if (p.kind === 'remember') return rememberCard(p, turn, j);
   // Each operation can be left out (T1b, now here): p.skip holds the unticked indexes.
   const skip = p.skip || new Set(), picking = !p.state && p.preview.filter(planReady).length > 1;
   const ready = p.preview.filter((x, i) => planReady(x) && !skip.has(i)).length, at = `data-turn="${turn}" data-plan="${j}"`;
@@ -607,6 +608,22 @@ function nudgeAct(p, turn, act) {
   if (n.state) return;
   if (act === 'nudge-draft') { n.state = 'open'; turn.result.plans.push(n.plan); }
   else { n.state = 'off'; api('assistantNudgeDismiss', { plan: n.plan.id }).catch(fail); }
+  renderAsk();
+}
+// 记进「关于我」 (Me2): what the user asked to keep, written only on 记住.
+function rememberCard(p, turn, j) {
+  const at = `data-turn="${turn}" data-plan="${j}"`, r = p.remember;
+  const foot = p.state === 'done' ? `<span class="plan-ok">${esc(p.note)}</span>` : p.state === 'off' ? `<span class="muted small">${esc(p.note)}</span>` :
+    '<span class="muted small">点「记住」后，问鸿雁、理解邮件和写信都会参考这一条；可在 设置 → 关于我 修改</span><span class="spacer"></span>' +
+    `<button class="btn ghost sm" ${at} data-plan-act="skip">不用</button><button class="btn primary sm" ${at} data-plan-act="remember">记住</button>`;
+  return `<div class="chat-plan${p.state ? ' ' + p.state : ''}" ${at}><div class="chat-plan-head"><i data-icon="user"></i>` +
+    `<b>记进「关于我」· ${esc(r.group)}${p.state === 'done' ? ' · 已记住' : p.state === 'off' ? ' · 没有记' : ''}</b></div>` +
+    `<div class="remember-text">${esc(r.text)}${r.was ? `<div class="muted small">取代：${esc(r.was)}（旧的一条留在「以前」，可以恢复）</div>` : ''}</div>` +
+    `<div class="chat-plan-foot">${foot}</div></div>`;
+}
+async function rememberRun(p) {
+  if (p.state) return;
+  try { await api('assistantRememberRun', { plan: p.id }); p.state = 'done'; p.note = '已记住。'; } catch (err) { p.state = 'off'; p.note = err.message; }
   renderAsk();
 }
 // 没有关联邮件 (W4): up to five candidates the AI found; the user ticks and links them.
@@ -847,10 +864,11 @@ $('#ask-out').addEventListener('click', async (e) => {
     else if (planAct.dataset.planAct === 'verify') showVerify(p.outcome);
     else if (planAct.dataset.planAct === 'draft') draftFromPlan(p);
     else if (planAct.dataset.planAct === 'link') linkRun(p);
+    else if (planAct.dataset.planAct === 'remember') rememberRun(p);
     else if (planAct.dataset.planAct === 'mail') mailRun(p);
     else if (planAct.dataset.planAct === 'undo') mailUndo(p);
     else if (planAct.dataset.planAct.startsWith('nudge-')) nudgeAct(p, turn, planAct.dataset.planAct);
-    else if (planAct.dataset.planAct === 'skip') { p.state = 'off'; p.note = p.kind === 'link' ? '没有关联。' : '没有起草。'; renderAsk(); }
+    else if (planAct.dataset.planAct === 'skip') { p.state = 'off'; p.note = p.kind === 'link' ? '没有关联。' : p.kind === 'remember' ? '没有记。' : '没有起草。'; renderAsk(); }
     else { p.state = 'off'; p.note = '没有执行。在下面说说要怎么改，例如「日期改成昨天」。'; renderAsk(); $('#ask-input').focus(); }
   } else if (t.closest('[data-open]')) openSource(t.closest('[data-open]').dataset.open);
   else if (tried) {  // A sample ending in … is only begun: the user finishes it.

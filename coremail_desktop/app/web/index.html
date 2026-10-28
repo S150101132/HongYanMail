@@ -312,6 +312,7 @@
         <button data-tab="account"><i data-icon="user"></i>账号</button>
         <div class="st-group">功能</div>
         <button data-tab="ai"><i data-icon="spark"></i>AI 助手</button>
+        <button data-tab="me"><i data-icon="user"></i>关于我</button>
         <button data-tab="archive"><i data-icon="archive"></i>本地存档</button>
         <button data-tab="tasks"><i data-icon="tasks"></i>任务中心</button>
         <div class="st-group" id="st-server-group">邮箱规则（服务器）</div>
@@ -403,11 +404,25 @@
           <p class="muted small" id="uc-status"></p>
           <div id="uc-rules"></div>
           <div class="row-gap"><button class="btn ghost danger" id="uc-clear">清除理解结果和规则</button></div>
-          <h3>工作记忆</h3>
-          <label class="check"><input id="mem-facts" type="checkbox"> 记录项目事实（关掉时理解新邮件只做分类，不记项目的进展和决定；已记下的保留）</label>
-          <p class="muted small">理解邮件时，鸿雁把名单里项目的进展、决定、分工和关键日期记下来：同一件事有了新消息就更新，旧的留作历史；外部邮件不能自动改同事说过的，你写的 AI 也不能改，这两种会等你确认。任务中心未完成任务的「系统」自动列入（我负责）；也可以手动添加只想了解的项目（我关注），或把别名合并到一个项目。</p>
-          <div id="mem-projects" class="mem-projects"></div>
-          <div class="row-gap mem-add"><input id="mem-new" type="text" maxlength="30" spellcheck="false" placeholder="项目名，例如 NG BI"><button class="btn ghost" id="mem-add">添加项目</button></div>
+        </div>
+        <div class="modal-body st-pane st-page hidden" data-pane="me">
+          <h3>关于我</h3>
+          <p class="muted small">鸿雁对你的了解：岗位、参与的项目和系统、常打交道的人、工作方式。问鸿雁、理解新邮件、总结、AI 写信和任务助手都会带上这份资料，按你的职责来判断——哪些事要你做，哪些只是协调或知会。资料加密保存在本机，只发给「AI 助手」里设置的服务；AI 不会自己修改，你可以随时编辑、删除。</p>
+          <div class="row-gap"><button class="btn" id="me-draft">生成初版</button><button class="btn ghost" id="me-ref">选择参考资料…</button><span class="muted small" id="me-ref-name"></span></div>
+          <p class="me-status small" id="me-status"></p>
+          <div id="me-bulk" class="me-bulk hidden"></div>
+          <div id="me-pending" class="me-group me-pending"></div>
+          <div id="me-role" class="me-group"></div>
+          <div id="me-projects" class="me-group"></div>
+          <div class="me-plist">
+            <b class="small">项目名单</b>
+            <label class="check"><input id="mem-facts" type="checkbox"> 记录项目事实（关掉时理解新邮件只做分类，不记项目的进展和决定；已记下的保留）</label>
+            <p class="muted small">理解邮件时，鸿雁把名单里项目的进展、决定、分工和关键日期记下来：同一件事有了新消息就更新，旧的留作历史；外部邮件不能自动改同事说过的，你写的 AI 也不能改，这两种会等你确认。任务中心未完成任务的「系统」自动列入（我负责）；也可以手动添加只想了解的项目（我关注），或把别名合并到一个项目。</p>
+            <div id="mem-projects" class="mem-projects"></div>
+            <div class="row-gap mem-add"><input id="mem-new" type="text" maxlength="30" spellcheck="false" placeholder="项目名，例如 NG BI"><button class="btn ghost" id="mem-add">添加项目</button></div>
+          </div>
+          <div id="me-people" class="me-group"></div>
+          <div id="me-ways" class="me-group"></div>
         </div>
         <div class="modal-body st-pane st-page hidden" data-pane="archive">
           <h3 id="archive-section">本地存档</h3>

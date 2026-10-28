@@ -423,6 +423,47 @@ STEPS += [
     (900, "document.body.offsetWidth", 'am-manual'),
     (300, "$('#settings').classList.add('hidden')", None),
 ]
+# 关于我 (Me1): the empty page, the AI's first draft to review, the kept lines (HONGYAN_WALK_ME=1; demo AI).
+ME = len(STEPS)
+STEPS += [
+    (2500, lambda: (setattr(backend, 'ai_client', __import__('coremail_desktop.app.demo', fromlist=['DemoAiClient']).DemoAiClient()),
+                    backend.memory_project('NG BI'), backend.memory_project('SAP', role='watch')), None),
+    (300, "openSettings(); $('#st-nav [data-tab=me]').click()", None),
+    (1200, "document.body.offsetWidth", 'me-empty'),
+    (300, "$('#me-draft').click()", 'me-busy'),
+    (5000, "document.body.offsetWidth", 'me-draft'),
+    (300, "$$('[data-mi]')[1].checked = false; const t = $$('[data-mt]')[0]; t.value = t.value.replace('演示：', ''); $('#prompt-ok').click()", None),
+    (1500, "document.body.offsetWidth", 'me-kept'),
+    (300, "$('[data-me-add=ways]').click()", None),
+    (700, "$('#me-text').value = 'DBA、网络、AD 的专业操作我只协调，不亲自做'", 'me-add'),
+    (300, "$('#prompt-ok').click()", None),
+    (1200, "$('#me-ways').scrollIntoView()", 'me-saved'),
+    (300, "$('#settings').classList.add('hidden')", None),
+    # Me2: a mail's proposal waits on top (鸿雁想记住), 记住 keeps it; 告诉鸿雁为什么 from the reading strip.
+    (300, lambda: me2_propose(), None),
+    (300, "openSettings(); $('#st-nav [data-tab=me]').click()", None),
+    (1200, "document.body.offsetWidth", 'me2-pending'),
+    (300, "$('#me-pending [data-me-act=keep]').click()", None),
+    (1200, "document.body.offsetWidth", 'me2-kept'),
+    (300, "$('[data-me-all=people]').click()", None),
+    (700, "$('#me-bulk').scrollIntoView({ block: 'nearest' })", 'me-bulk'),
+    (300, "$('#me-bulk-none').click()", None),
+    (300, "$('#settings').classList.add('hidden'); UC.cards.clear(); selectMessage(window._me2)", None),
+    (1500, "$('#uc-strip [data-uc=menu]').click()", 'me2-menu'),
+    (500, "hideMenu(); meWhy(window._me2, UC.cards.get(window._me2))", None),
+    (700, "$('#me-why').value = '联调时间类邮件我只需确认一个时间，不用写长回复'", 'me2-why'),
+    (300, "$('#prompt-ok').click()", None),
+    (900, "document.body.offsetWidth", None),
+]
+
+
+def me2_propose():
+    """理解新邮件 on one 联调 mail with the demo AI: its card proposes a 关于我 line."""
+    backend.set_understand('on')
+    mid = next(r['id'] for r in backend.cache.summaries('1', 0, 300)[0] if '联调' in (r.get('subject') or ''))
+    backend.understand_fetch([mid])
+    backend.understand_mail(mid)
+    window.page.runJavaScript(f"window._me2 = '{mid}'; S.prefs.understand = 'on'")
 
 
 def render_pdf(mid):
@@ -460,6 +501,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(AM if os.environ.get('HONGYAN_WALK_AM') else X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(ME if os.environ.get("HONGYAN_WALK_ME") else AM if os.environ.get("HONGYAN_WALK_AM") else X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

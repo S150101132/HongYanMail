@@ -101,6 +101,8 @@ BACKEND_METHODS = {
     'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryWeekBrief': 'memory_week_brief', 'memoryPerson': 'memory_person', 'followups': 'followups',
     'todayWaiting': 'today_waiting', 'trending': 'trending', 'dailyNews': 'daily_news',
     'followupDismiss': 'followup_dismiss',
+    'aboutMe': 'about_me', 'aboutEntry': 'about_entry', 'aboutAdd': 'about_add', 'aboutPrepare': 'about_prepare', 'aboutDraft': 'about_draft',
+    'aboutPending': 'about_pending', 'aboutRestore': 'about_restore', 'aboutRemove': 'about_remove', 'assistantRememberRun': 'assistant_remember_run',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
@@ -109,11 +111,11 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
                 'recipientGroups', 'aiSettings', 'mcpStatus', 'setMcp', 'cancelAsk', 'cancelAi', 'precheck', 'archiveStatus', 'archiveView', 'searchArchive',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment',
                 'aiEncrypted', 'understandStatus', 'understandPending', 'understandCards', 'understandView', 'understandRules',
-                'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups'}
+                'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups', 'aboutMe'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'aiModels', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
               'replyIdeas', 'draftReply', 'writeFromNote', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
-              'memoryWeekBrief', 'trending', 'dailyNews'}
+              'memoryWeekBrief', 'trending', 'dailyNews', 'aboutDraft'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
 STREAM_METHODS = {'draftReply', 'writeFromNote', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
@@ -1045,6 +1047,11 @@ class AppShell(_PrintHost, QMainWindow):
         """A path shown in the page, opened in Explorer (a file is selected in its folder)."""
         from coremail_desktop.app.backend import shell_reveal
         return shell_reveal(path)
+
+    def native_pickReference(self):
+        """关于我: the user's own notes for the first draft ('' when cancelled); only the path goes back."""
+        path, _ = QFileDialog.getOpenFileName(self._parent(), '选择参考资料', '', '文本 (*.md *.markdown *.txt)')
+        return path or ''
 
     def native_pickPst(self):
         """An Outlook data file chosen by the user ('' when cancelled); only its path goes back."""

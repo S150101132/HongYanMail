@@ -24,6 +24,7 @@ KINDS = ('act', 'know', 'ignore')
 FACT_TYPES = ('status', 'decision', 'owner', 'date', 'other')
 GIST, TAG, ASK, PROJECT, FACT, FACTS, PROJECTS = 40, 16, 60, 30, 80, 5, 40
 TASKS, TASK_TEXT, WHY = 30, 40, 40
+ME, ME_TEXT, ME_GROUPS = 2, 120, ('role', 'projects', 'people', 'ways')
 RULE_KEYWORD, RULE_LIMIT = 20, 300
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
@@ -45,10 +46,12 @@ kind 三选一：
  "due": "要求完成的日期 YYYY-MM-DD，没有明确日期就为空字符串",
  "project": "所属项目，优先使用已知项目名，看不出就为空字符串",
  "facts": [{{"project": "项目名", "type": "status|decision|owner|date|other", "text": "值得记住的事实，不超过 60 个字", "replaces": "F 编号或空字符串"}}],
- "task": {{"id": 任务编号或 0, "why": "为什么是这条任务，不超过 30 个字"}}}}
+ "task": {{"id": 任务编号或 0, "why": "为什么是这条任务，不超过 30 个字"}},
+ "me": [{{"group": "role|projects|people|ways", "text": "关于用户本人的新情况，不超过 100 个字", "replaces": "A 编号或空字符串"}}]}}
 facts 的 project：只关于项目里某一个系统的事写系统名，关于整个项目的事写项目名。facts 只写已知项目的进展（status）、决定（decision）、分工（owner，写成「某某负责某事」）、关键日期（date）这类以后会用到的事实，最多 5 条；寒暄、签名、免责声明不算；没有就为空数组。
 一条事实更新了「已记住的事实」中同一项目的某一条（例如进度变了、日期改了、换了负责人）时，replaces 写那一条的 F 编号；决定（decision）只能被新的决定取代。与已记住的完全相同的事实不要再写。
 这封邮件明显是在推进「未完成任务」中的某一条时，task 写它的编号和理由；拿不准就写 0。
+me 只在这封邮件明确说到用户本人的新情况时写，最多 2 条：被指定为某件事的负责人或接口人、岗位或上级变了、有了新的对接人、不再负责某件事。只是一次性的待办、别人的事、猜测都不算；「关于用户」里已经有的不要再写；更新了其中某一条时 replaces 写那一条的 A 编号。拿不准就为空数组。
 邮件里的相对日期（周五、下周一）按邮件的发送日期换算成具体日期。用简体中文。'''
 
 
@@ -112,9 +115,10 @@ def _text(value, limit):
     return re.sub(r'\s+', ' ', value).strip()[:limit] if isinstance(value, str) else ''
 
 
-def parse(content, tasks=(), refs=()):
+def parse(content, tasks=(), refs=(), me_refs=()):
     """The model's JSON, checked field by field; anything else is AI_BAD_RESPONSE. A task
-    candidate must be one of tasks (ids), a replaced fact one of refs (F1…)."""
+    candidate must be one of tasks (ids), a replaced fact one of refs (F1…), a replaced
+    「关于我」 line one of me_refs (A1…; memory/profile.refs)."""
     content = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', content or '')
     try:
         value = json.loads(content)
@@ -144,6 +148,12 @@ def parse(content, tasks=(), refs=()):
             'project': _text(value.get('project'), PROJECT), 'facts': facts[:FACTS]}
     if candidate:
         card['task'] = {'id': candidate, 'why': _text(task.get('why'), WHY)}
+    me = [{'group': m['group'], 'text': _text(m.get('text'), ME_TEXT),
+           'replaces': m['replaces'] if isinstance(m.get('replaces'), str) and m['replaces'] in me_refs else ''}
+          for m in (value.get('me') if isinstance(value.get('me'), list) else []) if isinstance(m, dict) and m.get('group') in ME_GROUPS]
+    me = [m for m in me if m['text']][:ME]
+    if me:
+        card['me'] = me  # 关于我 ideas (Me2): taken off the card and kept as pending by the backend.
     return card
 
 
