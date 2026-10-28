@@ -1067,7 +1067,28 @@ function writeFrame(html, opts = {}) {
     body{margin:0;padding:${paper ? '18px 20px' : '0'};color:${fg};font:14.5px/1.7 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;word-wrap:break-word;overflow-wrap:anywhere;overflow-x:auto}
     img{max-width:100%;height:auto} a{color:${dark && !paper ? '#7aa2ff' : '#2563eb'}} pre{white-space:pre-wrap}
     blockquote{margin:0 0 0 4px;padding-left:12px;border-left:3px solid #d0d5dd;color:${dark && !paper ? '#b3bac7' : '#475467'}}
-    ::selection{background:#bfd3ff}</style></head><body>${html}</body></html>`;
+    .hy-wide{overflow-x:auto;max-width:100%} ::selection{background:#bfd3ff}</style></head><body>${html}</body></html>`;
+}
+// Tables wider than the pane: shrink a little to fit (not below 75%, still readable),
+// and give what is still too wide its own horizontal scroller right at the table instead
+// of one scrollbar at the very bottom of a long mail. Redone when the pane resizes.
+function fitWideTables(doc) {
+  const body = doc.body, cs = doc.defaultView.getComputedStyle(body);
+  const avail = body.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+  doc.querySelectorAll('table').forEach((t) => {
+    if (t.parentElement.closest('table')) return;  // Outermost tables only.
+    t.style.zoom = '';
+    const w = t.getBoundingClientRect().width;
+    if (w <= avail + 1) return;
+    let box = t.parentElement.classList.contains('hy-wide') ? t.parentElement : null;
+    const zoom = Math.max(0.75, avail / w);
+    t.style.zoom = String(zoom);
+    if (w * zoom > avail + 1 && !box) {
+      box = doc.createElement('div'); box.className = 'hy-wide';
+      box.dir = doc.defaultView.getComputedStyle(t).direction;  // RTL tables start at their right edge.
+      t.before(box); box.append(t);
+    }
+  });
 }
 $('#r-frame').addEventListener('load', () => {
   const frame = $('#r-frame');
@@ -1088,8 +1109,15 @@ $('#r-frame').addEventListener('load', () => {
     const h = Math.ceil(Math.max(120, bottom)) + 8;
     if (Math.abs(h - last) > 2) { last = h; frame.style.height = h + 'px'; }
   };
+  fitWideTables(doc);
   fit();
-  [250, 1000, 3000].forEach((t) => setTimeout(fit, t));  // Fonts and data: images settle after load.
+  let wideTimer = 0, wideW = doc.body.clientWidth;
+  doc.defaultView.addEventListener('resize', () => {
+    if (doc.body.clientWidth === wideW) return;  // Our own height changes also fire resize.
+    wideW = doc.body.clientWidth;
+    clearTimeout(wideTimer); wideTimer = setTimeout(() => { fitWideTables(doc); fit(); }, 150);
+  });
+  [250, 1000, 3000].forEach((t) => setTimeout(() => { fitWideTables(doc); fit(); }, t));  // Late fonts widen tables.  // Fonts and data: images settle after load.
   $$('img', doc).forEach((img) => img.addEventListener('load', fit));
   try { doc.fonts.ready.then(fit); doc.fonts.addEventListener('loadingdone', fit); } catch (e) { /* optional */ }
   try {
