@@ -173,6 +173,23 @@ class ChatClient:
             raise AppError('AI_BAD_RESPONSE')
         return text, tokens
 
+    def models(self):
+        """The provider's model ids (GET /models, OpenAI-compatible), sorted; names that
+        would not pass check_model are dropped."""
+        request = Request(self.base_url + '/models', method='GET',
+                          headers={'Accept': 'application/json', 'Authorization': 'Bearer ' + self._key})
+        try:
+            with self.opener.open(request, timeout=self.timeout) as response:
+                raw = response.read(MAX_RESPONSE + 1)
+        except Exception as error:
+            raise AppError(_failure(error)) from None
+        try:
+            items = json.loads(raw.decode('utf-8'))['data'] if len(raw) <= MAX_RESPONSE else None
+            ids = {item['id'] for item in items if isinstance(item.get('id'), str) and MODEL_RE.match(item['id'])}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise AppError('AI_BAD_RESPONSE') from None
+        return sorted(ids)[:300]
+
     def _open(self, data, accept):
         request = Request(self.base_url + '/chat/completions', data=data, method='POST',
                           headers={'Content-Type': 'application/json', 'Accept': accept,

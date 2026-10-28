@@ -2495,6 +2495,13 @@ class MailBackend:
             except OSError:
                 pass  # A blocked data folder must not hide the result.
 
+    def ai_models(self):
+        """Model ids the configured service offers, for the settings drop-down."""
+        client = self._ai()
+        if not hasattr(client, 'models'):
+            return [client.model] if getattr(client, 'model', '') else []  # Demo stand-in.
+        return client.models()
+
     def ai_test(self):
         self._ai_call([{'role': 'user', 'content': '只回复一个字：好'}], max_tokens=5)
         return self.ai_settings()

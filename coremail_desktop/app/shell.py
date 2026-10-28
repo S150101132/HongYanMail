@@ -72,7 +72,7 @@ BACKEND_METHODS = {
     'senderLists': 'sender_lists', 'addSenders': 'add_senders', 'removeSender': 'remove_sender',
     'previewAttachment': 'attachment_preview', 'openAttachment': 'open_attachment',
     'threadCounts': 'thread_counts', 'thread': 'thread',
-    'aiSettings': 'ai_settings', 'setAiSettings': 'set_ai_settings', 'aiTest': 'ai_test', 'summarize': 'summarize',
+    'aiSettings': 'ai_settings', 'setAiSettings': 'set_ai_settings', 'aiTest': 'ai_test', 'aiModels': 'ai_models', 'summarize': 'summarize',
     'mcpStatus': 'mcp_status', 'setMcp': 'set_mcp',
     'askMailbox': 'ask_mailbox', 'cancelAsk': 'cancel_ask', 'assistantPlanRun': 'assistant_plan_run',
     'assistantDraftCompose': 'assistant_draft_compose', 'assistantDraftWrite': 'assistant_draft_write', 'assistantSent': 'assistant_sent',
@@ -111,7 +111,7 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
                 'aiEncrypted', 'understandStatus', 'understandPending', 'understandCards', 'understandView', 'understandRules',
                 'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
-AI_METHODS = {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
+AI_METHODS = {'summarize', 'aiTest', 'aiModels', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
               'replyIdeas', 'draftReply', 'writeFromNote', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
               'memoryWeekBrief', 'trending', 'dailyNews'}
 # Streamed AI text: each piece reaches the page as an aiStream event.

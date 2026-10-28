@@ -110,6 +110,20 @@ class ClientTest(unittest.TestCase):
                 chat.chat([])
             self.assertEqual(raised.exception.code, 'AI_BAD_RESPONSE')
 
+    def test_models_lists_valid_ids(self):
+        body = json.dumps({'object': 'list', 'data': [{'id': 'deepseek-reasoner'}, {'id': 'deepseek-chat'}, {'id': 'bad name'}, {'id': 5}, {}]})
+        chat, opener, _ = client(body.encode())
+        self.assertEqual(chat.models(), ['deepseek-chat', 'deepseek-reasoner'])
+        request = opener.requests[0]
+        self.assertEqual((request.full_url, request.get_method(), request.get_header('Authorization')),
+                         ('https://api.deepseek.com/models', 'GET', 'Bearer ' + KEY))
+        for outcome, code in ((401, 'AI_AUTH_FAILED'), (404, 'AI_NOT_FOUND'), (b'{"data": 1}', 'AI_BAD_RESPONSE'), (b'<html>', 'AI_BAD_RESPONSE')):
+            chat, _, _ = client(outcome)
+            with self.assertRaises(AppError) as raised:
+                chat.models()
+            self.assertEqual(raised.exception.code, code)
+            self.assertNotIn('secret', str(raised.exception))
+
     def test_settings_are_checked(self):
         self.assertEqual(check_base_url(' https://api.deepseek.com/v1/ '), 'https://api.deepseek.com/v1')
         for url in ('http://api.deepseek.com', 'https://', 'ftp://x', 'https://u:p@host', 'https://host/?q=1', ''):
@@ -256,7 +270,7 @@ class BackendTest(unittest.TestCase):
 
     def test_not_configured(self):
         self.backend.open_message('demo1', mark_read=False)
-        for call in (lambda: self.backend.summarize('demo1'), self.backend.ai_test):
+        for call in (lambda: self.backend.summarize('demo1'), self.backend.ai_test, self.backend.ai_models):
             with self.assertRaises(AppError) as raised:
                 call()
             self.assertEqual(raised.exception.code, 'AI_NOT_CONFIGURED')
@@ -328,7 +342,7 @@ class WiringTest(unittest.TestCase):
         from coremail_desktop.app import shell
         for name in ('aiSettings', 'setAiSettings', 'aiTest', 'summarize'):
             self.assertIn(name, shell.BACKEND_METHODS)
-        self.assertEqual(shell.AI_METHODS, {'summarize', 'aiTest', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
+        self.assertEqual(shell.AI_METHODS, {'summarize', 'aiTest', 'aiModels', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
                                             'replyIdeas', 'draftReply', 'writeFromNote', 'summarizeThread', 'understandMail',
                                             'assistantDraftWrite', 'memoryWeekBrief', 'trending', 'dailyNews'})
         self.assertFalse(shell.AI_METHODS & shell.FAST_METHODS)

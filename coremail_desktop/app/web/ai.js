@@ -360,7 +360,9 @@ async function summarizeMessage(m, opts = {}) {
 function renderAiSettings() {
   const status = $('#ai-status');
   api('aiSettings').then((a) => {
-    $('#ai-base').value = a.baseUrl; $('#ai-model').value = a.model; $('#ai-key').value = '';
+    $('#ai-base').value = a.baseUrl; $('#ai-key').value = '';
+    fillModels(a.model, [a.model]);
+    if (a.hasKey || a.demo) api('aiModels').then((ids) => fillModels(a.model, ids)).catch(() => {});  // Stays on the saved one.
     $('#ai-key').placeholder = a.hasKey ? '已保存（不可查看），输入新 Key 可替换' : '未设置';
     $('#ai-clear').classList.toggle('hidden', !a.hasKey);
     $('#ai-actions').checked = a.actions;
@@ -369,6 +371,20 @@ function renderAiSettings() {
       ` 本月已调用 ${a.usage.calls} 次，共 ${a.usage.tokens} tokens。`;
   }).catch(fail);
 }
+// 模型: a drop-down of what the service offers (GET /models), plus 「手动填写…」 for a name it does not list.
+const AI_PRESETS = ['deepseek-chat', 'deepseek-reasoner'];  // While the list is not in yet, or the service has none.
+function fillModels(current, ids) {
+  const list = $('#ai-model-list');
+  const presets = ids.length > 1 || !/deepseek\.com/.test($('#ai-base').value) ? [] : AI_PRESETS;
+  const names = [...new Set([current, ...ids, ...presets])].filter(Boolean);
+  list.innerHTML = names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('') + '<option value="">手动填写…</option>';
+  list.value = current; $('#ai-model').value = current; $('#ai-model').classList.add('hidden');
+}
+$('#ai-model-list').onchange = (e) => {
+  const manual = !e.target.value;
+  $('#ai-model').classList.toggle('hidden', !manual);
+  if (manual) { $('#ai-model').value = ''; $('#ai-model').focus(); } else $('#ai-model').value = e.target.value;
+};
 function aiValues() {
   const values = { base_url: $('#ai-base').value, model: $('#ai-model').value };
   const key = $('#ai-key').value.trim(); if (key) values.key = key;

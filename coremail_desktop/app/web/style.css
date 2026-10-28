@@ -800,6 +800,8 @@ img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* AI 助手: 「总结这封」 panel and settings */
 .st-page .pref-row input { width: 260px; flex: none; }
+.st-page .ai-model-pick { display: flex; flex-direction: column; gap: 6px; }
+.st-page .ai-model-pick select { width: 260px; }
 .ai-panel { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: var(--fs-sm); }
 .ai-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 12px; background: var(--accent-soft); }
 .ai-head i { width: 15px; height: 15px; color: var(--accent); }

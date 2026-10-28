@@ -414,6 +414,15 @@ STEPS += [
     (300, "$('#mcp-on').click()", None),
     (900, "$('#settings').classList.add('hidden')", None),
 ]
+# AI 模型下拉: the service's list, then 「手动填写…」 (HONGYAN_WALK_AM=1 runs only these).
+AM = len(STEPS)
+STEPS += [
+    (2500, "openSettings(); $('#st-nav [data-tab=ai]').click()", None),
+    (1200, "document.body.offsetWidth", 'am-list'),
+    (300, "const l = $('#ai-model-list'); l.value = ''; l.dispatchEvent(new Event('change'))", None),
+    (900, "document.body.offsetWidth", 'am-manual'),
+    (300, "$('#settings').classList.add('hidden')", None),
+]
 
 
 def render_pdf(mid):
@@ -451,6 +460,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(AM if os.environ.get('HONGYAN_WALK_AM') else X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

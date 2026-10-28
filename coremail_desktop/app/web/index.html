@@ -378,7 +378,7 @@
           <h3 id="ai-section">AI 助手</h3>
           <p class="muted small">阅读邮件时点「总结」，由 AI 生成摘要；点搜索框旁的 ✦ 或按 Ctrl+J「问鸿雁」，用一句话提问，由 AI 搜索并阅读邮件后回答。邮件内容会发送到下面的 AI 服务（默认 DeepSeek）；加密邮件按下面「加密邮件」的设置处理。API Key 由 Windows 加密保存在本机，界面上无法查看。</p>
           <label class="pref-row">接口地址<input id="ai-base" type="text" spellcheck="false"></label>
-          <label class="pref-row">模型<input id="ai-model" type="text" spellcheck="false"></label>
+          <label class="pref-row">模型<span class="ai-model-pick"><select id="ai-model-list" title="服务商提供的模型"></select><input id="ai-model" type="text" spellcheck="false" class="hidden" placeholder="模型名称"></span></label>
           <label class="pref-row">API Key<input id="ai-key" type="password" autocomplete="off" spellcheck="false"></label>
           <p class="muted small" id="ai-status"></p>
           <div class="row-gap"><button class="btn ghost" id="ai-save">保存 AI 设置</button><button class="btn ghost" id="ai-test">测试连接</button>
