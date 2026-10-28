@@ -38,7 +38,7 @@
     <div class="compose-row">
       <button id="btn-compose" class="btn primary compose-btn" title="写邮件 (Ctrl+N)"><i data-icon="pen"></i><span>写邮件</span></button>    </div>
     <div id="side-scroll" class="side-scroll">
-    <nav class="folders"><a id="nav-today" class="folder" data-local="today" title="每日速览：36氪 9点1氪 和 GitHub Trending"><i data-icon="spark"></i><span class="fname">每日速览</span></a></nav>
+    <nav class="folders"><a id="nav-today" class="folder" data-local="today" title="每日速览：36氪 9点1氪 和 GitHub Trending"><i data-icon="brief"></i><span class="fname">每日速览</span></a></nav>
     <nav id="folder-list" class="folders" aria-label="文件夹"></nav>
     <nav class="folders"><a id="nav-scheduled" class="folder" data-local="scheduled" title="服务器上等待发出的定时邮件"><i data-icon="clock"></i><span class="fname">定时发送</span><span id="scheduled-count" class="count"></span></a></nav>
     <div id="shared-section" class="hidden"><div class="side-section">共享邮箱</div><nav id="shared-list" class="folders" aria-label="共享邮箱"></nav></div>
@@ -68,7 +68,7 @@
         <i data-icon="search"></i>
         <input id="search" type="search" placeholder="搜索邮件（Ctrl+F 或 /）· 命令 Ctrl+K" spellcheck="false">
         <button id="btn-search-filters" class="icon-btn sm" title="高级搜索：发件人、日期、附件等条件"><i data-icon="filter"></i></button>
-        <button id="btn-ask" class="icon-btn sm" title="问鸿雁：打开右侧对话；搜索框里有字时作为问题发出 (Ctrl+J)"><i data-icon="spark"></i></button>
+        <button id="btn-ask" class="icon-btn sm" title="问鸿雁：打开右侧对话；搜索框里有字时作为问题发出 (Ctrl+J)"><i data-icon="ask"></i></button>
       </div>
       <div id="search-panel" class="search-panel hidden" role="dialog" aria-label="高级搜索">
         <div class="sp-row lean-hide"><label>关键词</label><div class="seg" id="sp-scope"><button data-scope="all" class="on">全文</button><button data-scope="subject">仅主题</button></div></div>
@@ -130,7 +130,7 @@
           <button id="tk-report" class="btn ghost sm" title="按任务进展起草周报，写进一封新邮件（不会发出）"><i data-icon="mail"></i>周报</button>
           <button id="tk-new" class="btn ghost sm" title="不用 AI，手动填写新建任务"><i data-icon="pen"></i>新建</button></div>
         <div class="tk-filter-row"><label class="tk-filter"><i data-icon="search"></i><input id="tk-filter" type="search" spellcheck="false" placeholder="筛选：关键词；输入编号回车直接打开"></label>
-          <button id="tk-ask" class="icon-btn" title="问鸿雁：在右侧对话里查任务、记进展、起草回复，会带上选中的任务 (Ctrl+J)"><i data-icon="spark"></i></button></div>
+          <button id="tk-ask" class="icon-btn" title="问鸿雁：在右侧对话里查任务、记进展、起草回复，会带上选中的任务 (Ctrl+J)"><i data-icon="ask"></i></button></div>
         <div class="seg tk-tabs" id="tk-tabs"><button data-view="open" class="on">未完成</button><button data-view="done">已完成</button><button data-view="canceled">已取消</button><button data-view="all">全部</button></div>
       </div>
       <div id="tk-banner" class="tk-banner hidden"></div>
@@ -185,8 +185,8 @@
         <button class="tb sent-only lean-hide hidden" data-act="status" data-label="投递状态" data-menu-icon="route" title="查看每位收件人的投递和阅读状态"><i data-icon="route"></i><span>投递状态</span></button>
         <button class="tb sched-only lean-hide hidden" data-act="unschedule" data-label="取消定时" data-menu-icon="clock" title="取消定时，邮件转为普通草稿"><i data-icon="clock"></i><span>取消定时</span></button>
         <span class="tb-sep"></span>
-        <button class="tb main-only" data-act="ask" title="问 AI：打开右侧对话并带上这封邮件 (Ctrl+J)"><i data-icon="spark"></i><span>AI</span></button>
-        <button class="tb lean-hide" data-act="summarize" data-label="AI 总结" data-menu-icon="spark" title="AI 总结这封邮件或整个会话（正文会发送到 AI 服务）"><i data-icon="spark"></i><span>总结</span></button>
+        <button class="tb main-only" data-act="ask" title="问 AI：打开右侧对话并带上这封邮件 (Ctrl+J)"><i data-icon="ask"></i><span>AI</span></button>
+        <button class="tb lean-hide" data-act="summarize" data-label="AI 总结" data-menu-icon="summary" title="AI 总结这封邮件或整个会话（正文会发送到 AI 服务）"><i data-icon="summary"></i><span>总结</span></button>
         <button class="tb lean-hide" data-act="aireply" data-label="AI 回复" data-menu-icon="reply" title="AI 给出回复方向并起草回复（正文会发送到 AI 服务）"><i data-icon="reply"></i><span>AI 回复</span></button>
         <span class="spacer"></span>
         <button class="tb lean-hide" data-act="find" data-label="在正文中查找" data-menu-icon="search" title="在正文中查找"><i data-icon="search"></i></button>
@@ -219,7 +219,7 @@
   </section>
   <aside id="chat" class="chat-pane" aria-label="问鸿雁">
     <div class="chat-head">
-      <b class="ask-title"><i data-icon="spark"></i>问鸿雁</b>
+      <b class="ask-title"><i data-icon="ask"></i>问鸿雁</b>
       <span class="spacer"></span>
       <button class="tb" id="chat-new" title="新对话：之前的问答不再带给 AI"><i data-icon="pen"></i><span>新对话</span></button>
       <button class="tb" id="ask-close" title="关闭 (Ctrl+J)"><i data-icon="close"></i></button>
@@ -228,7 +228,7 @@
     <form id="ask-form" class="chat-foot">
       <button type="button" id="chat-here" class="chat-here hidden"></button>
       <div class="tk-ask">
-        <i data-icon="spark"></i>
+        <i data-icon="ask"></i>
         <textarea id="ask-input" rows="1" maxlength="500" spellcheck="false" placeholder="查邮件和任务、记进展、起草回复，可以接着追问"></textarea>
         <button class="tk-ask-go" id="ask-run" type="submit" title="提问（Enter）"><i data-icon="send"></i></button>
       </div>
@@ -276,7 +276,7 @@
     <button data-cmd="removeFormat" class="lean-hide" title="清除格式"><i data-icon="eraser"></i></button>
     <button id="cmp-format" class="lean-only" title="更多格式：字号、下划线、删除线、颜色、缩进、分隔线、表格、清除格式"><span>格式</span><i data-icon="caret"></i></button>
     <span class="tb-sep"></span>
-    <button id="cmp-ai" title="AI 写信：把正文里写的要点整理成正式邮件，再说怎么改（文字会发送到 AI 服务）"><i data-icon="spark"></i><span>AI</span></button>
+    <button id="cmp-ai" title="AI 写信：把正文里写的要点整理成正式邮件，再说怎么改（文字会发送到 AI 服务）"><i data-icon="write-ai"></i><span>AI</span></button>
     <span class="spacer"></span>
     <button id="cmp-attach" title="添加附件"><i data-icon="clip"></i><span>附件</span></button>
   </div>

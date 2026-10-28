@@ -98,12 +98,12 @@ if (typeof document !== 'undefined') {
       for (const b of $$('#reader-body .reader-toolbar [data-act]')) if ((visible(b) || folded(b)) && b.dataset.act !== 'more') list.push(fromButton('这封邮件', b));
       add('这封邮件', 'clip', '作为附件转发', () => startCompose('forward_attach', m.id));
       add('这封邮件', 'file', '导出为 PDF', () => exportPdf(m), ['pdf']);
-      add('这封邮件', 'spark', '问问这封邮件', () => { S.chat.attach = m.id; showAsk(); }, ['问这封', '这封说了什么']);
+      add('这封邮件', 'ask', '问问这封邮件', () => { S.chat.attach = m.id; showAsk(); }, ['问这封', '这封说了什么']);
     }
     if (S.multi.size >= 2) {
       for (const b of $$('#reader-multi [data-batch]')) if (visible(b)) list.push(fromButton(`已选 ${S.multi.size} 封`, b));
     }
-    add('命令', 'spark', '问邮箱', () => showAsk(), ['ai', '提问', '对话', '聊天', 'AI 助手'], 'Ctrl+J');
+    add('命令', 'ask', '问邮箱', () => showAsk(), ['ai', '提问', '对话', '聊天', 'AI 助手'], 'Ctrl+J');
     add('命令', 'pen', '写邮件', () => startCompose('new'), ['新邮件', '写信', '新建邮件', '发邮件'], 'Ctrl+N');
     if (typeof showToday === 'function') {
       add('前往', 'clock', '在等别人', () => showToday('wait'), ['等回复', '等对方回复', '催办', '跟进', '受阻']);
@@ -169,7 +169,7 @@ if (typeof document !== 'undefined') {
       tail.push({ group: '搜索', icon: 'search', title: [...p.labels, p.words ? `「${p.words}」` : ''].filter(Boolean).join(' · '), hint: '搜索邮件',
         run: () => { SF.set(p.filters); $('#search').value = p.words; runSearch(p.words); } });
     }
-    const ask = { group: 'AI', icon: 'spark', title: q, hint: '问邮箱', run: () => showAsk(q) };
+    const ask = { group: 'AI', icon: 'ask', title: q, hint: '问邮箱', run: () => showAsk(q) };
     // A clear command wins; a question goes to the AI before the search; else the search first.
     const strong = hits.length && hits[0].score >= 60;
     if (cmdIsQuestion(q) && !(strong && hits[0].score === 100)) return [ask, ...tail, ...hits];

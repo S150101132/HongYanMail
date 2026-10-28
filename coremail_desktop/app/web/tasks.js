@@ -615,7 +615,7 @@ async function tkCloseFromMail(id) {
 // ---------------------------------------------------------------- 邮件 → 任务（AI）
 function mailTaskItems(ids, m) {
   const one = ids.length === 1;
-  return ['-', { label: one ? '转为任务（AI）…' : `转为任务（AI，${ids.length} 封）…`, icon: 'spark', run: () => mailToTask(ids) },
+  return ['-', { label: one ? '转为任务（AI）…' : `转为任务（AI，${ids.length} 封）…`, icon: 'task-ai', run: () => mailToTask(ids) },
     ...(one ? [{ label: '关联到任务…', icon: 'tasks', run: () => linkMailToTask(m || { id: ids[0] }) }] : [])];
 }
 

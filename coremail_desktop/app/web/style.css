@@ -108,7 +108,7 @@
 :root[data-theme="color"] .folder i[data-icon="sent"], :root[data-theme="color"] .folder i[data-icon="send"] { color: #10b981; }
 :root[data-theme="color"] .folder i[data-icon="trash"] { color: #ef4444; }
 :root[data-theme="color"] .folder i[data-icon="spam"], :root[data-theme="color"] .folder i[data-icon="virus"] { color: #f97316; }
-:root[data-theme="color"] .folder i[data-icon="spark"] { color: #ec4899; }
+:root[data-theme="color"] .folder i[data-icon="brief"] { color: #ec4899; }
 :root[data-theme="color"] .folder i[data-icon="clock"] { color: #06b6d4; }
 :root[data-theme="color"] .folder i[data-icon="tasks"] { color: #14b8a6; }
 :root[data-theme="color"] .folder i[data-icon="archive"] { color: #a16207; }

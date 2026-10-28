@@ -72,8 +72,8 @@ function renderAiPanel(m) {
 function aiMenu(button, m) {
   const r = button.getBoundingClientRect();
   showMenu(r.left, r.bottom + 4, [
-    { label: '总结这封', icon: 'spark', run: () => summarizeMessage(m) },
-    { label: '总结整个会话', icon: 'spark', run: () => summarizeThread(m) },
+    { label: '总结这封', icon: 'summary', run: () => summarizeMessage(m) },
+    { label: '总结整个会话', icon: 'summary', run: () => summarizeThread(m) },
   ]);
 }
 
