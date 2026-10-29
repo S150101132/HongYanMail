@@ -31,7 +31,11 @@ SIGNATURE_MIME_TYPES = ('application/pkcs7-signature', 'application/x-pkcs7-sign
 
 DIGESTS = {'1.3.14.3.2.26': hashes.SHA1, '2.16.840.1.101.3.4.2.4': hashes.SHA224,
            '2.16.840.1.101.3.4.2.1': hashes.SHA256, '2.16.840.1.101.3.4.2.2': hashes.SHA384,
-           '2.16.840.1.101.3.4.2.3': hashes.SHA512}
+           '2.16.840.1.101.3.4.2.3': hashes.SHA512,
+           # Some clients put the RSA signature OID in digestAlgorithm (seen: sha512WithRSAEncryption).
+           '1.2.840.113549.1.1.5': hashes.SHA1, '1.2.840.113549.1.1.14': hashes.SHA224,
+           '1.2.840.113549.1.1.11': hashes.SHA256, '1.2.840.113549.1.1.12': hashes.SHA384,
+           '1.2.840.113549.1.1.13': hashes.SHA512}
 RSA_SIGNATURES = {'1.2.840.113549.1.1.1', '1.2.840.113549.1.1.5', '1.2.840.113549.1.1.14',
                   '1.2.840.113549.1.1.11', '1.2.840.113549.1.1.12', '1.2.840.113549.1.1.13'}
 ECDSA_SIGNATURES = {'1.2.840.10045.2.1', '1.2.840.10045.4.1', '1.2.840.10045.4.3.1', '1.2.840.10045.4.3.2',

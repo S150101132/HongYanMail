@@ -80,6 +80,17 @@ class SignedDataTest(unittest.TestCase):
         self.assertEqual(signature.verify_signed_data(der)[0].status, 'valid')
         self.assertEqual(signature.verify_signed_data(der.replace(b'5YaF', b'5YaG'))[0].code, 'SIGNATURE_MISMATCH')
 
+    def test_signature_oid_in_the_digest_field_is_read_as_its_hash(self):
+        der = (pkcs7.PKCS7SignatureBuilder().set_data(CONTENT)
+               .add_signer(self.cert, self.key, hashes.SHA512(), rsa_padding=padding.PKCS1v15())
+               .sign(serialization.Encoding.DER, [pkcs7.PKCS7Options.Binary]))
+        sha512, sha512_rsa = bytes.fromhex('0609608648016503040203'), bytes.fromhex('06092a864886f70d01010d')
+        self.assertEqual(der.count(sha512), 2)  # digestAlgorithms and the signer's digestAlgorithm
+        report = signature.verify_signed_data(der.replace(sha512, sha512_rsa))[0]
+        self.assertEqual((report.status, report.digest), ('valid', 'sha512'))
+        tampered = der.replace(sha512, sha512_rsa).replace(b'5YaF', b'5YaG')
+        self.assertEqual(signature.verify_signed_data(tampered)[0].code, 'CONTENT_DIGEST_MISMATCH')
+
     def test_missing_certificate_or_content_is_unverifiable_not_valid(self):
         no_certs = (pkcs7.PKCS7SignatureBuilder().set_data(CONTENT)
                     .add_signer(self.cert, self.key, hashes.SHA256(), rsa_padding=padding.PKCS1v15())
