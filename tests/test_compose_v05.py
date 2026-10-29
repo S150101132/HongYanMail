@@ -524,7 +524,7 @@ class ShellTest(unittest.TestCase):
         self.window = shell.AppShell(self.backend, demo=True)
         self.events = []
         self.window.bridge.event.connect(lambda name, value: self.events.append(name))
-        self.addCleanup(lambda: (self.window.bridge.shutdown(), self.window.deleteLater()))
+        self.addCleanup(lambda: (self.window.bridge.shutdown(), self.window.deleteLater(), self.backend.logout()))
 
     def held(self):
         value = self.backend.compose('new')
