@@ -138,6 +138,14 @@ SEND_METHODS = {'send', 'releaseSend', 'flushOutbox'}
 _LAST_SAVE_DIR = []  # Folder of the last successful save this session.
 
 
+class _LogFile(logging.FileHandler):
+    """A log file whose folder is made again if it went away (deleted data folder, test scratch)."""
+
+    def _open(self):
+        Path(self.baseFilename).parent.mkdir(parents=True, exist_ok=True)
+        return super()._open()
+
+
 def _writable(folder):
     try:
         folder.mkdir(parents=True, exist_ok=True)
@@ -899,7 +907,7 @@ class AppShell(_PrintHost, QMainWindow):
         log = logging.getLogger('hongyan.network')
         if not log.handlers:
             try:
-                handler = logging.FileHandler(self.backend.data_dir / 'hongyan-network.log', encoding='utf-8', delay=True)
+                handler = _LogFile(self.backend.data_dir / 'hongyan-network.log', encoding='utf-8', delay=True)
             except OSError:
                 return
             handler.setFormatter(logging.Formatter('%(asctime)s %(message)s', '%Y-%m-%d %H:%M:%S'))

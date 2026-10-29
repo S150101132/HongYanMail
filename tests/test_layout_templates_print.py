@@ -4,8 +4,6 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ.setdefault('QTWEBENGINE_DISABLE_SANDBOX', '1')
 
-import shutil
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -17,15 +15,7 @@ from coremail_desktop.app.demo import DemoAdapter, demo_certificate
 from coremail_desktop.crypto.service import CryptoService
 from coremail_desktop.errors import AppError
 from tests.test_app_backend import XorProtector, local_services_stub
-
-BUILD = Path(__file__).resolve().parents[1] / 'build'
-
-
-def scratch(test):
-    BUILD.mkdir(exist_ok=True)
-    directory = tempfile.mkdtemp(prefix='hongyan-test-', dir=str(BUILD))
-    test.addCleanup(shutil.rmtree, directory, True)
-    return directory
+from tests.test_compose_v05 import scratch
 
 
 class LayoutPrefsTest(unittest.TestCase):

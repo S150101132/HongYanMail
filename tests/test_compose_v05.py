@@ -6,6 +6,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ.setdefault('QTWEBENGINE_DISABLE_SANDBOX', '1')
 
 import base64
+import logging
 import shutil
 import tempfile
 import unittest
@@ -34,7 +35,15 @@ def scratch(test):
     BUILD.mkdir(exist_ok=True)
     directory = tempfile.mkdtemp(prefix='hongyan-test-', dir=str(BUILD))
     test.addCleanup(shutil.rmtree, directory, True)
+    test.addCleanup(_drop_logs, directory)  # Runs first: a window's network log must not outlive its folder.
     return directory
+
+
+def _drop_logs(directory):
+    log = logging.getLogger('hongyan.network')
+    for handler in [h for h in log.handlers if str(getattr(h, 'baseFilename', '')).startswith(str(Path(directory).resolve()))]:
+        log.removeHandler(handler)
+        handler.close()
 
 
 def parse(raw):
