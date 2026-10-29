@@ -363,6 +363,7 @@ class CenterTests(unittest.TestCase):
         self.center.close()
         other = Path(scratch(self)) / 'tasks'
         self.center = TaskCenter(other, XorProtector(), clock=self.clock)
+        self.addCleanup(self.center.close)  # Before the second folder's rmtree.
         self.center.set_folder(str(self.folder))
         self.center.restore('live')
         after = self.center.get(302)
@@ -386,7 +387,7 @@ class CommandTests(unittest.TestCase):
         from coremail_desktop.app.demo import DemoAdapter
         self.folder = folder_with(self)
         self.backend = MailBackend(scratch(self), adapter_factory=DemoAdapter, protector=XorProtector())
-        self.addCleanup(lambda: self.backend.tasks and self.backend.tasks.close())
+        self.addCleanup(lambda: (self.backend.tasks and self.backend.tasks.close(), self.backend.logout()))  # Before scratch's rmtree.
         self.backend.tasks_set_folder(str(self.folder))
         self.backend.tasks_import('live')
         self.backend.tasks.clock = Clock()

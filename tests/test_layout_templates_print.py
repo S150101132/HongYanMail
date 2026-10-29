@@ -121,7 +121,7 @@ class PopOutAndPrintTest(unittest.TestCase):
         backend = MailBackend(scratch(self), adapter_factory=DemoAdapter, protector=XorProtector(), services_factory=local_services_stub)
         backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'pw')
         window = shell.AppShell(backend, demo=True)
-        self.addCleanup(lambda: (window.native_closeReaders(), window.bridge.shutdown(), window.deleteLater()))
+        self.addCleanup(lambda: (window.native_closeReaders(), window.bridge.shutdown(), window.deleteLater(), backend.logout()))
         mid = backend.messages('1', 0, 5)['rows'][0]['id']
         self.assertTrue(window.native_openReader(mid))
         self.assertTrue(window.native_openReader(mid))  # The same message reuses its window.
