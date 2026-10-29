@@ -144,6 +144,16 @@ class AgentTest(unittest.TestCase):
         ask('我负责哪些系统', model, FakeMailbox().tools(), me='王', about='关于用户：NG BI 归我')
         self.assertTrue(model.seen[0][0][0]['content'].endswith('\n\n关于用户：NG BI 归我'))
 
+    def test_profile_enters_prompts_one_way(self):
+        """G0d: the backend sends 关于我 only through _with_about (memory/profile.with_profile), or
+        as ask's about=, which uses it too; nothing glues it into a prompt by hand."""
+        root = Path(__file__).resolve().parents[1] / 'coremail_desktop'
+        lines = [l.strip() for l in (root / 'app' / 'backend.py').read_text(encoding='utf-8').splitlines() if 'self._about(' in l]
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertTrue(line.startswith(('def _about(', 'return with_profile(messages, self._about(')) or 'about=self._about(' in line, line)
+        self.assertIn('with_profile(messages, about)', (root / 'ai' / 'agent.py').read_text(encoding='utf-8'))
+
 
 class BackendTest(unittest.TestCase):
     def setUp(self):

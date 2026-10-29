@@ -354,6 +354,15 @@ REMEMBER_SPEC = {'type': 'function', 'function': {
         'text': {'type': 'string', 'description': '一句话，不超过 100 字'},
         'replaces': {'type': 'string', 'description': '更新了「关于用户」里的哪一条：它的 A 编号，如 A3；新的一条就不填'}},
         'required': ['group', 'text']}}}
+# G1d: what each tool may do. READ runs at once and changes nothing; CARD only proposes a plan
+# the user confirms (and can undo) in the app. No tool writes or sends by itself, and a new
+# tool must be declared here (tests/test_ai_ask.py checks every spec).
+READ, CARD = 'read', 'card'
+TOOL_KINDS = {'search_mail': READ, 'read_mail': READ, 'find_contact': READ, 'list_tasks': READ, 'read_task': READ,
+              'pending_mail': READ, 'task_thread': READ, 'list_groups': READ, 'memory_search': READ, 'followups': READ,
+              'plan_tasks': CARD, 'draft_reply': CARD, 'draft_new': CARD, 'suggest_links': CARD, 'plan_mail': CARD,
+              'remember_me': CARD}
+MCP_SPECS = [s for s in SPECS + TASK_SPECS if TOOL_KINDS[s['function']['name']] == READ]  # X1: read-only, outside the app.
 
 
 class AssistantTools(MailboxTools):

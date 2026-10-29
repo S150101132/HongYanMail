@@ -3286,17 +3286,17 @@ class MailBackend:
     def mcp_answer(self, message):
         """One MCP message from the relay (runs on the AI thread) -> the response or None."""
         from coremail_desktop import __version__
-        from coremail_desktop.ai.tools import SPECS, TASK_SPECS
+        from coremail_desktop.ai.tools import MCP_SPECS
         from coremail_desktop.mcp.server import handle, mcp_specs
-        return handle(message, lambda: mcp_specs(SPECS + TASK_SPECS), self._mcp_call, __version__)
+        return handle(message, lambda: mcp_specs(MCP_SPECS), self._mcp_call, __version__)
 
     def _mcp_call(self, name, arguments):
-        from coremail_desktop.ai.tools import SPECS, TASK_SPECS, AssistantTools
+        from coremail_desktop.ai.tools import MCP_SPECS, AssistantTools
         from coremail_desktop.ui.messages import user_message
         if self.mcp_record() is None or self.cache is None:
             code = 'MCP_OFF' if self.cache is not None else 'NOT_AUTHENTICATED'
             return {'code': code, 'message': user_message(code)}, True
-        if name not in {s['function']['name'] for s in SPECS + TASK_SPECS}:
+        if name not in {s['function']['name'] for s in MCP_SPECS}:
             return {'error': '没有这个工具'}, True  # Drafting, plans and mail operations stay inside the app.
         if self._mcp_tools is None:
             self._mcp_tools = AssistantTools(self._ask_search, self._document, self._ask_match, {}, pdf_text=self.pdf_text,

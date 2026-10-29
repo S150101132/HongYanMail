@@ -9,6 +9,7 @@ import re
 import time
 
 from coremail_desktop.errors import AppError
+from coremail_desktop.memory.profile import with_profile
 
 MAX_ROUNDS = 6
 CALLS_PER_ROUND = 4
@@ -96,8 +97,7 @@ def ask(question, call, tools, progress=lambda step: None, cancelled=lambda: Fal
     messages = [{'role': 'system', 'content': SYSTEM_PROMPT.format(today=today) + (rules if tasks is not None else '')}]
     if me:
         messages[0]['content'] += '\n' + ME_NOTE.format(me=me)
-    if about:
-        messages[0]['content'] += '\n\n' + about
+    messages = with_profile(messages, about)  # G0d: the one way 关于我 enters a prompt.
     note = lambda r: tools.task_note(r) if r.startswith('T') else tools.note(r)
     known = [r for r in known if (r in tools.mails or tasks and r in tasks) and r not in (current, current_task)][-CHAT_REFS:]
     if history and known:

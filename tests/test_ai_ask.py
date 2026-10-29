@@ -410,5 +410,24 @@ class WiringTest(unittest.TestCase):
             self.assertIn(f'esc({field}', source)
 
 
+class ToolKindsTest(unittest.TestCase):
+    """G1d: every tool says whether it only reads or only proposes a card; MCP gets the readers."""
+
+    def test_every_tool_is_declared(self):
+        from coremail_desktop.ai.tools import CARD, MCP_SPECS, READ, TOOL_KINDS, AssistantTools
+        on = lambda *a, **k: None
+        tools = AssistantTools(on, on, on, {}, tasks=on, task=on, mine=on, pending=on, plan=on, thread=on, groups=on,
+                               actions=True, memory=on, followups=on, about=on)
+        names = [s['function']['name'] for s in tools.specs]
+        self.assertEqual(sorted(names), sorted(TOOL_KINDS))  # None undeclared, none declared and gone.
+        self.assertEqual(set(TOOL_KINDS.values()), {READ, CARD})
+        for spec in tools.specs:
+            if TOOL_KINDS[spec['function']['name']] == CARD:
+                text = spec['function']['description']  # The model is told nothing happens until the user acts.
+                self.assertTrue('只生成' in text or '只提议' in text, text)
+        self.assertTrue(MCP_SPECS)
+        self.assertTrue(all(TOOL_KINDS[s['function']['name']] == READ for s in MCP_SPECS))
+
+
 if __name__ == '__main__':
     unittest.main()
