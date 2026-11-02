@@ -91,6 +91,10 @@ class ChatClient:
         self._key = check_key(key)
         self.opener = opener or build_opener(_NoRedirect)
         self.timeout, self.retries, self.sleep = timeout, retries, sleep
+        # DeepSeek thinks by default: the reasoning would use up the small max_tokens below and
+        # leave no answer. Other OpenAI-compatible services may refuse this field.
+        host = urlsplit(self.base_url).hostname.casefold()
+        self._extra = {'thinking': {'type': 'disabled'}} if host == 'deepseek.com' or host.endswith('.deepseek.com') else {}
 
     def chat(self, messages, max_tokens=800, json_mode=False):
         """-> (reply text, total tokens). Retries 429 and 5xx with backoff."""
@@ -102,7 +106,7 @@ class ChatClient:
     def complete(self, messages, tools=None, max_tokens=800, json_mode=False):
         """-> ({content, tool_calls: [{id, name, arguments}]}, total tokens). tools: function
         definitions the model may call instead of answering."""
-        body = {'model': self.model, 'messages': messages, 'max_tokens': max_tokens, 'temperature': 0.3, 'stream': False}
+        body = {'model': self.model, 'messages': messages, 'max_tokens': max_tokens, 'temperature': 0.3, 'stream': False, **self._extra}
         if json_mode:
             body['response_format'] = {'type': 'json_object'}
         if tools:
@@ -121,7 +125,7 @@ class ChatClient:
         tokens). Retries 429 and 5xx only before any text arrived; cancelled() is checked
         between pieces and ends the call with AI_CANCELLED."""
         body = {'model': self.model, 'messages': messages, 'max_tokens': max_tokens, 'temperature': 0.3,
-                'stream': True, 'stream_options': {'include_usage': True}}
+                'stream': True, 'stream_options': {'include_usage': True}, **self._extra}
         data, parts = json.dumps(body, ensure_ascii=False).encode('utf-8'), []
         for attempt in range(self.retries + 1):
             try:

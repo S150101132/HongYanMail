@@ -70,6 +70,18 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(body['response_format'], {'type': 'json_object'})
         self.assertEqual(body['messages'][0]['content'], '你好')
 
+    def test_thinking_is_turned_off_for_deepseek_only(self):
+        sent = lambda opener: json.loads(opener.requests[-1].data.decode('utf-8')).get('thinking')
+        chat, opener, _ = client(reply(), b'data: {"choices": [{"delta": {"content": "x"}}]}\n\ndata: [DONE]\n\n')
+        chat.chat([])
+        self.assertEqual(sent(opener), {'type': 'disabled'})
+        chat.stream([], lambda piece: None)
+        self.assertEqual(sent(opener), {'type': 'disabled'})
+        for base in ('https://ai.example.invalid/v1', 'https://notdeepseek.com'):
+            opener = FakeOpener(reply())
+            ChatClient(base, 'm', KEY, opener=opener).chat([])
+            self.assertIsNone(sent(opener))
+
     def test_http_errors_are_fixed_codes_and_only_429_5xx_retry(self):
         cases = {401: ('AI_AUTH_FAILED', 1), 403: ('AI_AUTH_FAILED', 1), 402: ('AI_QUOTA', 1), 404: ('AI_NOT_FOUND', 1),
                  302: ('AI_NOT_FOUND', 1), 400: ('AI_BAD_RESPONSE', 1), 429: ('AI_RATE_LIMITED', 3), 503: ('AI_UNAVAILABLE', 3)}
