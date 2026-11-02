@@ -26,6 +26,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, QMenu, QSystemTrayIcon
 
 from coremail_desktop.errors import AppError
+from coremail_desktop.app.backend import NETWORK_CODES
 from coremail_desktop.app.quotes import today_quote
 from coremail_desktop.app.tray_check import tray_registered
 from coremail_desktop.ui.branding import app_icon
@@ -656,6 +657,7 @@ class AppShell(_PrintHost, QMainWindow):
     push_state = Signal(str, str)
     send_held = Signal(str, int, int)  # local id, revision, delay in ms
     PUSH_FALLBACK_SECONDS = 300  # Polling interval while the push channel is up.
+    POLL_RETRY_SECONDS = 15  # After a network failure: the offline bar goes as soon as a retry succeeds.
 
     def __init__(self, backend, demo=False, sandboxed=True, relaunch_without_sandbox=None):
         super().__init__()
@@ -697,6 +699,10 @@ class AppShell(_PrintHost, QMainWindow):
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll_now)
         self._poll_seconds = 60
+        self._poll_retry = QTimer(self)
+        self._poll_retry.setSingleShot(True)
+        self._poll_retry.setInterval(self.POLL_RETRY_SECONDS * 1000)
+        self._poll_retry.timeout.connect(self.poll_now)
         self.push = None
         self._push_pending = False
         self._push_debounce = QTimer(self)
@@ -998,7 +1004,10 @@ class AppShell(_PrintHost, QMainWindow):
                 self._push_pending = False
                 self._push_debounce.start()
             if not ok:
-                self.bridge.emit_event('syncError', json.loads(payload))
+                error = json.loads(payload)
+                if error.get('code') in NETWORK_CODES:
+                    self._poll_retry.start()
+                self.bridge.emit_event('syncError', error)
                 return
             value = json.loads(payload)
             self.flush_outbox()  # The server answered: queued offline mail can go now.

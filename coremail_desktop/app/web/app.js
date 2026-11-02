@@ -2064,6 +2064,7 @@ on('synced', (v) => {
 });
 on('syncError', (err) => {
   if (err && err.code === 'NETWORK_ERROR') showOffline('网络不可用，稍后自动重试。正在显示本机缓存。');
+  else if (err && err.code !== 'TLS_ERROR') hideOffline();  // The server answered, so the network is back.
 });
 on('authRequired', () => {
   if (READER_MID) { api('notifyMain', { name: 'authRequired' }).catch(() => {}); api('closeWindow'); return; }

@@ -598,6 +598,22 @@ class ShellTest(unittest.TestCase):
         self.assertTrue(self.wait(lambda: 'outboxFlushed' in self.events))
         self.assertEqual(len(self.backend.adapter.sent), 1)
 
+    def test_a_network_failure_retries_soon_without_waiting_for_the_slow_poll(self):
+        self.window.poll_timer.stop()  # As if push were up: the regular poll is minutes away.
+        self.window._poll_retry.setInterval(100)
+        self.backend.adapter.offline = True
+        self.window.poll_now()
+        self.assertTrue(self.wait(lambda: 'syncError' in self.events))
+        self.backend.adapter.offline = False
+        self.assertTrue(self.wait(lambda: 'synced' in self.events))
+
+    def test_only_network_failures_retry_soon(self):
+        self.window.internal_result('internal:poll', False, '{"code": "SERVER_ERROR"}')
+        self.assertFalse(self.window._poll_retry.isActive())
+        self.window.internal_result('internal:poll', False, '{"code": "NETWORK_ERROR"}')
+        self.assertTrue(self.window._poll_retry.isActive())
+        self.window._poll_retry.stop()
+
 
 if __name__ == '__main__':
     unittest.main()
