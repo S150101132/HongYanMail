@@ -1685,7 +1685,18 @@ $('#cmp-editor').addEventListener('paste', async (e) => {
   // Excel and Word put an HTML table AND a picture of it on the clipboard: when HTML
   // is there, let the normal paste keep the table. A pure image (a screenshot) goes
   // into the body; other pasted files become attachments.
-  if (Array.from(e.clipboardData.types || []).includes('text/html')) return;
+  const types = Array.from(e.clipboardData.types || []);
+  // Copied Markdown (an AI answer, a README) goes in formatted; editors like VS Code add
+  // coloured-code HTML that is not the formatting wanted. Ctrl+Shift+V keeps the plain text.
+  const plain = e.clipboardData.getData('text/plain'), keepPlain = C.plainPaste;
+  C.plainPaste = false;
+  if (!keepPlain && (!types.includes('text/html') || types.includes('vscode-editor-data')) && !(e.clipboardData.files || []).length && mdLooksLike(plain)) {
+    e.preventDefault();
+    document.execCommand('insertHTML', false, mdToHtml(plain));
+    toast('已按 Markdown 排版；要原文请撤销（Ctrl+Z）后按 Ctrl+Shift+V 粘贴');
+    return;
+  }
+  if (types.includes('text/html')) return;
   const files = Array.from(e.clipboardData.files || []);
   if (!files.length) return;
   e.preventDefault();
@@ -1693,6 +1704,7 @@ $('#cmp-editor').addEventListener('paste', async (e) => {
   if (images.length) await insertImageFiles(images);
   if (others.length) { addAttachments(await Promise.all(others.map(readFile))); toast('粘贴的文件已作为附件添加'); }
 });
+$('#cmp-editor').addEventListener('keydown', (e) => { C.plainPaste = e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'v'; });
 $('#cmp-editor').addEventListener('input', () => { C.dirty = true; });
 $('#cmp-subject').addEventListener('input', () => { C.dirty = true; });
 $$('.cmp-toggles a').forEach((a) => (a.onclick = () => { $('#row-' + a.dataset.show).classList.remove('hidden'); $(`.chips[data-field="${a.dataset.show}"] input`).focus(); }));
