@@ -12,6 +12,7 @@ import re
 import threading
 import time
 import uuid
+from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from email.utils import getaddresses, parseaddr
@@ -289,6 +290,8 @@ def _card_view(card):
 # The page groups its list with the same rule (threadKey in app.js).
 SUBJECT_PREFIX = re.compile(r'^\s*(?:re|fwd?|fw|回复|转发|答复)\s*(?:\[\d+\])?\s*[:：]\s*', re.I)
 THREAD_SKIP = ('trash', 'spam', 'virus', 'drafts')  # Folders a conversation does not reach into.
+CONTACT_SKIP = THREAD_SKIP  # Folders the 个人通讯录 scan does not read.
+AUTOMATED_ADDRESS = re.compile(r'(no-?reply|do-?not-?reply|mailer-daemon|postmaster|bounces?|notifications?|newsletter|alerts?|system)\b[^@]*@', re.I)
 
 
 def thread_subject(subject):
@@ -399,6 +402,8 @@ class MailBackend:
         self.display_name = ''
         self._password = None  # Kept in memory only when the user chose to stay signed in.
         self._signed_in = False
+        self._connect_lock = threading.Lock()  # One sign-in at a time, whichever thread needs the server first.
+        self._identity_fresh = False  # Identities and name re-read from the server this session.
         self._folders = []
         self._shared = {}  # Shared mailbox id -> {id, email, name, send, rw, folders, unread}
         self._contact_index = None
@@ -427,6 +432,8 @@ class MailBackend:
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
         self.trending_get = None  # GitHub Trending (G1): demo and tests pass a stand-in for the network.
         self.news_get = None  # 每日速览 (G2): the same for 36氪's feed.
+        self.sentence_get = None  # 每日一句: the same for its feed.
+        self._sentence_tried = 0
         self.net_probe = None  # 网络检测: demo and tests pass a stand-in for the network primitives.
         self._ai_lock = threading.Lock()
         self._ask_cancel = threading.Event()  # 问邮箱: set by the page's 取消, checked between steps.
@@ -470,16 +477,13 @@ class MailBackend:
             raise AppError('NOT_AUTHENTICATED') from None
         if not value.get('password'):
             raise AppError('NOT_AUTHENTICATED')
-        try:
-            return self.login(value['server'], value['username'], value['password'], True)
-        except AppError as error:
-            if error.code not in ('NETWORK_ERROR', 'TLS_ERROR'):
-                raise
-        # Offline start: show the encrypted cache now and sign in on the next call.
+        # Fast start: the encrypted cache opens now and signing in waits for the first call
+        # that needs the server (_online), so the window shows the last known mailbox at once
+        # instead of after several round trips. Offline the cache simply stays on screen.
         self._password = (value['server'], value['username'], value['password'])
         self._signed_in = False
         self._open_account(value['server'], value['username'], online=False)
-        return {**self.profile(), 'offline': True}
+        return self.profile()
 
     def logout(self, forget=False):
         self._mcp_tools = None  # Its mail refs belong to this account.
@@ -529,15 +533,23 @@ class MailBackend:
         self.identities, self.display_name = identity.get('identities') or [username], identity.get('name', '')
         self._shared = {b['id']: b for b in self.cache.get('shared') or []}
         if online:
-            try:
-                self.identities = sorted(self.adapter.get_account_identities()) or [username]
-            except AppError:
-                pass
-            try:
-                self.display_name = self.adapter.display_name() if hasattr(self.adapter, 'display_name') else ''
-            except AppError:
-                pass
-            self.cache.set('identity', {'identities': self.identities, 'name': self.display_name})
+            self._refresh_identity()
+        elif username not in self.identities and '@' in username:
+            self.identities.insert(0, username)
+
+    def _refresh_identity(self):
+        """Sending identities and display name from the server (kept in the cache for the next start)."""
+        username = self.account
+        try:
+            self.identities = sorted(self.adapter.get_account_identities()) or [username]
+        except AppError:
+            pass
+        try:
+            self.display_name = self.adapter.display_name() if hasattr(self.adapter, 'display_name') else ''
+        except AppError:
+            pass
+        self._identity_fresh = True
+        self.cache.set('identity', {'identities': self.identities, 'name': self.display_name})
         if username not in self.identities and '@' in username:
             self.identities.insert(0, username)
 
@@ -560,9 +572,7 @@ class MailBackend:
         if self.cache is None:
             raise AppError('NOT_AUTHENTICATED')
         if not self._signed_in and self._password:
-            server, username, password = self._password
-            self.adapter.login(AccountConfig('primary', server, username), password)
-            self._signed_in = True
+            self._connect()
         try:
             return operation(*args, **kwargs)
         except AppError as error:
@@ -571,6 +581,21 @@ class MailBackend:
         server, username, password = self._password
         self.adapter.login(AccountConfig('primary', server, username), password)
         return operation(*args, **kwargs)
+
+    def _connect(self):
+        """Sign in with the kept password (fast start, offline start). Several threads may
+        need the server at once: the first signs in, the others wait for it."""
+        with self._connect_lock:
+            if self._signed_in or not self._password:
+                return
+            server, username, password = self._password
+            try:
+                self.adapter.login(AccountConfig('primary', server, username), password)
+            except AppError as error:
+                if error.code in ('AUTH_REJECTED', 'AUTH_CHALLENGE'):
+                    self._password = None  # A rejected saved password is not tried again and again.
+                raise
+            self._signed_in = True
 
     # Preferences -----------------------------------------------------------
     def prefs(self):
@@ -1453,12 +1478,84 @@ class MailBackend:
         result['partial'] |= len(subs) > self.SUBTREE_DEPARTMENTS
         return {**result, 'rows': rows, 'total': total}
 
+    # 个人通讯录 = the server's list plus everyone the user has mailed with, grouped by the
+    # company of their domain. Mail partners stay on this PC (encrypted cache): pab:createContacts
+    # is unverified, and bulk writes to the real address book are hard to take back.
     def personal_contacts(self, refresh=False):
-        if not hasattr(self.adapter, 'personal_contacts'):
-            return {'rows': [], 'at': None, 'cached': False}
-        value = self._stale('pab', self.adapter.personal_contacts, refresh)
-        return {'rows': value['data'], 'at': value['at'], 'cached': value['cached']}
+        from coremail_desktop.ai.companies import PUBLIC_DOMAINS, PUBLIC_GROUP, domain_of
+        value = {'data': [], 'at': None, 'cached': False}
+        if hasattr(self.adapter, 'personal_contacts'):
+            try:
+                value = self._stale('pab', self.adapter.personal_contacts, refresh)
+            except AppError:
+                pass  # Mail partners still show without the server's list.
+        hidden = set(self.cache.get('contactsHidden') or [])
+        people = {r['email'].casefold(): {**r, 'fromMail': False} for r in value['data']}
+        for key, contact in self._local_contacts().items():
+            if key not in people and key not in hidden and domain_of(key) and not AUTOMATED_ADDRESS.match(key):
+                people[key] = {'name': contact['name'], 'email': contact['email'], 'fromMail': True}
+        # Colleagues belong to the organisation directory, whichever list they came from.
+        own = self.internal_domains()
+        people = {k: p for k, p in people.items() if not any(domain_of(k) == d or domain_of(k).endswith('.' + d) for d in own)}
+        companies = self.cache.get('contactCompanies') or {}
+        unknown = set()
+        for person in people.values():
+            domain = person['domain'] = domain_of(person['email'])
+            person['company'] = companies.get(domain) or (PUBLIC_GROUP if domain in PUBLIC_DOMAINS else domain or '其他')
+            if domain and domain not in companies and domain not in PUBLIC_DOMAINS:
+                unknown.add(domain)
+        sizes = Counter(p['company'] for p in people.values())
+        rows = sorted(people.values(), key=lambda p: (p['company'] == PUBLIC_GROUP, -sizes[p['company']], p['company'].casefold(),
+                                                      (p['name'] or p['email']).casefold()))
+        return {'rows': rows, 'at': value['at'], 'cached': value['cached'], 'unknown': sorted(unknown),
+                'scanDone': bool((self.cache.get('contactsScan') or {}).get('done'))}
 
+    def contacts_scan(self):
+        """One read-only page of the next folder not read through yet, so 往来 covers more than
+        the pages opened so far. The page calls this repeatedly: mail work runs in between, and
+        an interrupted scan goes on where it stopped."""
+        state = self.cache.get('contactsScan') or {'done': False, 'offsets': {}}
+        for folder in self._folders:
+            offset = state['offsets'].get(folder['id'], 0)
+            if folder['role'] in CONTACT_SKIP or offset < 0:
+                continue
+            page = self.messages(folder['id'], offset, self.CONTACT_SCAN_PAGE)
+            offset += self.CONTACT_SCAN_PAGE
+            state['offsets'][folder['id']] = offset if page['more'] and offset < self.CONTACT_SCAN_MAX else -1
+            self.cache.set('contactsScan', state)
+            return {'done': False}
+        if self._folders:
+            self.cache.set('contactsScan', {**state, 'done': True})
+        return {'done': True}
+
+    def contact_companies(self):
+        """Ask the AI about one batch of unknown domains (only the domains leave this PC)."""
+        from coremail_desktop.ai.companies import BATCH, COMPANY_TOKENS, build_messages, parse
+        domains = self.personal_contacts()['unknown'][:BATCH]
+        if not domains:
+            return {'found': 0}
+        content, _ = self._ai_call(build_messages(domains), max_tokens=COMPANY_TOKENS, json_mode=True)
+        found = parse(content, domains)
+        self.cache.set('contactCompanies', {**found, **(self.cache.get('contactCompanies') or {})})  # A rename made meanwhile wins.
+        return {'found': len(found)}
+
+    def rename_contact_company(self, domains, company):
+        company = ' '.join(company.split()) if isinstance(company, str) else ''
+        if not company or len(company) > 60 or not isinstance(domains, list) or not domains or not all(isinstance(d, str) and d for d in domains):
+            raise AppError('INVALID_CONTACT')
+        self.cache.set('contactCompanies', {**(self.cache.get('contactCompanies') or {}), **{d: company for d in domains}})
+        return self.personal_contacts()
+
+    def set_contact_hidden(self, email, hidden=True):
+        """Take a mail partner off the list, or put them back; later mail does not re-add them."""
+        key = email.strip().casefold() if isinstance(email, str) else ''
+        if '@' not in key or len(key) > 254:
+            raise AppError('INVALID_CONTACT')
+        stored = [k for k in self.cache.get('contactsHidden') or [] if k != key]
+        self.cache.set('contactsHidden', stored + [key] if hidden else stored)
+        return self.personal_contacts()
+
+    CONTACT_SCAN_PAGE, CONTACT_SCAN_MAX = 100, 3000
     PERSON_MAX_AGE = 24 * 3600
     PERSON_FIELDS = ('name', 'email', 'dept', 'title', 'mobile', 'phone', 'fax', 'address', 'employeeNo', 'office', 'manager')
 
@@ -1505,8 +1602,11 @@ class MailBackend:
         if self._contact_index is not None and self._contact_index_size == len(entries):
             return self._contact_index
         sent = {f['id'] for f in self._folders if f['role'] == 'sent'} or {'3'}
+        junk = {f['id'] for f in self._folders if f['role'] in ('spam', 'virus')}
         index = {}
         for sender, recipients, fid, ts in entries:
+            if fid in junk:
+                continue
             people = _people(recipients) if fid in sent else _people(sender)
             for person in people:
                 key = person['email'].casefold()
@@ -1537,6 +1637,39 @@ class MailBackend:
             except AppError:
                 pass  # The directory is optional; local suggestions still work.
         return results[:limit]
+
+    # Daily English ---------------------------------------------------------
+    # The title bar's sentence: today's from the feed once it has answered (kept in the
+    # encrypted cache, so a restart needs no call), the built-in one until then.
+    SENTENCE_RETRY = 1800
+
+    def _saved_sentence(self, day=None):
+        saved = self.cache.get('dailySentence') if self.cache else None
+        today = (day or datetime.now().date()).isoformat()
+        return saved if isinstance(saved, dict) and saved.get('date') == today else None
+
+    def daily_line(self, day=None):
+        from coremail_desktop.app.daily_english import line, today_line
+        saved = self._saved_sentence(day)
+        return line(saved['en'], saved['zh']) if saved else today_line(day)
+
+    def sentence_due(self, now=None):
+        """Time to ask the feed? Not while today's is saved, and not again within half an hour."""
+        now = time.time() if now is None else now
+        if not self.cache or self._saved_sentence() or now - self._sentence_tried < self.SENTENCE_RETRY:
+            return False
+        self._sentence_tried = now
+        return True
+
+    def fetch_sentence(self, day=None):
+        """Runs off the UI thread. True when today's sentence was saved."""
+        from coremail_desktop.app.daily_english import fetch
+        day = day or datetime.now().date()
+        value = fetch(day, self.sentence_get)
+        if not value or not self.cache:
+            return False
+        self.cache.set('dailySentence', {**value, 'date': day.isoformat()})
+        return True
 
     # Compose ---------------------------------------------------------------
     def _signature_html(self):
@@ -2869,7 +3002,7 @@ class MailBackend:
         if kind == 'remember':
             from coremail_desktop.memory.profile import GROUPS
             return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'],
-                    'remember': {'group': GROUPS[plan['group']][0], 'text': plan['text'], 'was': plan['was']}}
+                    'remember': {'items': [{'group': GROUPS[i['group']][0], 'text': i['text'], 'was': i['was']} for i in plan['items']]}}
         if kind == 'mail':
             return {'id': key, 'ref': plan['ref'], 'kind': kind, 'summary': plan['summary'], 'basis': question[:200],
                     'mail': {'op': plan['op'], 'what': plan['what'], 'count': len(plan['mids']), 'folder': plan['folderName'],
@@ -3023,21 +3156,28 @@ class MailBackend:
         self._tasks().store.set(f'assist_nudge:{int(entry["task"])}', entry['mid'])  # Only the mail's id.
         return True
 
-    def assistant_remember_run(self, plan):
-        """记住 on a 关于我 card (Me2): the user's own words, kept at once (by 'user'); what it
-        updates is kept as past."""
+    def assistant_remember_run(self, plan, picks=None):
+        """记住 on a 关于我 card (Me2): the lines left ticked (all when None), the user's own
+        words, kept at once (by 'user'); what each updates is kept as past."""
         from coremail_desktop.memory.profile import entry, keep_one, same, state
         card = self._plan_entry(plan, 'remember')
+        lines = card['items']
+        if picks is not None:
+            if not isinstance(picks, list) or not picks or any(type(i) is not int or not 0 <= i < len(lines) for i in picks):
+                raise AppError('AI_INVALID_INPUT')
+            lines = [lines[i] for i in dict.fromkeys(picks)]
         items = self._profile_items()
-        if not any(state(e) == 'current' and e['group'] == card['group'] and same(e['text'], card['text']) for e in items):
-            made = entry(card['group'], card['text'], 'user', 'chat', state='pending')
-            if card['replaces']:
-                made['replaces'] = card['replaces']
+        for line in lines:
+            if any(state(e) == 'current' and e['group'] == line['group'] and same(e['text'], line['text']) for e in items):
+                continue
+            made = entry(line['group'], line['text'], 'user', 'chat', state='pending')
+            if line['replaces']:
+                made['replaces'] = line['replaces']
             items = keep_one(items + [made], made['id'], by='user')
-            self._memory().set('profile', items)
+        self._memory().set('profile', items)
         self._plans.pop(plan)
-        self._chat_note(card, f'\n（用户已记住：{card["text"]}）')
-        return {'kept': True}
+        self._chat_note(card, '\n（用户已记住：' + '；'.join(line['text'] for line in lines) + '）')
+        return {'kept': len(lines)}
 
     def _about_known(self):
         """问鸿雁's remember_me: {'A1': {'id', 'text'}}, as the numbered profile it was sent."""
@@ -4622,6 +4762,8 @@ class MailBackend:
         self.cache.set('inboxSynced', True)
         fresh = [] if first_sync else [r for r in page['rows'] if r['id'] not in known and not r['flags'].get('read')]
         folders = self.folders(refresh=True)
+        if not self._identity_fresh:  # Fast start used the cached identities: refresh them once.
+            self._refresh_identity()
         result = {'folders': folders, 'inbox': inbox, 'rows': page['rows'], 'total': page['total'], 'new': fresh}
         if self._shared:
             try:

@@ -292,18 +292,30 @@ class BackendTest(unittest.TestCase):
                                about=b._about_known)
         self.assertIn('remember_me', [s['function']['name'] for s in tools.specs])
         tools.begin()
-        result, _ = tools.run('remember_me', json.dumps({'group': 'people', 'text': '李四：新上级', 'replaces': 'A1'}, ensure_ascii=False))
+        result, _ = tools.run('remember_me', json.dumps({'items': [{'group': 'people', 'text': '李四：新上级', 'replaces': 'A1'}]}, ensure_ascii=False))
         self.assertIn('不要说已经记住', result['note'])
         self.assertEqual(len(b.about_me()['entries']), 1)  # Nothing written yet.
-        bad, _ = tools.run('remember_me', json.dumps({'group': 'people', 'text': 'x', 'replaces': 'A7'}))
-        self.assertIn('error', bad)
+        for bad in ({'items': [{'group': 'people', 'text': 'x', 'replaces': 'A7'}]}, {'items': []}, {'group': 'people', 'text': 'x'},
+                    {'items': [{'group': 'people', 'text': f'{i}'} for i in range(13)]}):
+            self.assertIn('error', tools.run('remember_me', json.dumps(bad))[0])
         card = b._keep_plan(tools.plans[0], 'chat', '记住李四是我的新上级', 1)
-        self.assertEqual(card['remember'], {'group': '人', 'text': '李四：新上级', 'was': '张三：上级'})
-        b.assistant_remember_run(card['id'])
+        self.assertEqual(card['remember'], {'items': [{'group': '人', 'text': '李四：新上级', 'was': '张三：上级'}]})
+        self.assertEqual(b.assistant_remember_run(card['id']), {'kept': 1})
         view = b.about_me()['entries']
         self.assertEqual(sorted((e['text'], e['state'], e['by']) for e in view), [('张三：上级', 'past', 'user'), ('李四：新上级', 'current', 'user')])
         with self.assertRaises(AppError):
             b.assistant_remember_run(card['id'])  # Once.
+        # A customer's focal points: several lines on one card; only the ticked ones are kept.
+        tools.begin()
+        lines = [{'group': 'people', 'text': f'客户规划处：模块 {i} 的对接人 P{i}'} for i in range(6)]
+        tools.run('remember_me', json.dumps({'items': lines}, ensure_ascii=False))
+        card = b._keep_plan(tools.plans[0], 'chat', '这些客户的组织关系，需要记录下来', 2)
+        self.assertEqual(len(card['remember']['items']), 6)
+        with self.assertRaises(AppError):
+            b.assistant_remember_run(card['id'], picks=[6])
+        self.assertEqual(b.assistant_remember_run(card['id'], picks=[0, 2, 5]), {'kept': 3})
+        kept = {e['text'] for e in b.about_me()['entries'] if e['state'] == 'current'}
+        self.assertEqual(kept & {l['text'] for l in lines}, {lines[i]['text'] for i in (0, 2, 5)})
 
 
 if __name__ == '__main__':

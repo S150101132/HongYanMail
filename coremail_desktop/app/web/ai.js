@@ -610,20 +610,29 @@ function nudgeAct(p, turn, act) {
   else { n.state = 'off'; api('assistantNudgeDismiss', { plan: n.plan.id }).catch(fail); }
   renderAsk();
 }
-// 记进「关于我」 (Me2): what the user asked to keep, written only on 记住.
+// 记进「关于我」 (Me2): what the user asked to keep, one line or several (a customer's focal
+// points), all ticked; written only on 记住.
 function rememberCard(p, turn, j) {
-  const at = `data-turn="${turn}" data-plan="${j}"`, r = p.remember;
+  const at = `data-turn="${turn}" data-plan="${j}"`, items = p.remember.items, live = !p.state;
+  const picks = p.picks || items.map((x, i) => i), many = items.length > 1;
+  const rows = items.map((r, i) => `<div class="link-row"><label>` +
+    (many ? `<input type="checkbox" data-draft="remember" value="${i}"${picks.includes(i) ? ' checked' : ''}${live ? '' : ' disabled'}>` : '') +
+    `<span class="muted small">${esc(r.group)}</span><b>${esc(r.text)}</b></label>` +
+    (r.was ? `<div class="muted small">取代：${esc(r.was)}（旧的一条留在「以前」，可以恢复）</div>` : '') + '</div>').join('');
   const foot = p.state === 'done' ? `<span class="plan-ok">${esc(p.note)}</span>` : p.state === 'off' ? `<span class="muted small">${esc(p.note)}</span>` :
-    '<span class="muted small">点「记住」后，问鸿雁、理解邮件和写信都会参考这一条；可在 设置 → 关于我 修改</span><span class="spacer"></span>' +
-    `<button class="btn ghost sm" ${at} data-plan-act="skip">不用</button><button class="btn primary sm" ${at} data-plan-act="remember">记住</button>`;
+    `<span class="muted small">点「记住」后，问鸿雁、理解邮件和写信都会参考${many ? '勾选的条目' : '这一条'}；可在 设置 → 关于我 修改</span><span class="spacer"></span>` +
+    `<button class="btn ghost sm" ${at} data-plan-act="skip">不用</button>` +
+    `<button class="btn primary sm" ${at} data-plan-act="remember"${picks.length ? '' : ' disabled'}>记住${many ? ` ${picks.length} 条` : ''}</button>`;
   return `<div class="chat-plan${p.state ? ' ' + p.state : ''}" ${at}><div class="chat-plan-head"><i data-icon="user"></i>` +
-    `<b>记进「关于我」· ${esc(r.group)}${p.state === 'done' ? ' · 已记住' : p.state === 'off' ? ' · 没有记' : ''}</b></div>` +
-    `<div class="remember-text">${esc(r.text)}${r.was ? `<div class="muted small">取代：${esc(r.was)}（旧的一条留在「以前」，可以恢复）</div>` : ''}</div>` +
-    `<div class="chat-plan-foot">${foot}</div></div>`;
+    `<b>记进「关于我」${p.state === 'done' ? ' · 已记住' : p.state === 'off' ? ' · 没有记' : ''}</b></div>` +
+    `<div class="link-rows">${rows}</div><div class="chat-plan-foot">${foot}</div></div>`;
 }
 async function rememberRun(p) {
-  if (p.state) return;
-  try { await api('assistantRememberRun', { plan: p.id }); p.state = 'done'; p.note = '已记住。'; } catch (err) { p.state = 'off'; p.note = err.message; }
+  if (p.state || (p.picks && !p.picks.length)) return;
+  try {
+    const result = await api('assistantRememberRun', p.picks ? { plan: p.id, picks: p.picks } : { plan: p.id });
+    p.state = 'done'; p.note = result.kept > 1 ? `已记住 ${result.kept} 条。` : '已记住。';
+  } catch (err) { p.state = 'off'; p.note = err.message; }
   renderAsk();
 }
 // 没有关联邮件 (W4): up to five candidates the AI found; the user ticks and links them.
@@ -804,6 +813,7 @@ $('#ask-out').addEventListener('change', (e) => {
   else if (el.dataset.draft === 'keep') p.keep = el.checked;
   else if (el.dataset.draft === 'contact') p.contacts = $$('[data-draft="contact"]', card).filter((c) => c.checked).map((c) => +c.value);
   else if (el.dataset.draft === 'link') p.picks = $$('[data-draft="link"]', card).filter((c) => c.checked).map((c) => +c.value);
+  else if (el.dataset.draft === 'remember') p.picks = $$('[data-draft="remember"]', card).filter((c) => c.checked).map((c) => +c.value);
   if (el.dataset.draft !== 'points') renderAsk();
 });
 $('#ask-out').addEventListener('change', (e) => {

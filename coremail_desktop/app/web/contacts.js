@@ -94,7 +94,7 @@ $('#search-chips').addEventListener('click', (e) => {
 });
 
 // ---------------------------------------------------------------- contacts (通讯录, read-only)
-const CT = { tree: [], open: new Set(), dn: null, rows: [], total: 0, title: '', mode: 'dept', person: null, token: 0, personal: [], loaded: false };
+const CT = { tree: [], open: new Set(), companies: new Set(), dn: null, rows: [], total: 0, title: '', mode: 'dept', person: null, token: 0, personal: [], loaded: false };
 
 async function openContacts() {
   S.local = 'contacts'; S.search = null; S.listToken++; S.multi.clear(); renderSelection();
@@ -113,9 +113,10 @@ $('#nav-contacts').onclick = openContacts;
 async function loadDirectory(refresh) {
   try {
     const [dir, pab] = await Promise.all([api('directory', { refresh }), api('personalContacts', { refresh }).catch(() => ({ rows: [] }))]);
-    CT.tree = dir.tree; CT.personal = pab.rows || [];
+    CT.tree = dir.tree; showPersonalRows(pab);
     if (CT.tree[0] && !CT.open.size) CT.open.add(CT.tree[0].id);
     renderTree();
+    if (refresh) collectPersonal(pab);
     $('#ct-tree-note').textContent = dir.at ? `${dir.cached ? '本机缓存' : '已更新'} · ${new Date(dir.at * 1000).toLocaleString('zh-CN', { hour12: false })}` : '';
     if (!CT.dn && CT.mode === 'dept' && !CT.rows.length) showContactsHint();
   } catch (err) {
@@ -185,6 +186,50 @@ function showPersonal() {
   CT.token++; CT.mode = 'personal'; CT.dn = null; CT.title = '个人通讯录'; CT.rows = CT.personal; CT.total = CT.personal.length; CT.person = null;
   renderTree(); $('#ct-title').textContent = '个人通讯录'; drawMembers();
 }
+function showPersonalRows(pab) {
+  CT.personal = pab.rows || [];
+  if (CT.mode !== 'personal') return;
+  const list = $('#ct-list'), top = list.scrollTop;
+  CT.rows = CT.personal; CT.total = CT.personal.length;
+  drawMembers(); list.scrollTop = top;
+}
+// Reads the rest of the mail list once (a page at a time, so other work goes on), then asks
+// the AI about domains it has not seen. Failures only leave the list as it is: without AI a
+// group keeps its domain name.
+async function collectPersonal(pab) {
+  if (CT.collecting) return;
+  try {
+    CT.collecting = '正在整理往来邮件…';
+    for (let r = { done: pab.scanDone }; !r.done;) {
+      r = await api('contactsScan');
+      pab = await api('personalContacts'); showPersonalRows(pab); renderTree();
+    }
+    CT.collecting = '正在查询所属公司…';
+    while (pab.unknown && pab.unknown.length && (await api('contactCompanies')).found) {
+      pab = await api('personalContacts'); showPersonalRows(pab);
+    }
+  } catch (err) { /* Tried again the next time 通讯录 opens. */ }
+  CT.collecting = ''; showPersonalRows(pab); renderTree();
+}
+async function renameCompany(company) {
+  const name = await promptDialog({ title: '修改公司名称', okText: '保存',
+    body: `<input type="text" id="ct-company-name" maxlength="60" spellcheck="false" value="${esc(company)}">`,
+    collect: () => $('#ct-company-name').value.trim() || null });
+  if (!name || name === company) return;
+  const domains = [...new Set(CT.personal.filter((p) => p.company === company).map((p) => p.domain))].filter(Boolean);
+  try {
+    const pab = await api('renameContactCompany', { domains, company: name });
+    if (CT.companies.delete(company)) CT.companies.add(name);
+    showPersonalRows(pab);
+  } catch (err) { fail(err); }
+}
+async function hideMailContact(p) {
+  try {
+    CT.person = null; showPersonalRows(await api('setContactHidden', { email: p.email })); renderTree();
+    toast('已从个人通讯录移除', { ms: 8000, action: { label: '撤销', run: async () => {
+      try { showPersonalRows(await api('setContactHidden', { email: p.email, hidden: false })); renderTree(); } catch (err) { fail(err); } } } });
+  } catch (err) { fail(err); }
+}
 
 function memberFilter() { return CT.mode === 'search' ? '' : $('#ct-search').value.trim().toLowerCase(); }
 // A department with sub-departments lists everyone beneath it (backend.members gathers
@@ -193,20 +238,27 @@ function drawMembers() {
   const q = memberFilter();
   const page = CT.mode === 'dept' ? CT.page || {} : {};
   const index = new Map(CT.rows.map((p, i) => [p, i]));
-  const rows = q ? CT.rows.filter((p) => [p.name, p.email, p.title, p.dept, p.unit].some((v) => String(v || '').toLowerCase().includes(q))) : CT.rows;
+  const rows = q ? CT.rows.filter((p) => [p.name, p.email, p.title, p.dept, p.unit, p.company].some((v) => String(v || '').toLowerCase().includes(q))) : CT.rows;
   const more = CT.mode === 'dept' && CT.total > CT.rows.length;
   const scope = page.departments ? ` · 含 ${page.departments} 个子部门${page.direct ? `，直属 ${page.direct} 人` : ''}` : '';
   $('#ct-sub').textContent = CT.mode === 'search' ? `${rows.length} 人` : q ? `${rows.length} / ${CT.rows.length} 人`
-    : `${CT.total} 人${scope}` + (more ? ` · 显示前 ${CT.rows.length} 人` : '');
+    : `${CT.total} 人${scope}` + (more ? ` · 显示前 ${CT.rows.length} 人` : '') + (CT.mode === 'personal' && CT.collecting ? ` · ${CT.collecting}` : '');
   const empty = q ? (CT.mode === 'search' ? '全公司没有找到匹配的人' : '本部门没有匹配的人 · 回车搜索全公司')
     : page.departments ? '这个部门及其子部门在组织通讯录中都没有登记成员。<br>可在上方输入姓名，回车搜索全公司。'
     : CT.mode === 'dept' && CT.tree.some((n) => n.id === CT.dn) ? '请选择下级部门查看成员，或在上方输入姓名，回车搜索全公司。'
     : CT.mode === 'dept' ? '组织通讯录中这个部门没有登记成员。<br>同事可能登记在上级部门或其他部门，可在上方输入姓名，回车搜索全公司。' : '没有联系人';
   const list = $('#ct-list');
-  list.innerHTML = rows.length ? rows.map((p) => `<div class="row ct-row${CT.person && CT.person.email === p.email ? ' sel' : ''}" data-i="${index.get(p)}" role="option">
+  const sizes = {};
+  if (CT.mode === 'personal') rows.forEach((p) => { sizes[p.company] = (sizes[p.company] || 0) + 1; });
+  // Companies start folded; a search opens the ones it matched.
+  const shown = (p) => CT.mode !== 'personal' || !!q || CT.companies.has(p.company);
+  const heading = (p, i) => CT.mode !== 'personal' || (i && rows[i - 1].company === p.company) ? ''  // The backend keeps each company's people together.
+    : `<div class="ct-company"><button class="ct-company-toggle" data-company="${esc(p.company)}" aria-expanded="${shown(p)}"><span class="ct-twist${shown(p) ? ' open' : ''}"><i data-icon="chevron"></i></span><span class="ct-company-name" title="${esc(p.company)}">${esc(p.company)}</span><span class="count">${sizes[p.company]}</span></button>${p.company === '个人邮箱' || !p.domain ? ''
+      : `<button class="icon-btn ct-company-edit" data-company="${esc(p.company)}" title="修改公司名称" aria-label="修改公司名称"><i data-icon="pen"></i></button>`}</div>`;
+  list.innerHTML = rows.length ? rows.map((p, i) => `${heading(p, i)}${!shown(p) ? '' : `<div class="row ct-row${CT.person && CT.person.email === p.email ? ' sel' : ''}" data-i="${index.get(p)}" role="option">
       ${avatarHtml(p.name, p.email)}
       <div class="main"><div class="line1"><span class="who">${esc(p.name || p.email)}</span>${p.title ? `<span class="tag">${esc(p.title)}</span>` : ''}</div>
-      <div class="prev">${esc(p.email)}${p.unit ? `<span class="ct-unit"> · ${esc(p.unit)}</span>` : ''}</div></div></div>`).join('')
+      <div class="prev">${esc(p.email)}${p.unit ? `<span class="ct-unit"> · ${esc(p.unit)}</span>` : ''}</div></div></div>`}`).join('')
     + (more && !q ? '<div class="list-foot">人数较多，只显示一部分。请在上方输入姓名搜索。</div>' : '')
     + (page.partial && !more && !q ? '<div class="list-foot">部分子部门没能读取，名单可能不完整。点击刷新重试。</div>' : '')
     : `<div class="list-foot">${empty}</div>`;
@@ -215,6 +267,9 @@ function drawMembers() {
 }
 $('#ct-list').addEventListener('click', (e) => {
   if (e.target.closest('#ct-grp-new')) { editGroup(null); return; }
+  const edit = e.target.closest('.ct-company-edit'); if (edit) { renameCompany(edit.dataset.company); return; }
+  const fold = e.target.closest('.ct-company-toggle');
+  if (fold) { const c = fold.dataset.company; CT.companies.has(c) ? CT.companies.delete(c) : CT.companies.add(c); drawMembers(); return; }
   const grp = e.target.closest('.ct-grp'); if (grp) { showGroup(grp.dataset.gid); return; }
   const row = e.target.closest('.ct-row'); if (!row) return;
   CT.person = CT.rows[+row.dataset.i];
@@ -250,7 +305,7 @@ $('#ct-search').addEventListener('keydown', async (e) => {
 // refreshed daily). Fields the directory leaves empty are not shown (this server
 // exposes no 工号/办公地点/上级 today). Every field copies on click; the head image replaces the
 // coloured initials when the directory has one.
-const PERSON_FIELDS = [['name', '姓名'], ['email', '邮箱'], ['dept', '部门'], ['unit', '子部门'], ['title', '职位'], ['mobile', '手机'], ['phone', '办公电话'],
+const PERSON_FIELDS = [['name', '姓名'], ['email', '邮箱'], ['company', '公司'], ['dept', '部门'], ['unit', '子部门'], ['title', '职位'], ['mobile', '手机'], ['phone', '办公电话'],
   ['fax', '传真'], ['address', '地址'], ['employeeNo', '工号'], ['office', '办公地点'], ['manager', '上级']];
 const PERSON = new Map();  // email (lower case) -> details promise, for this run only.
 function personDetails(email, refresh = false) {
@@ -294,14 +349,16 @@ function renderCard(p, details) {
     <h1>${esc(shown.name || shown.email)}</h1>
     ${shown.title ? `<p class="muted">${esc(shown.title)}</p>` : ''}
     <dl class="ct-facts">${factsHtml(shown)}
-      ${CT.mode === 'personal' ? '<dt>来源</dt><dd>个人通讯录</dd>' : ''}
+      ${CT.mode === 'personal' ? `<dt>来源</dt><dd>${p.fromMail ? '往来邮件（只在本机）' : '个人通讯录'}</dd>` : ''}
     </dl>
     <p class="muted small ct-detail-note">${details === undefined ? '正在读取详细信息…' : details && details.found ? '点击任一项即可复制' : CT.mode === 'personal' ? '' : '组织通讯录中没有更多信息'}</p>
     <div class="ct-actions">
       <button class="btn primary" id="ct-write"><i data-icon="pen"></i>写邮件</button>
       <button class="btn ghost" id="ct-mails"><i data-icon="search"></i>查看往来邮件</button>
+      ${CT.mode === 'personal' && p.fromMail ? '<button class="btn ghost" id="ct-hide">移除</button>' : ''}
     </div></div>`;
   renderIcons(card);
+  if ($('#ct-hide')) $('#ct-hide').onclick = () => hideMailContact(p);
   $('#ct-write').onclick = () => writeTo(shown);
   $('#ct-mails').onclick = () => mailsWith(shown);
   if (details === undefined) personDetails(p.email).then((d) => { if (CT.person === p) renderCard(p, d); });

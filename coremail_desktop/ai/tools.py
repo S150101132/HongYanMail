@@ -343,17 +343,21 @@ FOLLOWUP_SPEC = {'type': 'function', 'function': {
     'description': '催办：用户最近 30 天发出、在主送里提了问、几天还没有人回复的邮件（编号、主题、收件人、已等几天）。',
     'parameters': {'type': 'object', 'properties': {}}}}
 MEMORY_ROWS = 20
-# 关于我 (Me2): 「记住……」 in 问鸿雁 becomes a card; the user's 记住 writes it.
+# 关于我 (Me2): 「记住……」 in 问鸿雁 becomes a card; the user's 记住 writes the lines left ticked.
 REMEMBER_GROUPS = ('role', 'projects', 'people', 'ways')
+REMEMBER_ITEMS = 12
 REMEMBER_SPEC = {'type': 'function', 'function': {
     'name': 'remember_me',
-    'description': '提议把一条关于用户本人的长期情况记进「关于我」（岗位、项目和系统里做什么不做什么、和某人的关系、工作习惯）。'
-                   '只生成卡片，用户点「记住」才写入。一次性的待办不要用它。',
+    'description': '提议把关于用户本人的长期情况记进「关于我」（岗位、项目和系统里做什么不做什么、和某人的关系、工作习惯）。'
+                   f'一次调用可以带多条（最多 {REMEMBER_ITEMS} 条），同一件事要记的都放进这一次，例如客户各模块的负责人一人一条。'
+                   '只生成一张卡片，用户勾选后点「记住」才写入。一次性的待办不要用它。',
     'parameters': {'type': 'object', 'properties': {
-        'group': {'type': 'string', 'enum': list(REMEMBER_GROUPS), 'description': 'role 我的岗位、projects 项目和系统、people 人、ways 工作方式'},
-        'text': {'type': 'string', 'description': '一句话，不超过 100 字'},
-        'replaces': {'type': 'string', 'description': '更新了「关于用户」里的哪一条：它的 A 编号，如 A3；新的一条就不填'}},
-        'required': ['group', 'text']}}}
+        'items': {'type': 'array', 'description': f'要记的条目，1–{REMEMBER_ITEMS} 条', 'items': {'type': 'object', 'properties': {
+            'group': {'type': 'string', 'enum': list(REMEMBER_GROUPS), 'description': 'role 我的岗位、projects 项目和系统、people 人、ways 工作方式'},
+            'text': {'type': 'string', 'description': '一句话，不超过 100 字'},
+            'replaces': {'type': 'string', 'description': '更新了「关于用户」里的哪一条：它的 A 编号，如 A3；新的一条就不填'}},
+            'required': ['group', 'text']}}},
+        'required': ['items']}}}
 # G1d: what each tool may do. READ runs at once and changes nothing; CARD only proposes a plan
 # the user confirms (and can undo) in the app. No tool writes or sends by itself, and a new
 # tool must be declared here (tests/test_ai_ask.py checks every spec).
@@ -426,19 +430,25 @@ class AssistantTools(MailboxTools):
                 'remember_me': self.remember_me}[name](args)
 
     def remember_me(self, args):
-        """Me2: a 关于我 line the user asked to keep, shown as a card; nothing is written here."""
-        group, text = args.get('group'), _clip(args.get('text'), 120)
-        if group not in REMEMBER_GROUPS or not text:
-            return {'error': 'group 是 role / projects / people / ways 之一，text 不能为空'}, '提议记住（参数无效）'
-        known, ref = self._about() or {}, _clip(args.get('replaces'), 6).upper()
-        if ref and ref not in known:
-            return {'error': f'{ref} 不是「关于用户」里的编号；新的一条就不填 replaces'}, '提议记住（编号无效）'
-        was = known.get(ref) or {}
-        plan = self._new_plan('remember', '记进「关于我」', group=group, text=text, replaces=was.get('id', ''), was=was.get('text', ''))
+        """Me2: 关于我 lines the user asked to keep, shown as one card; nothing is written here."""
+        raw, known, items = args.get('items'), self._about() or {}, []
+        if not isinstance(raw, list) or not raw or len(raw) > REMEMBER_ITEMS:
+            return {'error': f'items 需要 1–{REMEMBER_ITEMS} 条'}, '提议记住（参数无效）'
+        for one in raw:
+            one = one if isinstance(one, dict) else {}
+            group, text = one.get('group'), _clip(one.get('text'), 120)
+            if group not in REMEMBER_GROUPS or not text:
+                return {'error': 'group 是 role / projects / people / ways 之一，text 不能为空'}, '提议记住（参数无效）'
+            ref = _clip(one.get('replaces'), 6).upper()
+            if ref and ref not in known:
+                return {'error': f'{ref} 不是「关于用户」里的编号；新的一条就不填 replaces'}, '提议记住（编号无效）'
+            was = known.get(ref) or {}
+            items.append({'group': group, 'text': text, 'replaces': was.get('id', ''), 'was': was.get('text', '')})
+        plan = self._new_plan('remember', '记进「关于我」', items=items)
         if plan is None:
             return {'error': f'一次回答最多提出 {PLANS_PER_QUESTION} 个计划'}, '提议记住（已达上限）'
-        return ({'plan': plan['ref'], 'note': '已作为卡片显示，用户点「记住」才写入「关于我」。回答里一两句话说明，不要说已经记住。'},
-                f'提议记住：{_clip(text, 30)}')
+        return ({'plan': plan['ref'], 'note': '已作为一张卡片显示，用户勾选后点「记住」才写入「关于我」。回答里一两句话说明，不要说已经记住，也不要逐条复述。'},
+                f'提议记住 {len(items)} 条：{_clip(items[0]["text"], 30)}')
 
     def add_task(self, task):
         """A task the user brought in (the one selected in 任务), or one a tool returned -> its ref."""

@@ -478,6 +478,18 @@ def render_pdf(mid):
     window._render_print(mid, False, ready)
 
 
+# 个人通讯录 (C3): mail partners joined and grouped by company.
+C3 = len(STEPS)
+STEPS += [
+    (2500, None, None),
+    (100, lambda: setattr(backend, 'ai_client', __import__('coremail_desktop.app.demo', fromlist=['DemoAiClient']).DemoAiClient()), None),
+    (500, "openContacts()", None),
+    (5000, "showPersonal()", 'c3-personal'),
+    (800, "$('.ct-company-toggle').click(); $('#ct-list .ct-row').click()", 'c3-card'),
+    (800, "$('.ct-company-toggle').click(); $('#ct-search').value = '供应'; $('#ct-search').dispatchEvent(new Event('input'))", 'c3-search'),
+]
+
+
 def run(index=0):
     if index >= len(STEPS):
         app.quit()
@@ -501,6 +513,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(ME if os.environ.get("HONGYAN_WALK_ME") else AM if os.environ.get("HONGYAN_WALK_AM") else X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(C3 if os.environ.get("HONGYAN_WALK_C3") else ME if os.environ.get("HONGYAN_WALK_ME") else AM if os.environ.get("HONGYAN_WALK_AM") else X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

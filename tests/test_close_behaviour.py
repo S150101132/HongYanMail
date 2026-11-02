@@ -43,6 +43,7 @@ class CloseEventTest(unittest.TestCase):
         self.shell = shell
         self.backend = MailBackend(scratch(self), adapter_factory=DemoAdapter, protector=XorProtector(), services_factory=local_services_stub)
         self.backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'pw')
+        self.backend.sentence_due = lambda: False  # No real call to the 每日一句 feed.
         self.window = shell.AppShell(self.backend, demo=False)
         self.quits = []
         app = type('A', (), {'quit': staticmethod(lambda: self.quits.append(1))})()

@@ -1,4 +1,5 @@
 """v0.3: read-only contacts view (org directory, personal contacts) and advanced search filters."""
+import json
 import shutil
 import sqlite3
 import tempfile
@@ -215,6 +216,102 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(len(backend.personal_contacts()['rows']), 2)
         self.assertIn('lihua@example.invalid', [p['email'] for p in backend.find_people('李')])
         self.assertEqual(backend.find_people('  '), [])
+
+    def with_partners(self):
+        backend = self.make()
+        backend.cache.put_summaries('1', [
+            {'id': f'c{i}', 'fid': '1', 'ts': 100 + i, 'from': sender, 'to': '', 'flags': {}, 'subject': '', 'preview': ''}
+            for i, sender in enumerate(('王工 <wang@acme.test>', 'Li <li@acme-sa.test>', 'Friend <me@gmail.com>', 'noreply@acme.test',
+                                        'postmaster@acme.test', 'Partner <dup@other.test>'))], False)
+        backend.cache.put_summaries('5', [{'id': 'j', 'fid': '5', 'ts': 1, 'from': 'x@junk.test', 'to': '', 'flags': {}, 'subject': '', 'preview': ''}], False)
+        backend._folders = [{'id': '1', 'role': 'inbox'}, {'id': '3', 'role': 'sent'}, {'id': '4', 'role': 'trash'}, {'id': '5', 'role': 'spam'}]
+        backend.cache.put_summaries('3', [{'id': 's', 'fid': '3', 'ts': 200, 'from': backend.account or 'me@x.test',
+                                           'to': '客户 <zhao@client.test>, ' + (backend.identities[0] if backend.identities else 'me@x.test'), 'flags': {}, 'subject': '', 'preview': ''}], False)
+        return backend
+
+    def test_mail_partners_join_the_personal_book_grouped_by_domain(self):
+        by_email = {r['email']: r for r in self.with_partners().personal_contacts()['rows']}
+        self.assertEqual(by_email['wang@acme.test']['company'], 'acme.test')  # Unknown: grouped under its domain.
+        self.assertEqual(by_email['me@gmail.com']['company'], '个人邮箱')
+        self.assertTrue(by_email['zhao@client.test']['fromMail'])  # Someone the user wrote to counts too.
+        self.assertFalse(by_email['partner@external.example']['fromMail'])
+        for gone in ('noreply@acme.test', 'postmaster@acme.test', 'x@junk.test'):
+            self.assertNotIn(gone, by_email)
+
+    def test_colleagues_stay_in_the_directory_not_the_personal_book(self):
+        backend = self.with_partners()
+        backend.cache.put_summaries('1', [{'id': f'o{i}', 'fid': '1', 'ts': 300 + i, 'from': sender, 'to': '', 'flags': {}, 'subject': '', 'preview': ''}
+                                          for i, sender in enumerate(('同事 <colleague@example.invalid>', 'Sub <a@bj.example.invalid>', 'Near <b@notexample.invalid>'))], False)
+        real = backend.adapter.personal_contacts
+        backend.adapter.personal_contacts = lambda: real() + [{'name': '同事', 'email': 'saved@example.invalid'}]
+        value = backend.personal_contacts(refresh=True)
+        emails = [r['email'] for r in value['rows']]
+        for gone in ('colleague@example.invalid', 'a@bj.example.invalid', 'saved@example.invalid'):
+            self.assertNotIn(gone, emails)
+        self.assertIn('b@notexample.invalid', emails)  # Only the domain itself, not a look-alike.
+        self.assertNotIn('example.invalid', value['unknown'])  # Nor is the AI asked about it.
+
+    def test_only_domains_go_to_the_ai_and_a_rename_sticks(self):
+        backend = self.with_partners()
+        seen = []
+
+        def answer(messages, **kwargs):
+            seen.append(messages[-1]['content'])
+            return json.dumps({'items': [{'domain': 'acme.test', 'company': 'Acme'}, {'domain': 'acme-sa.test', 'company': 'Acme'},
+                                         {'domain': 'other.test', 'company': ''}, {'domain': 'invented.test', 'company': 'Nope'}]}), 0
+        backend._ai_call = answer
+        self.assertEqual(backend.contact_companies()['found'], 3)
+        self.assertNotIn('@', seen[0].replace('<<<', ''))
+        self.assertNotIn('gmail.com', seen[0])
+        self.assertNotIn('王工', seen[0])
+        result = backend.personal_contacts()
+        rows = result['rows']
+        companies = {r['email']: r['company'] for r in rows}
+        self.assertEqual(companies['wang@acme.test'], companies['li@acme-sa.test'])
+        self.assertEqual(companies['dup@other.test'], 'other.test')  # Not known: not guessed, not asked again.
+        self.assertNotIn('other.test', result['unknown'])
+        self.assertNotIn('invented.test', backend.cache.get('contactCompanies'))
+        order = [r['company'] for r in rows]
+        self.assertEqual(order, sorted(order, key=lambda c: (c == '个人邮箱', order.index(c))))  # Each company stays together.
+        renamed = backend.rename_contact_company(['acme.test', 'acme-sa.test'], '  艾克米 ')
+        self.assertEqual({r['company'] for r in renamed['rows'] if r['domain'].startswith('acme')}, {'艾克米'})
+        with self.assertRaises(AppError):
+            backend.rename_contact_company(['acme.test'], '  ')
+
+    def test_a_removed_partner_stays_away_until_undone(self):
+        backend = self.with_partners()
+        emails = lambda value: [r['email'] for r in value['rows']]
+        self.assertNotIn('wang@acme.test', emails(backend.set_contact_hidden('WANG@acme.test')))
+        self.assertIn('wang@acme.test', emails(backend.set_contact_hidden('wang@acme.test', False)))
+
+    def test_scan_reads_mail_folders_a_page_at_a_time_and_resumes(self):
+        backend = self.with_partners()
+        read = []
+        backend.messages = lambda fid, offset, limit: read.append((fid, offset)) or {'more': fid == '1' and offset == 0}
+        self.assertFalse(backend.contacts_scan()['done'])
+        self.assertEqual(read, [('1', 0)])
+        self.assertFalse(backend.contacts_scan()['done'])
+        self.assertFalse(backend.contacts_scan()['done'])
+        self.assertTrue(backend.contacts_scan()['done'])
+        self.assertEqual(read, [('1', 0), ('1', 100), ('3', 0)])  # Trash and spam are not read.
+        self.assertTrue(backend.personal_contacts()['scanDone'])
+
+    def test_a_failed_server_list_still_shows_mail_partners(self):
+        backend = self.with_partners()
+
+        def refused():
+            raise AppError('NOT_AUTHENTICATED')
+        backend.adapter.personal_contacts = refused
+        self.assertIn('wang@acme.test', [r['email'] for r in backend.personal_contacts()['rows']])
+
+    def test_company_answers_are_checked(self):
+        from coremail_desktop.ai.companies import domain_of, parse
+        self.assertEqual(parse('not json', ['a.test']), {})
+        self.assertEqual(parse('{"items": "x"}', ['a.test']), {})
+        self.assertEqual(parse('{"items": [{"domain": "a.test", "company": 3}, "x"]}', ['a.test']), {})
+        self.assertEqual(parse('{"items": [{"domain": "a.test", "company": "  A   B "}]}', ['a.test']), {'a.test': 'A B'})
+        self.assertEqual(domain_of('x@Mail.A-b.test'), 'mail.a-b.test')
+        self.assertEqual((domain_of('x@localhost'), domain_of('nobody'), domain_of('x@a b.test')), ('', '', ''))
 
 
 class WebTests(unittest.TestCase):

@@ -291,10 +291,40 @@ class BackendTest(unittest.TestCase):
                               services_factory=local_services_stub)
         self.addCleanup(backend.logout)
         profile = backend.auto_login()
-        self.assertTrue(profile['offline'])
+        self.assertEqual(profile['account'], 'demo@example.invalid')
         self.assertEqual(len(backend.cached_view('1')['rows']), 50)
+        with self.assertRaises(AppError):
+            backend.folders()
         Offline.online = True
         self.assertTrue(backend.folders())
+
+    def test_fast_start_signs_in_on_first_server_call(self):
+        self.backend.messages('1', 0, 50)
+        self.backend.logout()
+        logins = []
+
+        class Counting(DemoAdapter):
+            password_ok = True
+
+            def login(self, account, password):
+                logins.append(1)
+                if not Counting.password_ok:
+                    raise AppError('AUTH_REJECTED')
+                super().login(account, password)
+        backend = MailBackend(self.directory, adapter_factory=Counting, protector=XorProtector(),
+                              services_factory=local_services_stub)
+        self.addCleanup(backend.logout)
+        backend.auto_login()
+        self.assertEqual(logins, [])  # The window opens from the cache, no round trip.
+        self.assertEqual(len(backend.cached_view('1')['rows']), 50)
+        backend.folders(); backend.messages('1', 0, 50)
+        self.assertEqual(len(logins), 1)
+        backend.adapter.close(); backend._signed_in = False
+        Counting.password_ok = False
+        for _ in range(2):
+            with self.assertRaises(AppError):
+                backend.folders()
+        self.assertEqual(len(logins), 2)  # A rejected saved password is not tried again.
 
     def test_prefetch_fills_body_cache_and_ignores_failures(self):
         ids = [r['id'] for r in self.backend.messages('1', 0, 5)['rows']]

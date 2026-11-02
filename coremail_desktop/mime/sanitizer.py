@@ -2,7 +2,6 @@
 import re
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
-import bleach
 
 TAGS = {'p', 'br', 'div', 'span', 'b', 'strong', 'i', 'em', 'u', 's', 'blockquote',
         'pre', 'code', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th',
@@ -28,6 +27,7 @@ def sanitize_html(source: str, cid_resources: dict) -> str:
         if tag in {'td', 'th'} and name in {'colspan', 'rowspan'}:
             return value.isdigit() and 0 < int(value) <= 100
         return False
+    import bleach  # Imported on first use: slow to load and not needed to start the app.
     return bleach.clean(source, tags=TAGS, attributes=attribute,
                         protocols={'http', 'https', 'cid'}, strip=True, strip_comments=True)
 
@@ -120,6 +120,7 @@ def sanitize_rich_html(source: str, cid_resources: dict, data_images: bool = Fal
         if tag in {'td', 'th'} and name in {'colspan', 'rowspan'}:
             return value.isdigit() and 0 < int(value) <= 100
         return False
+    import bleach
     cleaned = bleach.clean(source, tags=RICH_TAGS, attributes=attribute, css_sanitizer=_CssFilter(),
                            protocols={'http', 'https', 'cid', 'mailto'} | ({'data'} if data_images else set()), strip=True, strip_comments=True)
     return _clean_style_blocks(cleaned)

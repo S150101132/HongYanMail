@@ -654,6 +654,8 @@ class DemoAiClient:
         import time
         time.sleep(0.6)  # Long enough to see the progress state.
         text = messages[-1]['content']
+        if '判断邮箱域名属于哪家公司' in messages[0]['content']:
+            return json.dumps({'items': [{'domain': d, 'company': d.split('.')[0].capitalize() + ' 公司（演示）'} for d in text.splitlines()[1:-1]]}, ensure_ascii=False), 0
         if '为工作任务的演进图命名每个环节' in messages[0]['content']:  # 事件演进图 titles, from each step's own words.
             steps = json.loads(text)['环节']
             items = [{'id': s['id'], 'title': re.split(r'[，。；：:,\s]', s['text'])[0][:8] or '进展', 'summary': s['text'][:40],

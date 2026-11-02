@@ -2066,10 +2066,10 @@ on('syncError', (err) => {
   if (err && err.code === 'NETWORK_ERROR') showOffline('网络不可用，稍后自动重试。正在显示本机缓存。');
   else if (err && err.code !== 'TLS_ERROR') hideOffline();  // The server answered, so the network is back.
 });
-on('authRequired', () => {
-  if (READER_MID) { api('notifyMain', { name: 'authRequired' }).catch(() => {}); api('closeWindow'); return; }
+on('authRequired', (v) => {
+  if (READER_MID) { api('notifyMain', { name: 'authRequired', value: v }).catch(() => {}); api('closeWindow'); return; }
   api('closeReaders').catch(() => {});
-  showLogin('会话已失效，请重新登录。');
+  showLogin((v && v.message) || '会话已失效，请重新登录。');
 });
 on('compose', () => startCompose('new'));
 on('mailto', (addr) => startCompose('new', null, { to: [decodeURIComponent(addr || '')] }));

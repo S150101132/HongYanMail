@@ -570,6 +570,13 @@ body.moving, body.moving * { cursor: move !important; user-select: none; }
 .ct-note { padding: 8px 16px 12px; border-top: 1px solid var(--line-2); }
 .ct-list-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); position: relative; }
 .ct-row .tag { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ct-company { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; min-height: 36px; padding: 0 8px; background: var(--panel); border-bottom: 1px solid var(--line-2); }
+.ct-company-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 4px; border: 0; background: none; color: inherit; font: inherit; font-size: var(--fs-sm); font-weight: 600; text-align: left; cursor: pointer; }
+.ct-company-toggle:hover .ct-company-name { color: var(--accent); }
+.ct-company-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ct-company .count { font-weight: 400; color: var(--muted); }
+.ct-company-edit { flex: none; width: 24px; height: 24px; }
+.ct-company-edit i { width: 13px; height: 13px; }
 .ct-card-pane { min-width: 0; overflow: auto; display: flex; }
 .ct-card { margin: 56px auto auto; text-align: center; width: min(420px, 90%); }
 .ct-card h1 { margin: 14px 0 4px; font-size: var(--fs-xl); }
@@ -1338,7 +1345,6 @@ html:not(.tb-lean) .lean-only { display: none !important; }
 .me-pending .me-head { border-bottom-color: var(--warn-line); }
 .me-past { margin: 2px 0 6px; }
 .me-past summary { cursor: pointer; }
-.remember-text { padding: 6px 2px; }
 #prompt #me-why { width: 100%; }
 .me-bulk { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 2px 8px rgba(0, 0, 0, .06); font-size: var(--fs-sm); }
 .me-bulk .spacer { flex: 1; }

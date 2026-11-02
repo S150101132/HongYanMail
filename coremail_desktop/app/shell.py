@@ -9,6 +9,7 @@ import json
 import logging
 import mimetypes
 import os
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -27,7 +28,6 @@ from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, Q
 
 from coremail_desktop.errors import AppError
 from coremail_desktop.app.backend import NETWORK_CODES
-from coremail_desktop.app.quotes import today_quote
 from coremail_desktop.app.tray_check import tray_registered
 from coremail_desktop.ui.branding import app_icon
 from coremail_desktop.ui.messages import login_message, user_message
@@ -57,7 +57,8 @@ BACKEND_METHODS = {
     'deliveryStatus': 'delivery_status', 'recall': 'recall', 'scheduled': 'scheduled', 'unschedule': 'unschedule',
     'sharedMailboxes': 'shared_mailboxes',
     'directory': 'directory', 'members': 'members', 'personalContacts': 'personal_contacts', 'findPeople': 'find_people',
-    'person': 'person',
+    'person': 'person', 'contactsScan': 'contacts_scan', 'contactCompanies': 'contact_companies',
+    'renameContactCompany': 'rename_contact_company', 'setContactHidden': 'set_contact_hidden',
     'searchCapabilities': 'search_capabilities',
     'rules': 'rules', 'saveRule': 'save_rule', 'setRuleEnabled': 'set_rule_enabled', 'deleteRule': 'delete_rule', 'moveRule': 'move_rule',
     'ruleMatches': 'rule_matches', 'applyRule': 'apply_rule', 'undoRuleApply': 'undo_rule_apply',
@@ -116,7 +117,7 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'aiModels', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
               'replyIdeas', 'draftReply', 'writeFromNote', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
-              'memoryWeekBrief', 'trending', 'dailyNews', 'aboutDraft'}
+              'memoryWeekBrief', 'trending', 'dailyNews', 'aboutDraft', 'contactCompanies'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
 STREAM_METHODS = {'draftReply', 'writeFromNote', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
@@ -137,6 +138,11 @@ BACKGROUND_METHODS = {'prefetch', 'networkCheck'}
 # the composer's earlier saves land before it.
 SEND_METHODS = {'send', 'releaseSend', 'flushOutbox'}
 _LAST_SAVE_DIR = []  # Folder of the last successful save this session.
+
+
+def _warm_imports():
+    """Load the HTML sanitizer after the window is up, so opening the first mail does not wait for it."""
+    import bleach  # noqa: F401
 
 
 class _LogFile(logging.FileHandler):
@@ -407,6 +413,9 @@ class Bridge(QObject):
                 text = login_message(code) if name in ('login', 'autoLogin') else user_message(code)
                 if code in ('SESSION_EXPIRED', 'NOT_AUTHENTICATED') and name not in ('login', 'autoLogin'):
                     self.emit_event('authRequired')
+                elif code in ('AUTH_REJECTED', 'AUTH_CHALLENGE') and name not in ('login', 'autoLogin'):
+                    # Fast start signs in on the first server call: a changed password shows up here.
+                    self.emit_event('authRequired', {'message': login_message(code)})
                 self._done.emit(request_id, False, json.dumps({'code': code, 'message': text}, ensure_ascii=False))
         pool = (self._background if name in BACKGROUND_METHODS else self._fast if name in FAST_METHODS
                 else self._ai if name in AI_METHODS else self._archive if name in ARCHIVE_METHODS
@@ -654,6 +663,7 @@ class ReaderWindow(_PrintHost, QMainWindow):
 
 class AppShell(_PrintHost, QMainWindow):
     push_changed = Signal(str)
+    sentence_ready = Signal()
     push_state = Signal(str, str)
     send_held = Signal(str, int, int)  # local id, revision, delay in ms
     PUSH_FALLBACK_SECONDS = 300  # Polling interval while the push channel is up.
@@ -696,6 +706,11 @@ class AppShell(_PrintHost, QMainWindow):
         self.page.setWebChannel(self.channel)
         self.page.load(QUrl(APP_URL))
 
+        self._title_timer = QTimer(self)  # The sentence turns over at midnight, also when offline or after sleep.
+        self._title_timer.timeout.connect(self._title_tick)
+        self._title_timer.start(60_000)
+        self.sentence_ready.connect(self._show_title)
+        QTimer.singleShot(3000, self._title_tick)
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll_now)
         self._poll_seconds = 60
@@ -729,6 +744,8 @@ class AppShell(_PrintHost, QMainWindow):
 
     # Renderer health ---------------------------------------------------------
     def _load_finished(self, ok):
+        if ok and not self._page_loaded:
+            self.bridge._background.submit(_warm_imports)
         self._page_loaded = self._page_loaded or ok
 
     def _renderer_ended(self, status, code):
@@ -795,9 +812,21 @@ class AppShell(_PrintHost, QMainWindow):
         self._to_page('openMessage', self._last_new)
 
     def _show_title(self):
-        """Unread count, name and 今日一句 (refreshed with every unread update, so it turns over after midnight)."""
-        title = f'鸿雁 · 工作邮箱　　{today_quote()}'
+        """Unread count, name and the day's English sentence."""
+        title = f'鸿雁 · 工作邮箱　　{self.backend.daily_line()}'
         self.setWindowTitle(f'({self._unread}) {title}' if self._unread else title)
+
+    def _title_tick(self):
+        self._show_title()
+        if not self.demo and self.backend.sentence_due():
+            threading.Thread(target=self._fetch_sentence, name='hongyan-sentence', daemon=True).start()
+
+    def _fetch_sentence(self):
+        try:
+            if self.backend.fetch_sentence():
+                self.sentence_ready.emit()
+        except Exception:  # The built-in sentence stays; the next try is half an hour away.
+            pass
 
     def _set_unread(self, count):
         self._unread = count

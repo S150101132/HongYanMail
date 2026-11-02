@@ -119,7 +119,8 @@ def run_app(demo=False,minimized=False,eml=None):
     from .ui.branding import set_app_id
     set_app_id()
     app=QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName('鸿雁'); app.setApplicationDisplayName('鸿雁 · 工作邮箱'); app.setOrganizationName('CoremailPreview')
+    # No display name: Qt would append it to every window title that does not already end with it.
+    app.setApplicationName('鸿雁'); app.setOrganizationName('CoremailPreview')
     app.setQuitOnLastWindowClosed(False)
     # One copy per user: a second launch shows the running window and exits. Demo runs
     # use their own name so they never hand off to (or block) the real client.
