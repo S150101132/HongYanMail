@@ -357,3 +357,34 @@ $('#cmp-editor').addEventListener('keydown', (e) => {
   if (i >= list.length) { addRow(list[list.length - 1], true); C.dirty = true; list = cells(); }
   caretIn(list[i]);
 });
+// Tab / Shift+Tab outside a table: a list item moves a level in / out; selected lines move
+// 2em in / out by margin — not Chromium's indent <blockquote>, which mail clients show as a
+// quote; a caret alone gets four spaces. Same in the signature editor.
+const INDENT_BLOCKS = 'p,div,h1,h2,h3,h4,h5,h6,pre,blockquote';
+function indentLines(editor, out) {
+  const sel = getSelection();
+  const blocks = () => { const r = sel.getRangeAt(0); return $$(INDENT_BLOCKS, editor).filter((b) => r.intersectsNode(b) && !$$(INDENT_BLOCKS, b).some((c) => r.intersectsNode(c))); };
+  let list = blocks();
+  if (!list.length) { document.execCommand('formatBlock', false, 'div'); list = blocks(); }
+  list.forEach((b) => {
+    const now = /em$/.test(b.style.marginLeft) ? parseFloat(b.style.marginLeft) : 0;
+    const next = Math.max(0, Math.min(16, now + (out ? -2 : 2)));
+    b.style.marginLeft = next ? next + 'em' : '';
+    if (!b.getAttribute('style')) b.removeAttribute('style');
+  });
+}
+function wireTabIndent(editor) {
+  editor.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+    if (sug.input === editor && !$('#suggest').classList.contains('hidden')) return;  // Tab picks the mention.
+    const sel = getSelection(); if (!sel.rangeCount || !editor.contains(sel.anchorNode)) return;
+    e.preventDefault();
+    const start = sel.getRangeAt(0).startContainer;
+    if ((start.nodeType === 1 ? start : start.parentElement).closest('li')) document.execCommand(e.shiftKey ? 'outdent' : 'indent');
+    else if (sel.isCollapsed && !e.shiftKey) document.execCommand('insertText', false, '    ');
+    else indentLines(editor, e.shiftKey);
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+wireTabIndent($('#cmp-editor'));
+wireTabIndent($('#pref-signature'));

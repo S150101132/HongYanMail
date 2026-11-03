@@ -44,6 +44,8 @@ $('#pref-signature').addEventListener('paste', async (e) => {
   const html = e.clipboardData.getData('text/html');
   const textOnly = html ? new DOMParser().parseFromString(html, 'text/html').body.innerText.trim() : '';
   if (files.length && !textOnly) { e.preventDefault(); insertSignatureImages(await Promise.all(files.map(readFile)), signatureRange()); return; }
+  const styled = html && inlinePastedStyles(html);
+  if (styled) { e.preventDefault(); document.execCommand('insertHTML', false, styled); }
   setTimeout(dropRemoteImages, 0);
 });
 $('#pref-signature').addEventListener('drop', async (e) => {

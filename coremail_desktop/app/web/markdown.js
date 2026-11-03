@@ -1,16 +1,16 @@
 'use strict';
 /* 鸿雁 · 粘贴 Markdown：复制来的 Markdown 文本（AI 回答、README、笔记）粘进写信正文时排成格式。
-   Styles are inline so the recipient's mail client shows the same thing; colors use
-   translucent grey so they read on both light and dark backgrounds. No app.js globals. */
+   Styles are inline so the recipient's mail client shows the same thing; lines are a mid
+   grey in hex (Outlook ignores rgba) that reads on light and dark backgrounds. No app.js globals. */
 
 const MD_STYLE = {
   h: ['font-size:20px', 'font-size:18px', 'font-size:16px', 'font-size:15px', 'font-size:14px', 'font-size:14px'],
   code: 'font-family:Consolas,Menlo,monospace;font-size:90%;background:rgba(127,127,127,.15);padding:1px 4px;border-radius:3px',
-  pre: 'font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.5;background:rgba(127,127,127,.1);border:1px solid rgba(127,127,127,.3);border-radius:4px;padding:8px 12px;margin:8px 0;white-space:pre-wrap;word-break:break-word',
-  quote: 'margin:8px 0 8px 2px;padding:0 0 0 10px;border-left:3px solid rgba(127,127,127,.45);opacity:.85',
+  pre: 'font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.5;background:rgba(127,127,127,.1);border:1px solid #b0b7c3;border-radius:4px;padding:8px 12px;margin:8px 0;white-space:pre-wrap;word-break:break-word',
+  quote: 'margin:8px 0 8px 2px;padding:0 0 0 10px;border-left:3px solid #b0b7c3;opacity:.85',
   table: 'border-collapse:collapse;margin:8px 0',
-  cell: 'border:1px solid rgba(127,127,127,.45);padding:4px 10px',
-  hr: 'border:none;border-top:1px solid rgba(127,127,127,.45);margin:12px 0',
+  cell: 'border:1px solid #b0b7c3;padding:4px 10px',
+  hr: 'border:none;border-top:1px solid #b0b7c3;margin:12px 0',
 };
 const mdEsc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -112,7 +112,7 @@ function mdBlocks(lines) {
       out.push(`<hr style="${MD_STYLE.hr}">`); i++;
     } else if (mdTable(lines, i)) {
       const head = mdCells(line), align = mdCells(lines[i + 1]).map((c) => c.endsWith(':') ? (c.startsWith(':') ? 'center' : 'right') : 'left');
-      const cell = (tag, c, n) => `<${tag} style="${MD_STYLE.cell};text-align:${align[n] || 'left'}${tag === 'th' ? ';font-weight:600;background:rgba(127,127,127,.12)' : ''}">${mdInline(c)}</${tag}>`;
+      const cell = (tag, c, n) => `<${tag} style="${MD_STYLE.cell};text-align:${align[n] || 'left'}${tag === 'th' ? ';font-weight:600;background:#eef1f5;color:#1f2328' : ''}">${mdInline(c)}</${tag}>`;
       const rows = [];
       for (i += 2; i < lines.length && lines[i].includes('|') && lines[i].trim(); i++) rows.push(mdCells(lines[i]));
       out.push(`<table style="${MD_STYLE.table}"><thead><tr>${head.map((c, n) => cell('th', c, n)).join('')}</tr></thead>` +

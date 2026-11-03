@@ -1681,6 +1681,51 @@ composer.addEventListener('drop', async (e) => {
   }
   if (files.length) addAttachments(await Promise.all(files.map(readFile)));
 });
+// Excel / Word / WPS put the look of a copied table (borders, fills, bold headers) in a <style>
+// block by class name; Chromium drops that block on paste and keeps only the bare classes, so
+// the table goes out without borders. Copy each rule onto its elements as inline style first
+// (more specific rules win, the element's own style last). null when there is no <style>.
+// A table from Excel / WPS is tidied on the way in; what the user set (fills, bold, alignment,
+// coloured or thick borders) stays: room in the cells, text in the middle, plain numbers centred,
+// no fixed row heights, the mail's own font and text colour, a light grid when it has none and
+// grey hairlines for thin black ones, a shaded first row when nothing is shaded. Hex colours:
+// Outlook ignores rgba.
+const MAIL_GRID = '#b0b7c3', MAIL_HEAD = 'background:#eef1f5;color:#1f2328';
+function tidyExcelTables(doc) {
+  const sides = ['Top', 'Right', 'Bottom', 'Left'];
+  $$('table', doc.body).forEach((table) => {
+    const cells = $$('td,th', table);
+    const ruled = cells.some((c) => sides.some((s) => (c.style['border' + s + 'Style'] || 'none') !== 'none'));
+    const shaded = cells.some((c) => c.style.backgroundColor || c.style.backgroundImage || c.getAttribute('bgcolor'));
+    table.style.borderCollapse = 'collapse';
+    $$('tr,td,th', table).forEach((el) => { el.removeAttribute('height'); el.style.height = ''; });
+    cells.forEach((c) => {
+      Object.assign(c.style, { padding: '4px 8px', verticalAlign: 'middle', lineHeight: '1.5', fontFamily: '' });
+      if (/^(black|rgb\(0, 0, 0\))$/.test(c.style.color)) c.style.color = '';
+      if (!ruled) c.style.border = '1px solid ' + MAIL_GRID;
+      else sides.forEach((s) => { if (c.style['border' + s + 'Color'] === 'rgb(0, 0, 0)' && parseFloat(c.style['border' + s + 'Width']) <= 1) c.style['border' + s + 'Color'] = MAIL_GRID; });
+      if (!c.style.textAlign && !c.getAttribute('align') && /^\s*[-+]?[\d,.]+%?\s*$/.test(c.textContent)) c.style.textAlign = 'center';
+    });
+    if (table.rows.length > 1 && !shaded) Array.from(table.rows[0].cells).forEach((c) => { c.style.cssText += ';' + MAIL_HEAD + ';font-weight:600'; });
+  });
+}
+function inlinePastedStyles(html) {
+  if (!/<style[\s>]/i.test(html)) return null;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const sheet = new CSSStyleSheet();
+  try { sheet.replaceSync($$('style', doc).map((s) => s.textContent.replace(/<!--|-->/g, '')).join('\n').replace(/windowtext/gi, '#000')); } catch { return null; }
+  const weight = (sel) => Math.max(...sel.split(',').map((one) => (one.match(/#/g) || []).length * 100 +
+    (one.match(/[.[:]/g) || []).length * 10 + (one.match(/(^|[\s>+~])[a-z]/gi) || []).length));
+  const rules = Array.from(sheet.cssRules).filter((r) => r instanceof CSSStyleRule && r.style.cssText)
+    .map((r, n) => ({ r, n, w: weight(r.selectorText) })).sort((a, b) => a.w - b.w || a.n - b.n);
+  const css = new Map();
+  rules.forEach(({ r }) => { try { $$(r.selectorText, doc.body).forEach((el) => css.set(el, (css.get(el) || '') + r.style.cssText)); } catch { /* A selector Chromium does not take. */ } });
+  css.forEach((rule, el) => el.setAttribute('style', rule + (el.getAttribute('style') || '')));
+  if (/Excel|Et\.Document|class=["']?(xl|et)\d/i.test(html)) tidyExcelTables(doc);
+  $$('[class]', doc.body).forEach((el) => el.removeAttribute('class'));
+  const body = doc.body.innerHTML, frag = body.match(/<!--StartFragment-->([\s\S]*)<!--EndFragment-->/);
+  return frag ? frag[1] : body;
+}
 $('#cmp-editor').addEventListener('paste', async (e) => {
   // Excel and Word put an HTML table AND a picture of it on the clipboard: when HTML
   // is there, let the normal paste keep the table. A pure image (a screenshot) goes
@@ -1696,7 +1741,11 @@ $('#cmp-editor').addEventListener('paste', async (e) => {
     toast('已按 Markdown 排版；要原文请撤销（Ctrl+Z）后按 Ctrl+Shift+V 粘贴');
     return;
   }
-  if (types.includes('text/html')) return;
+  if (types.includes('text/html')) {
+    const styled = inlinePastedStyles(e.clipboardData.getData('text/html'));
+    if (styled != null) { e.preventDefault(); document.execCommand('insertHTML', false, styled); }
+    return;
+  }
   const files = Array.from(e.clipboardData.files || []);
   if (!files.length) return;
   e.preventDefault();
@@ -1709,6 +1758,25 @@ $('#cmp-editor').addEventListener('input', () => { C.dirty = true; });
 $('#cmp-subject').addEventListener('input', () => { C.dirty = true; });
 $$('.cmp-toggles a').forEach((a) => (a.onclick = () => { $('#row-' + a.dataset.show).classList.remove('hidden'); $(`.chips[data-field="${a.dataset.show}"] input`).focus(); }));
 
+// Tab / Shift+Tab in the long writing boxes (AI 写信要点, 自动回复, a task's content / history /
+// confirmation) indent and outdent the selected lines, or the caret's line on Shift+Tab; a caret
+// alone gets four spaces. Short boxes keep Tab for moving to the next field. Undo works (insertText).
+const TAB_AREAS = '#ai-note, #ar-text, textarea[data-f="history"], textarea[data-f="content"], textarea[data-f="text"]';
+document.addEventListener('keydown', (e) => {
+  const ta = e.target;
+  if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.defaultPrevented || !(ta instanceof HTMLTextAreaElement) || !ta.matches(TAB_AREAS)) return;
+  e.preventDefault();
+  const v = ta.value, s = ta.selectionStart, end = ta.selectionEnd;
+  if (s === end && !e.shiftKey) { document.execCommand('insertText', false, '    '); return; }
+  const from = v.lastIndexOf('\n', s - 1) + 1, to = end > s && v[end - 1] === '\n' ? end - 1 : end;
+  let stop = v.indexOf('\n', to); if (stop < 0) stop = v.length;
+  const done = v.slice(from, stop).split('\n').map((l) => (e.shiftKey ? l.replace(/^( {1,4}|\t)/, '') : '    ' + l)).join('\n');
+  if (done === v.slice(from, stop)) return;
+  ta.setSelectionRange(from, stop);
+  document.execCommand('insertText', false, done);
+  if (s === end) { const at = Math.max(from, s + done.length - (stop - from)); ta.setSelectionRange(at, at); }
+  else ta.setSelectionRange(from, from + done.length);
+});
 function execIn(editor, cmd, value) { editor.focus(); document.execCommand(cmd, false, value); }
 async function insertLink(editor) {
   const sel = getSelection(); const range = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
