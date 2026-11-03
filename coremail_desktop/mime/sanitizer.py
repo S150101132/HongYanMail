@@ -36,10 +36,26 @@ class _TextExtractor(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.chunks = []
+        self.cells = []  # Per open table row: cells started, so a tab goes between them.
+        self.cell_start = None  # Where the open cell's text began: its first block needs no line break.
 
     def handle_starttag(self, tag, attrs):
-        if tag in {'p', 'div', 'br', 'tr', 'li', 'blockquote'}:
+        if tag == 'tr':
+            self.cells.append(0)
+            self.cell_start = None
+        if tag in {'td', 'th'} and self.cells:
+            if self.cells[-1]:
+                self.chunks.append('\t')
+            self.cells[-1] += 1
+            self.cell_start = len(self.chunks)
+        in_cell = self.cell_start is not None and tag in {'p', 'div'}
+        if tag in {'p', 'div', 'br', 'tr', 'li', 'blockquote'} and not (in_cell and not ''.join(self.chunks[self.cell_start:]).strip()):
             self.chunks.append('\n')
+
+    def handle_endtag(self, tag):
+        if tag == 'tr' and self.cells:
+            self.cells.pop()
+            self.cell_start = None
 
     def handle_data(self, data):
         self.chunks.append(data)

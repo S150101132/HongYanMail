@@ -671,6 +671,10 @@ class DemoAiClient:
             return json.dumps({'subject': f'工作周报（演示，{data["from"]} 至 {data["to"]}）', 'summary': '演示模式：由本机根据任务记录生成，没有联网。',
                                'sections': [{'title': '本周完成', 'items': done}, {'title': '本周进展', 'items': moving},
                                             {'title': '受阻与风险', 'items': blocked}, {'title': '下周计划', 'items': plan}]}, ensure_ascii=False), 0
+        if '鸿雁的表格结构助手' in messages[0]['content']:  # AI 优化表格: agrees with the page, names the purpose.
+            data = json.loads(text.split('\n', 1)[1].rsplit('\n', 1)[0])
+            return json.dumps({'tables': [{'purpose': 'expense' if any('费' in c['head'] for c in t['columns']) else 'list', 'rows': [], 'cols': [], 'emphasis': []}
+                                          for t in data['tables']]}, ensure_ascii=False), 0
         if '鸿雁写信助手' in messages[0]['content'] and '回复方向' in messages[0]['content'] and 'ideas' in messages[0]['content']:
             return json.dumps({'ideas': [{'label': '同意并确认', 'hint': '答应对方的要求，确认时间（演示）'},
                                          {'label': '先问清楚', 'hint': '请对方补充缺少的信息（演示）'},

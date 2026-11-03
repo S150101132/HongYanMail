@@ -90,7 +90,8 @@ class WiringTest(unittest.TestCase):
     def test_compose_paste_uses_it(self):
         app = (WEB / 'app.js').read_text(encoding='utf-8')
         self.assertIn('mdLooksLike(plain)', app)
-        self.assertIn("insertHTML', false, mdToHtml(plain)", app)
+        self.assertIn("const md = tbPaste(mdToHtml(plain));  // Its tables get the same look as any other.", app)
+        self.assertIn("insertHTML', false, md ? md.html : mdToHtml(plain)", app)
         self.assertIn("types.includes('vscode-editor-data')", app)
         html = (WEB / 'index.html').read_text(encoding='utf-8')
         self.assertLess(html.index('markdown.js'), html.index('src="app.js"'))

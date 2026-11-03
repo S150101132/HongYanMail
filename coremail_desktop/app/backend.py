@@ -7,6 +7,7 @@ import base64
 import functools
 import hashlib
 import html
+import inspect
 import json
 import re
 import threading
@@ -37,8 +38,11 @@ DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify'
                  'toolbar': 'lean',  # A4: 'lean' folds low-use buttons into ⋯ / 格式 / the send menu; 'full' shows them all.
                  'startPage': 'inbox',  # R2a/R3b: 'inbox' opens the 收件箱 after signing in, 'today' GitHub Trending (G1).
                  'memoryFacts': False,  # R3c: the 理解层 also keeps project facts (工作记忆); off: it only sorts mail.
-                 'hiddenFolders': []}  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
+                 'hiddenFolders': [],  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
+                 'tables': {}}  # T2 表格: theme / headAlign / dateAlign / keepColors chosen by the user (TABLE_PREFS).
 CLOSE_ACTIONS = ('', 'tray', 'quit')
+TABLE_PREFS = {'theme': ('auto', 'business', 'compact', 'report'), 'headAlign': ('column', 'left', 'center'),
+               'dateAlign': ('center', 'left', 'right'), 'keepColors': (True, False)}
 UNDO_CHOICES = (0, 5, 10, 20, 30)  # 撤销发送 delay in seconds; 0 sends at once.
 NETWORK_CODES = ('NETWORK_ERROR', 'TLS_ERROR')
 MAX_EML_BYTES = 40 * 1024 * 1024
@@ -627,6 +631,7 @@ class MailBackend:
             prefs['undoSeconds'] = DEFAULT_PREFS['undoSeconds']
         for key, (low, high) in WIDTH_LIMITS.items():
             prefs[key] = max(low, min(int(prefs[key]), high))
+        prefs['tables'] = {k: v for k, v in prefs['tables'].items() if k in TABLE_PREFS and v in TABLE_PREFS[k] and type(v) is type(TABLE_PREFS[k][0])}
         hidden = [v for v in prefs['hiddenFolders'] if isinstance(v, str) and 0 < len(v) <= 200]
         prefs['hiddenFolders'] = list(dict.fromkeys(hidden))[:300]
         if self.autostart is not None and type(values.get('autostart')) is bool:
@@ -2611,6 +2616,8 @@ class MailBackend:
     def _ai_call(self, messages, **kwargs):
         """One chat call, counted per month (tokens and calls only, never content)."""
         client, tokens = self._ai(), 0
+        if 'temperature' in kwargs and 'temperature' not in inspect.signature(client.chat).parameters:
+            kwargs.pop('temperature')  # A stand-in client without it.
         try:
             content, tokens = client.chat(messages, **kwargs)
             return content, tokens
@@ -2836,6 +2843,26 @@ class MailBackend:
             if len(samples) >= SAMPLES:
                 break
         return samples
+
+    def style_tables(self, tables, again=False):
+        """AI 优化表格: tables (the page's structure summaries, table/controller.js tbAiPayload) ->
+        {plans: [{purpose, purposeLabel, theme, rows, cols, emphasis}]}. Each table's answer is kept
+        by its summary, model and analysis version, so asking again about the same table gives the
+        same layout; again=True asks anew."""
+        from coremail_desktop.ai.tables import TABLE_TOKENS, cache_key, check_tables, parse_plans, table_messages
+        tables = check_tables(tables)  # Bad input: say so before anything is sent.
+        client = self._ai()
+        keys = [cache_key(t, getattr(client, 'model', '')) for t in tables]
+        stored = dict((self.cache.get('aiTablePlans', {}) if self.cache else {}) or {})
+        missing = [n for n, k in enumerate(keys) if again or k not in stored]
+        if missing:
+            ask = [tables[n] for n in missing]
+            content, _ = self._ai_call(table_messages(ask), max_tokens=TABLE_TOKENS * len(ask), json_mode=True, temperature=0)
+            for n, plan in zip(missing, parse_plans(content, ask)):
+                stored[keys[n]] = plan
+            if self.cache:
+                self.cache.set('aiTablePlans', dict(list(stored.items())[-300:]))
+        return {'plans': [stored[k] for k in keys], 'cached': not missing}
 
     def precheck(self, text, to=(), recipients=()):
         """本机发送前检查 (no network): past dates, a greeting naming nobody in 主送, outside

@@ -80,7 +80,7 @@ BACKEND_METHODS = {
     'assistantDraftCompose': 'assistant_draft_compose', 'assistantDraftWrite': 'assistant_draft_write', 'assistantSent': 'assistant_sent',
     'assistantNudge': 'assistant_nudge', 'assistantNudgeDismiss': 'assistant_nudge_dismiss', 'assistantLinkRun': 'assistant_link_run',
     'assistantMailRun': 'assistant_mail_run', 'assistantMailUndo': 'assistant_mail_undo',
-    'replyIdeas': 'reply_ideas', 'draftReply': 'draft_reply', 'writeFromNote': 'write_from_note', 'cancelAi': 'cancel_ai',
+    'replyIdeas': 'reply_ideas', 'draftReply': 'draft_reply', 'writeFromNote': 'write_from_note', 'styleTables': 'style_tables', 'cancelAi': 'cancel_ai',
     'precheck': 'precheck', 'threadAiStatus': 'thread_ai_status', 'summarizeThread': 'summarize_thread',
     'archiveStatus': 'archive_status', 'setArchiveFolder': 'set_archive_folder', 'archiveScan': 'archive_scan',
     'archiveView': 'archive_view', 'searchArchive': 'search_archive',
@@ -116,7 +116,7 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
                 'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups', 'aboutMe'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'aiModels', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
-              'replyIdeas', 'draftReply', 'writeFromNote', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
+              'replyIdeas', 'draftReply', 'writeFromNote', 'styleTables', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
               'memoryWeekBrief', 'trending', 'dailyNews', 'aboutDraft', 'contactCompanies'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
 STREAM_METHODS = {'draftReply', 'writeFromNote', 'assistantDraftWrite'}

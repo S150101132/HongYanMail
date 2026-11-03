@@ -431,6 +431,13 @@ body.moving, body.moving * { cursor: move !important; user-select: none; }
 .menu button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 7px 10px; border: 0; background: transparent; border-radius: 7px; cursor: pointer; text-align: left; }
 .menu button:hover { background: var(--hover); }
 .menu hr { border: 0; border-top: 1px solid var(--line-2); margin: 4px 0; }
+.menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+.menu-chips { display: flex; align-items: center; gap: 4px; padding: 4px 10px; flex-wrap: wrap; }
+.menu-chips > span { min-width: 64px; color: var(--muted); font-size: var(--fs-sm); }
+.menu .menu-chips button { width: auto; padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; gap: 0; }
+.menu .menu-chips button.on { border-color: var(--accent); color: var(--accent); }
+.menu .menu-chips button.swatch { width: 22px; height: 22px; padding: 0; background: var(--swatch); }
+.menu .menu-chips button.swatch[style*="transparent"] { background: linear-gradient(135deg, transparent 45%, #d92d20 45% 55%, transparent 55%); }
 .menu i[data-icon] { width: 16px; height: 16px; color: var(--muted); }
 .toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: grid; gap: 8px; z-index: 70; justify-items: center; }
 .toast { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--toast-bg); color: var(--toast-text); border: 1px solid var(--toast-line); border-radius: 10px; box-shadow: var(--shadow); font-size: var(--fs-sm); max-width: 560px; animation: rise .18s ease-out; }
@@ -442,6 +449,10 @@ body.moving, body.moving * { cursor: move !important; user-select: none; }
 /* Composer tables: a faint guide even when the table has no border; never sent. */
 .cmp-editor table td, .cmp-editor table th { outline: 1px dotted rgba(127, 127, 127, .35); outline-offset: -1px; }
 .cmp-editor img { max-width: 100%; }
+/* Table cells measure as in the recipient's mail (content-box): their widths are the mail's (table/layout.js). */
+.cmp-editor td, .cmp-editor th, .sig-editor td, .sig-editor th { box-sizing: content-box; }
+body.tb-resizing-col, body.tb-resizing-col * { cursor: col-resize !important; user-select: none; }
+body.tb-resizing-row, body.tb-resizing-row * { cursor: row-resize !important; user-select: none; }
 .tbl-picker { position: fixed; z-index: 65; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 8px; }
 .tbl-grid { display: grid; grid-template-columns: repeat(10, 20px); gap: 3px; }
 .tbl-grid span { width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }

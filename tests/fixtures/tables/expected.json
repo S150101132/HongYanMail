@@ -1,0 +1,137 @@
+{
+ "01-list": {
+  "roles": "head data data data data data",
+  "types": [
+   "text",
+   "text",
+   "date",
+   "id",
+   "id"
+  ]
+ },
+ "02-multihead": {
+  "roles": "title head head data data data total",
+  "types": [
+   "index",
+   "text",
+   "text",
+   "money",
+   "money",
+   "text"
+  ]
+ },
+ "03-noheader": {
+  "roles": "data data data data",
+  "types": [
+   "text",
+   "id",
+   "status"
+  ]
+ },
+ "04-mixed": {
+  "roles": "head data data data data",
+  "types": [
+   "id",
+   "quantity",
+   "money",
+   "percent",
+   "date",
+   "text"
+  ]
+ },
+ "05-subtotals": {
+  "roles": "head group data data subtotal group data data data subtotal total",
+  "types": [
+   "empty",
+   "id",
+   "number",
+   "percent"
+  ]
+ },
+ "06-longtext": {
+  "roles": "head data data data",
+  "types": [
+   "id",
+   "text",
+   "longtext",
+   "text",
+   "status"
+  ]
+ },
+ "07-wide": {
+  "roles": "head data data data data",
+  "types": [
+   "text",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number",
+   "number"
+  ],
+  "overflow": true
+ },
+ "08-colors": {
+  "roles": "head data data data data data data",
+  "types": [
+   "id",
+   "status",
+   "percent",
+   "text"
+  ],
+  "keep": [
+   "#c6efce",
+   "#ffc7ce",
+   "#ffeb9c",
+   "#9c0006"
+  ],
+  "drop": [
+   "#f2f2f2"
+  ]
+ },
+ "09-cn-en": {
+  "roles": "head data data data",
+  "types": [
+   "longtext",
+   "text",
+   "date",
+   "text",
+   "money"
+  ]
+ },
+ "10-large": {
+  "roles": "title head group data data data data data data data data data data data data data data data data data data data data data data data data subtotal group data data data data data data data data data data data data data data data data data data data data data data data data subtotal group data data data data data data data data data data data data data data data data data data data data data data data data subtotal group data data data data data data data data data data data data data data data data data data data data data data data data subtotal group data data data data data data data data data data data data data data data data data data data data data data data data subtotal group data data data data data data data data data data data data data data data data data data data data data data data data subtotal total note",
+  "types": [
+   "index",
+   "id",
+   "id",
+   "number",
+   "status"
+  ]
+ },
+ "11-manual": {
+  "roles": "head data data total",
+  "types": [
+   "text",
+   "money",
+   "text"
+  ],
+  "manual": true
+ },
+ "12-web": {
+  "roles": "head data data data",
+  "types": [
+   "text",
+   "number",
+   "longtext"
+  ],
+  "mail": true
+ }
+}

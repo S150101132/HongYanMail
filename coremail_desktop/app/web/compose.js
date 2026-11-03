@@ -189,11 +189,10 @@ $('#cmp-image').onclick = async () => {
 };
 
 // ---------------------------------------------------------------- 表格
-const CELL_STYLE = 'border:1px solid #98a2b3;padding:4px 8px;min-width:40px;vertical-align:top';
-const BORDERS = { solid: '1px solid #98a2b3', dashed: '1px dashed #98a2b3', none: '0' };
+// A new table is ours from the start (table/*.js lays it out); data-hy-new finds it once inserted.
 function tableHtml(rows, cols) {
-  const row = '<tr>' + `<td style="${CELL_STYLE}"><br></td>`.repeat(cols) + '</tr>';
-  return `<table style="border-collapse:collapse;margin:6px 0" cellspacing="0" cellpadding="0"><tbody>${row.repeat(rows)}</tbody></table><p><br></p>`;
+  const row = '<tr>' + '<td><br></td>'.repeat(cols) + '</tr>';
+  return `<table data-hy-table="1" data-hy-new="1"><tbody>${row.repeat(rows)}</tbody></table><p><br></p>`;
 }
 function currentCell() {
   const s = getSelection(); if (!s.rangeCount) return null;
@@ -207,7 +206,8 @@ function caretIn(cell) {
 }
 function newCell(like) {
   const td = document.createElement(like && like.tagName === 'TH' ? 'th' : 'td');
-  td.setAttribute('style', (like && like.getAttribute('style')) || CELL_STYLE);
+  if (like && like.getAttribute('style')) td.setAttribute('style', like.getAttribute('style'));
+  for (const key of ['hyAl', 'hyW']) if (like && like.dataset[key]) td.dataset[key] = like.dataset[key];  // The column's own choices.
   td.innerHTML = '<br>';
   return td;
 }
@@ -244,22 +244,45 @@ function addCol(cell, after) {
     tr.insertBefore(newCell(c), after ? c.nextSibling : c);
   }
 }
-function setBorder(cell, kind) {
+// A changed table is laid out again; one that is not ours yet becomes ours by being worked on.
+function tableOp(cell, op) {
   const t = cell.closest('table');
-  for (const c of t.querySelectorAll('td,th')) if (c.closest('table') === t) c.style.border = BORDERS[kind];
-  t.style.borderCollapse = 'collapse';
+  TABLE_OPS[op](cell); C.dirty = true;
+  if (t.isConnected && t.rows.length) { t.dataset.hyTable = '1'; tbFormat(t); }
 }
-function tableOp(cell, op) { TABLE_OPS[op](cell); C.dirty = true; }
-function tableMenu(x, y, cell) {
+// The cells a selection runs over, or the one right-clicked.
+function selectedCells(cell) {
+  const s = getSelection(), t = cell.closest('table');
+  if (!s.rangeCount || s.isCollapsed) return [cell];
+  const r = s.getRangeAt(0), list = $$('td,th', t).filter((c) => c.closest('table') === t && r.intersectsNode(c));
+  return list.length ? list : [cell];
+}
+const CELL_FILLS = [['无', ''], ['浅灰', '#f2f4f7'], ['浅黄', '#fff4d6'], ['浅绿', '#e6f4ea'], ['浅蓝', '#e8f0fe'], ['浅红', '#fde8e8']];
+// By hand, after the automatic layout or the AI: what is chosen here stays (table/controller.js).
+function tableMenu(x, y, cell, picker) {
+  const t = cell.closest('table'), tr = cell.parentElement, r = tr.rowIndex, cells = selectedCells(cell);
+  const an = tbAnalyze(t, tbPlainFromTable(t)), c = tbColumnOf(cell), col = an.cols[c] || {};
+  const role = an.roles[r], align = cell.dataset.hyAl || col.align || 'left', width = cell.dataset.hyW || '';
+  const set = (kind, target, value) => () => tbSet(t, kind, target, value);
+  const ops = (pairs) => pairs.map(([label, op]) => ({ label, run: () => tableOp(cell, op) }));
+  const manual = t.querySelector('[data-hy-al],[data-hy-w],[data-hy-fill],tr[data-hy-role]') || t.dataset.hyTheme || t.dataset.hyHeadAl || t.dataset.hyKeep;
+  const colours = t.querySelector('[data-hy-src*="bg="],[data-hy-src*="fg="]');
   showMenu(x, y, [
-    { label: '在上方插入行', run: () => tableOp(cell, 'rowAbove') }, { label: '在下方插入行', run: () => tableOp(cell, 'rowBelow') },
-    { label: '在左侧插入列', run: () => tableOp(cell, 'colLeft') }, { label: '在右侧插入列', run: () => tableOp(cell, 'colRight') },
-    '-', { label: '删除行', icon: 'trash', run: () => tableOp(cell, 'delRow') }, { label: '删除列', icon: 'trash', run: () => tableOp(cell, 'delCol') },
+    ...(picker ? [{ label: '插入新表格…', icon: 'table', run: picker }, '-'] : []),
+    { label: '插入', chips: ops([['上方行', 'rowAbove'], ['下方行', 'rowBelow'], ['左侧列', 'colLeft'], ['右侧列', 'colRight']]) },
+    { label: '删除', chips: ops([['行', 'delRow'], ['列', 'delCol'], ['整张表', 'delTable']]) },
     { label: '与右侧单元格合并', run: () => tableOp(cell, 'merge') },
-    '-', { label: '边框：实线', run: () => { setBorder(cell, 'solid'); C.dirty = true; } },
-    { label: '边框：虚线', run: () => { setBorder(cell, 'dashed'); C.dirty = true; } },
-    { label: '边框：无', run: () => { setBorder(cell, 'none'); C.dirty = true; } },
-    '-', { label: '删除表格', icon: 'trash', run: () => tableOp(cell, 'delTable') },
+    '-',
+    { label: '本列对齐', chips: [['左', 'left'], ['中', 'center'], ['右', 'right']].map(([label, a]) => ({ label, on: align === a, run: set('align', cell, a) })) },
+    { label: '本列宽度', chips: [['不折行', 'narrow'], ['自动', ''], ['加宽', 'wide']].map(([label, w]) => ({ label, on: width === w, run: set('width', cell, w) })) },
+    { label: '本行是', chips: [['表头', 'head'], ['分组', 'group'], ['合计', 'total'], ['普通', 'data']].map(([label, k]) => ({ label, on: role === k, run: set('role', cell, k) })) },
+    ...(role === 'head' ? [{ label: '表头对齐', chips: [['随列', 'column'], ['左', 'left'], ['中', 'center']].map(([label, a]) => ({ label, on: an.headAlign === a, run: set('headAlign', cell, a) })) }] : []),
+    { label: cells.length > 1 ? `底色（${cells.length} 格）` : '底色', chips: CELL_FILLS.map(([label, v]) => ({ label, swatch: v || 'none', run: set('fill', cells, v) })) },
+    ...(colours ? [{ label: '原表颜色', chips: [['保留', true], ['去掉', false]].map(([label, v]) => ({ label, on: an.keepColors === v, run: set('keepColors', cell, v) })) }] : []),
+    { label: '表格样式', chips: TB_THEME_NAMES.map((name) => ({ label: TB_THEMES[name].label, on: an.theme === name, run: set('theme', cell, name) })) },
+    '-',
+    ...(manual ? [{ label: '清除我的调整', run: () => tbClearManual(t) }] : []),
+    { label: tbAiPlan(t) ? '让 AI 重新考虑这张表' : 'AI 优化这张表', icon: 'write-ai', run: () => styleTablesByAi([t], !!tbAiPlan(t)) },
   ]);
 }
 function tablePicker(button) {
@@ -283,6 +306,8 @@ function tablePicker(button) {
     const editor = $('#cmp-editor'); editor.focus();
     if (range) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range); }
     document.execCommand('insertHTML', false, tableHtml(+s.dataset.r, +s.dataset.c));
+    const added = $('#cmp-editor table[data-hy-new]');
+    if (added) { delete added.dataset.hyNew; tbFormat(added); }
     C.dirty = true;
   };
   setTimeout(() => document.addEventListener('mousedown', function away(e) {
@@ -294,9 +319,7 @@ $('#cmp-table').onclick = (e) => {
   const cell = currentCell(), b = e.currentTarget;
   if (!cell) { tablePicker(b); return; }
   const r = b.getBoundingClientRect();
-  tableMenu(r.left, r.bottom + 4, cell);
-  $('#menu').insertAdjacentHTML('afterbegin', '<button id="tbl-new"><i></i><span>插入新表格…</span></button><hr>');
-  $('#tbl-new').onclick = () => { hideMenu(); tablePicker(b); };
+  tableMenu(r.left, r.bottom + 4, cell, () => tablePicker(b));
 };
 // 精简工具栏 (A4): 格式 holds the formats folded off the bar; ▾ beside 发送 holds 定时发送.
 // Each item does what its folded button does; the editor keeps its selection meanwhile.
@@ -330,7 +353,8 @@ $('#cmp-editor').addEventListener('contextmenu', (e) => {
   const cell = e.target.closest && e.target.closest('td,th');
   if (!cell) return;
   e.preventDefault();
-  caretIn(cell);
+  const s = getSelection();  // A selection over several cells stays, for 底色.
+  if (!(s.rangeCount && !s.isCollapsed && s.getRangeAt(0).intersectsNode(cell))) caretIn(cell);
   tableMenu(e.clientX, e.clientY, cell);
 });
 // 拼写检查: Chromium underlines misspelled English words in the subject and body; a

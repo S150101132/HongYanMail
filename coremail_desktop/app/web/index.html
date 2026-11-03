@@ -276,7 +276,7 @@
     <button data-cmd="removeFormat" class="lean-hide" title="清除格式"><i data-icon="eraser"></i></button>
     <button id="cmp-format" class="lean-only" title="更多格式：字号、下划线、删除线、颜色、缩进、分隔线、表格、清除格式"><span>格式</span><i data-icon="caret"></i></button>
     <span class="tb-sep"></span>
-    <button id="cmp-ai" title="AI 写信：把正文里写的要点整理成正式邮件，再说怎么改（文字会发送到 AI 服务）"><i data-icon="write-ai"></i><span>AI</span></button>
+    <button id="cmp-ai" title="AI 写信：把正文里写的要点整理成正式邮件，再说怎么改；正文里有表格时先优化表格排版（文字会发送到 AI 服务）"><i data-icon="write-ai"></i><span>AI</span></button>
     <span class="spacer"></span>
     <button id="cmp-attach" title="添加附件"><i data-icon="clip"></i><span>附件</span></button>
   </div>
@@ -351,6 +351,16 @@
           <h3>发送前检查</h3>
           <label class="check"><input type="checkbox" id="pref-precheck"> 发送时检查已经过去的日期、与主送人对不上的称呼、正文中的外部邮箱</label>
           <p class="muted small">在本机检查，不联网，没有发现问题就不打扰。更仔细的检查可以在写信窗口点「AI → 发送前检查」（会把正文发送到 AI 服务）。</p>
+          <h3>表格</h3>
+          <p class="muted small">粘贴或插入的表格自动排版时用这些；在表格右键菜单里两次做同样的选择，也会提议记到这里。</p>
+          <label class="pref-row">表格样式
+            <select id="pref-tb-theme"><option value="auto">自动（行多列多用紧凑数据，其余简洁商务）</option><option value="business">简洁商务</option><option value="compact">紧凑数据</option><option value="report">正式报告</option></select></label>
+          <label class="pref-row">表头对齐
+            <select id="pref-tb-head"><option value="column">跟随本列</option><option value="left">靠左</option><option value="center">居中</option></select></label>
+          <label class="pref-row">日期对齐
+            <select id="pref-tb-date"><option value="center">居中</option><option value="left">靠左</option><option value="right">靠右</option></select></label>
+          <label class="check"><input type="checkbox" id="pref-tb-colors"> 保留原表里的颜色（如表示异常的红色、待处理的黄色）</label>
+          <p><button class="btn ghost sm" id="pref-tb-reset">恢复默认</button></p>
           <h3>邮件签名</h3>
           <p class="muted small">自动添加到新邮件、回复和转发中。可以放图片（如公司 LOGO），点击图片调整大小；图片随邮件内嵌发出，收件人不必联网加载，加密和签名邮件中同样有效。</p>
           <div class="cmp-toolbar mini" id="sig-toolbar">
@@ -481,6 +491,15 @@
 <script src="icons.js"></script>
 <script src="markdown.js"></script>
 <script src="app.js"></script>
+<script src="table/model.js"></script>
+<script src="table/types.js"></script>
+<script src="table/structure.js"></script>
+<script src="table/layout.js"></script>
+<script src="table/source.js"></script>
+<script src="table/render.js"></script>
+<script src="table/mail.js"></script>
+<script src="table/controller.js"></script>
+<script src="table/resize.js"></script>
 <script src="compose.js"></script>
 <script src="contacts.js"></script>
 <script src="rules.js"></script>

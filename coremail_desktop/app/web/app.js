@@ -126,6 +126,21 @@ function showMenu(x, y, items) {
   m.innerHTML = '';
   for (const it of items) {
     if (it === '-') { m.appendChild(document.createElement('hr')); continue; }
+    if (it.chips) {  // One row of small choices: {label, chips: [{label, run, on?, swatch?}]}.
+      const row = document.createElement('div');
+      row.className = 'menu-chips';
+      row.innerHTML = `<span>${esc(it.label)}</span>`;
+      for (const c of it.chips) {
+        const b = document.createElement('button');
+        b.className = (c.on ? 'on' : '') + (c.swatch ? ' swatch' : '');
+        b.title = c.label;
+        if (c.swatch) b.style.setProperty('--swatch', c.swatch === 'none' ? 'transparent' : c.swatch); else b.textContent = c.label;
+        b.onclick = () => { hideMenu(); c.run(); };
+        row.appendChild(b);
+      }
+      m.appendChild(row);
+      continue;
+    }
     const b = document.createElement('button');
     b.innerHTML = `${it.icon ? `<i data-icon="${it.icon}"></i>` : '<i></i>'}<span>${esc(it.label)}</span>`;
     b.onclick = () => { hideMenu(); it.run(); };
@@ -134,9 +149,12 @@ function showMenu(x, y, items) {
   renderIcons(m);
   m.opener = window.event;  // The click that opens a menu must not also close it on its way up to document.
   m.classList.remove('hidden');
+  // Always inside the window: a tall menu moves up, and scrolls when even that is not enough.
+  // Measured at the corner, where it has its full width (chip rows wrap where it is narrower).
+  m.style.left = m.style.top = '0px';
   const r = m.getBoundingClientRect();
-  m.style.left = Math.min(x, innerWidth - r.width - 8) + 'px';
-  m.style.top = Math.min(y, innerHeight - r.height - 8) + 'px';
+  m.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
+  m.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
 }
 function hideMenu() { $('#menu').classList.add('hidden'); }
 
@@ -1685,50 +1703,6 @@ composer.addEventListener('drop', async (e) => {
 // block by class name; Chromium drops that block on paste and keeps only the bare classes, so
 // the table goes out without borders. Copy each rule onto its elements as inline style first
 // (more specific rules win, the element's own style last). null when there is no <style>.
-// A table from Excel / WPS is tidied on the way in; what the user set (fills, bold, alignment,
-// coloured or thick borders) stays: room in the cells, text in the middle, plain numbers centred,
-// no fixed row heights, the mail's own font and text colour, a light grid when it has none and
-// grey hairlines for thin black ones, a shaded first row when nothing is shaded. Hex colours:
-// Outlook ignores rgba.
-const MAIL_GRID = '#b0b7c3', MAIL_HEAD = 'background:#eef1f5;color:#1f2328';
-function tidyExcelTables(doc) {
-  const sides = ['Top', 'Right', 'Bottom', 'Left'];
-  $$('table', doc.body).forEach((table) => {
-    const cells = $$('td,th', table);
-    const ruled = cells.some((c) => sides.some((s) => (c.style['border' + s + 'Style'] || 'none') !== 'none'));
-    const shaded = cells.some((c) => c.style.backgroundColor || c.style.backgroundImage || c.getAttribute('bgcolor'));
-    table.style.borderCollapse = 'collapse';
-    $$('tr,td,th', table).forEach((el) => { el.removeAttribute('height'); el.style.height = ''; });
-    cells.forEach((c) => {
-      Object.assign(c.style, { padding: '4px 8px', verticalAlign: 'middle', lineHeight: '1.5', fontFamily: '' });
-      if (/^(black|rgb\(0, 0, 0\))$/.test(c.style.color)) c.style.color = '';
-      if (!ruled) c.style.border = '1px solid ' + MAIL_GRID;
-      else sides.forEach((s) => { if (c.style['border' + s + 'Color'] === 'rgb(0, 0, 0)' && parseFloat(c.style['border' + s + 'Width']) <= 1) c.style['border' + s + 'Color'] = MAIL_GRID; });
-      if (!c.style.textAlign && !c.getAttribute('align') && /^\s*[-+]?[\d,.]+%?\s*$/.test(c.textContent)) c.style.textAlign = 'center';
-    });
-    if (table.rows.length > 1 && !shaded) Array.from(table.rows[0].cells).forEach((c) => { c.style.cssText += ';' + MAIL_HEAD + ';font-weight:600'; });
-  });
-}
-function inlinePastedStyles(html) {
-  if (!/<style[\s>]/i.test(html)) return null;
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const sheet = new CSSStyleSheet();
-  try { sheet.replaceSync($$('style', doc).map((s) => s.textContent.replace(/<!--|-->/g, '')).join('\n').replace(/windowtext/gi, '#000')); } catch { return null; }
-  const weight = (sel) => Math.max(...sel.split(',').map((one) => (one.match(/#/g) || []).length * 100 +
-    (one.match(/[.[:]/g) || []).length * 10 + (one.match(/(^|[\s>+~])[a-z]/gi) || []).length));
-  const rules = Array.from(sheet.cssRules).filter((r) => r instanceof CSSStyleRule && r.style.cssText)
-    .map((r, n) => ({ r, n, w: weight(r.selectorText) })).sort((a, b) => a.w - b.w || a.n - b.n);
-  const css = new Map();
-  rules.forEach(({ r }) => { try { $$(r.selectorText, doc.body).forEach((el) => css.set(el, (css.get(el) || '') + r.style.cssText)); } catch { /* A selector Chromium does not take. */ } });
-  css.forEach((rule, el) => el.setAttribute('style', rule + (el.getAttribute('style') || '')));
-  if (/Excel|Et\.Document|class=["']?(xl|et)\d/i.test(html)) tidyExcelTables(doc);
-  $$('[class]', doc.body).forEach((el) => el.removeAttribute('class'));
-  // Excel marks the fragment inside the table (after its <col>s): cutting there would leave bare
-  // rows, which go in as text. Only a fragment that starts outside a table is taken on its own.
-  const body = doc.body.innerHTML, frag = body.match(/<!--StartFragment-->([\s\S]*)<!--EndFragment-->/);
-  const whole = frag && !/^\s*<(\/|(tr|td|th|col|colgroup|tbody|thead|tfoot|caption)[\s>])/i.test(frag[1]) ? frag[1] : body;
-  return whole.replace(/<!--(Start|End)Fragment-->/g, '');
-}
 $('#cmp-editor').addEventListener('paste', async (e) => {
   // Excel and Word put an HTML table AND a picture of it on the clipboard: when HTML
   // is there, let the normal paste keep the table. A pure image (a screenshot) goes
@@ -1740,13 +1714,22 @@ $('#cmp-editor').addEventListener('paste', async (e) => {
   C.plainPaste = false;
   if (!keepPlain && (!types.includes('text/html') || types.includes('vscode-editor-data')) && !(e.clipboardData.files || []).length && mdLooksLike(plain)) {
     e.preventDefault();
-    document.execCommand('insertHTML', false, mdToHtml(plain));
+    const md = tbPaste(mdToHtml(plain));  // Its tables get the same look as any other.
+    document.execCommand('insertHTML', false, md ? md.html : mdToHtml(plain));
     toast('已按 Markdown 排版；要原文请撤销（Ctrl+Z）后按 Ctrl+Shift+V 粘贴');
     return;
   }
   if (types.includes('text/html')) {
-    const styled = inlinePastedStyles(e.clipboardData.getData('text/html'));
-    if (styled != null) { e.preventDefault(); document.execCommand('insertHTML', false, styled); }
+    if (keepPlain) return;
+    // Tables are laid out on the way in (table/*.js); 撤销整理 brings them back as they came.
+    const pasted = tbPaste(e.clipboardData.getData('text/html'));
+    if (!pasted) return;
+    e.preventDefault();
+    document.execCommand('insertHTML', false, pasted.html);
+    if (pasted.count) {
+      C.dirty = true;
+      toast(`已整理 ${pasted.count > 1 ? pasted.count + ' 张' : ''}表格的排版（内容没有改动）`, { ms: 8000, action: { label: '撤销整理', run: () => { tbUndoPaste(pasted.id, pasted.raw); C.dirty = true; } } });
+    }
     return;
   }
   const files = Array.from(e.clipboardData.files || []);
@@ -1997,6 +1980,7 @@ function openSettings() {
   // The first-close dialog may have remembered a choice since the page last read prefs.
   api('prefs').then((fresh) => { S.prefs.closeAction = fresh.closeAction; $('#pref-close').value = fresh.closeAction || ''; }).catch(() => {});
   $('#pref-undo').value = String(p.undoSeconds ?? 10); $('#pref-precheck').checked = p.precheck !== false;
+  showTablePrefs({ ...TB_PREFS, ...(p.tables || {}) });
   $('#pref-signature').innerHTML = p.signature || '';
   renderSidePicks();
   $('#settings-account').textContent = `${S.profile.name || ''} ${S.profile.account}`;
@@ -2024,6 +2008,11 @@ $$('#theme-seg button').forEach((b) => (b.onclick = () => {
 $$('#density-seg button').forEach((b) => (b.onclick = () => { $$('#density-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.dataset.density = b.dataset.density; }));
 $$('#toolbar-seg button').forEach((b) => (b.onclick = () => { $$('#toolbar-seg button').forEach((x) => x.classList.toggle('on', x === b)); document.documentElement.classList.toggle('tb-lean', b.dataset.toolbar !== 'full'); }));
 // 多彩主题色: previewed at once; 取消 puts the saved colour back (applyTheme).
+function showTablePrefs(t) {
+  $('#pref-tb-theme').value = t.theme; $('#pref-tb-head').value = t.headAlign; $('#pref-tb-date').value = t.dateAlign; $('#pref-tb-colors').checked = t.keepColors !== false;
+}
+$('#pref-tb-reset').onclick = () => showTablePrefs(TB_PREFS);
+const tablePrefs = () => ({ theme: $('#pref-tb-theme').value, headAlign: $('#pref-tb-head').value, dateAlign: $('#pref-tb-date').value, keepColors: $('#pref-tb-colors').checked });
 const accentDraft = () => ($('#pref-accent').dataset.custom ? $('#pref-accent').value : '');
 $('#pref-accent').oninput = (e) => { e.target.dataset.custom = '1'; applyAccent(e.target.value); };
 $('#pref-accent-reset').onclick = () => { $('#pref-accent').value = ACCENT_DEFAULT; $('#pref-accent').dataset.custom = ''; applyAccent(''); };
@@ -2031,7 +2020,7 @@ $('#btn-account').onclick = () => openSettings();  // Through the wrappers the o
 $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').classList.add('hidden'); applyTheme(S.prefs.theme, S.prefs.density); }));
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, toolbar: $('#toolbar-seg .on').dataset.toolbar, colorAccent: accentDraft(), pollSeconds: +$('#pref-poll').value,
-    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, precheck: $('#pref-precheck').checked, signature: signatureHtml(),
+    notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, precheck: $('#pref-precheck').checked, signature: signatureHtml(), tables: tablePrefs(),
     closeAction: $('#pref-close').value, startPage: $('#pref-start').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
   try {
     S.prefs = await api('setPrefs', { values });

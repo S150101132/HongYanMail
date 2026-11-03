@@ -127,5 +127,5 @@ async function checkRemovedMentions() {
 // What leaves the composer: the mention stays highlighted text; the editing-only
 // attributes (and the address it was picked from) are not sent.
 function outgoingHtml(html) {
-  return html.replace(/<span\b[^>]*\bhy-mention\b[^>]*>/g, (tag) => tag.replace(/\scontenteditable="false"/, '').replace(/\sdata-mention="[^"]*"/, ''));
+  return tbMailHtml(html).replace(/<span\b[^>]*\bhy-mention\b[^>]*>/g, (tag) => tag.replace(/\scontenteditable="false"/, '').replace(/\sdata-mention="[^"]*"/, ''));
 }

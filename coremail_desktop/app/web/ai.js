@@ -188,10 +188,11 @@ function bodyRange() {
   if (stop) range.setEndBefore(stop);
   return range;
 }
-function rangeText(range) {
+function rangeText(range, drop = '') {
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;left:-10000px;top:0;white-space:pre-wrap;width:600px';
   box.append(range.cloneContents());
+  if (drop) $$(drop, box).forEach((n) => n.remove());
   document.body.append(box);
   const text = box.innerText.replace(/\n{3,}/g, '\n\n').trim();
   box.remove();
@@ -208,6 +209,11 @@ function rangeHasMedia(range) {
 // the panel goes on from the last version, as many rounds as wanted; the user sends.
 async function writeFromNote() {
   if (C.ai && C.ai.loading) return;
+  const tables = ownTables(bodyRange());
+  if (tables.length) {
+    // Tables first; a body that is only tables stops there.
+    if (!(await styleTablesByAi(tables)) || !rangeText(bodyRange(), 'table, img')) return;
+  }
   const body = bodyRange(), media = rangeHasMedia(body), source = !!(C.draft.sourceMid || C.draft.replySourceId);
   let note = media ? '' : rangeText(body);
   if (!note) {
@@ -225,6 +231,33 @@ async function writeFromNote() {
   const how = /^reply/.test(d.mode) ? 'reply' : /^forward/.test(d.mode) ? 'forward' : 'new';
   noteRun({ label: 'AI 写信', range, part: source ? '结合原邮件整理' : '整理成正式邮件',
     params: { note, subject: $('#cmp-subject').value, to: people('to'), cc: people('cc'), mid: d.sourceMid || d.replySourceId || '', how }, rounds: [], allow: false });
+}
+// AI 优化表格 (part of the AI button, and the table menu): the AI reads each table's structure
+// summary (table/controller.js tbAiPayload) and answers what it means — header bounds, groups,
+// totals, column kinds, the table's purpose; the page lays it out as it does any table, so the
+// content stays and the look is the same. A table answered before (same content) reuses the
+// answer unless asked again. 撤销 puts the tables back as they were.
+const TABLE_LIMIT = { tables: 5, rows: 2000, cols: 30 };
+function ownTables(range) {
+  return $$('#cmp-editor table').filter((t) => range.intersectsNode(t) && !t.parentElement.closest('table') && !t.closest('.hy-signature, .hy-quote'));
+}
+async function styleTablesByAi(tables, again = false) {
+  const fit = tables.filter((t) => t.rows.length && t.rows.length <= TABLE_LIMIT.rows && Math.max(0, ...tbGrid(t).map((r) => r.length)) <= TABLE_LIMIT.cols)
+    .slice(0, TABLE_LIMIT.tables);
+  if (!fit.length) { toast(`表格太大（最多 ${TABLE_LIMIT.rows} 行、${TABLE_LIMIT.cols} 列），没有交给 AI`, { error: true }); return false; }
+  if (!(await aiWriteNotice('正文里表格的文字会发送到「设置 → AI 助手」中配置的 AI 服务，只用来判断表格结构，签名不会发送。'))) return false;
+  const status = $('#cmp-status'), prints = fit.map(tbFingerprint);
+  status.textContent = 'AI 正在优化表格…';
+  let res;
+  try { res = await api('styleTables', { tables: fit.map(tbAiPayload), again }); } catch (err) { fail(err); return false; } finally { status.textContent = ''; }
+  if (!fit.every((t, n) => t.isConnected && tbFingerprint(t) === prints[n])) { toast('表格已经改动，请重新点 AI', { error: true }); return false; }
+  const before = fit.map((t) => t.cloneNode(true));
+  fit.forEach((t, n) => tbApplyAi(t, res.plans[n]));
+  C.dirty = true;
+  const purpose = res.plans.length === 1 && res.plans[0].purposeLabel ? `（${res.plans[0].purposeLabel}）` : '';
+  toast(`已优化 ${fit.length} 张表格的排版${purpose}，内容没有改动${tables.length > fit.length ? '；其余表格太大，没有处理' : ''}`,
+    { ms: 8000, action: { label: '撤销', run: () => { if (tbRestore(fit.filter((t) => t.isConnected), before.filter((b, n) => fit[n].isConnected))) C.dirty = true; } } });
+  return true;
 }
 async function noteRun(base) {
   const state = C.ai = { ...base, text: '', error: null, loading: true };

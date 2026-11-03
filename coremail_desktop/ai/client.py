@@ -96,17 +96,18 @@ class ChatClient:
         host = urlsplit(self.base_url).hostname.casefold()
         self._extra = {'thinking': {'type': 'disabled'}} if host == 'deepseek.com' or host.endswith('.deepseek.com') else {}
 
-    def chat(self, messages, max_tokens=800, json_mode=False):
-        """-> (reply text, total tokens). Retries 429 and 5xx with backoff."""
-        message, tokens = self.complete(messages, max_tokens=max_tokens, json_mode=json_mode)
+    def chat(self, messages, max_tokens=800, json_mode=False, temperature=0.3):
+        """-> (reply text, total tokens). Retries 429 and 5xx with backoff. temperature 0 for
+        answers that must not vary between calls (AI 优化表格)."""
+        message, tokens = self.complete(messages, max_tokens=max_tokens, json_mode=json_mode, temperature=temperature)
         if not message['content'].strip():
             raise AppError('AI_BAD_RESPONSE')
         return message['content'], tokens
 
-    def complete(self, messages, tools=None, max_tokens=800, json_mode=False):
+    def complete(self, messages, tools=None, max_tokens=800, json_mode=False, temperature=0.3):
         """-> ({content, tool_calls: [{id, name, arguments}]}, total tokens). tools: function
         definitions the model may call instead of answering."""
-        body = {'model': self.model, 'messages': messages, 'max_tokens': max_tokens, 'temperature': 0.3, 'stream': False, **self._extra}
+        body = {'model': self.model, 'messages': messages, 'max_tokens': max_tokens, 'temperature': temperature, 'stream': False, **self._extra}
         if json_mode:
             body['response_format'] = {'type': 'json_object'}
         if tools:
