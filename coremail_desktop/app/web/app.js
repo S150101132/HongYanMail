@@ -2156,6 +2156,10 @@ on('openMessage', async (id) => {
 (function boot() {
   try { applyTheme(localStorage.getItem('hy-theme') || 'system', localStorage.getItem('hy-density') || 'comfortable'); } catch (e) { applyTheme('system'); }
   renderIcons();
+  // Connect only after every script ran: the channel can answer while later scripts (contacts.js → SF …) still load.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', connect); else connect();
+})();
+function connect() {
   new QWebChannel(qt.webChannelTransport, async (channel) => {
     bridge = channel.objects.bridge;
     bridge.reply.connect((id, ok, payload) => {
@@ -2174,4 +2178,4 @@ on('openMessage', async (id) => {
     }
     showLogin();
   });
-})();
+}
