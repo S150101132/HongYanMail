@@ -1723,8 +1723,11 @@ function inlinePastedStyles(html) {
   css.forEach((rule, el) => el.setAttribute('style', rule + (el.getAttribute('style') || '')));
   if (/Excel|Et\.Document|class=["']?(xl|et)\d/i.test(html)) tidyExcelTables(doc);
   $$('[class]', doc.body).forEach((el) => el.removeAttribute('class'));
+  // Excel marks the fragment inside the table (after its <col>s): cutting there would leave bare
+  // rows, which go in as text. Only a fragment that starts outside a table is taken on its own.
   const body = doc.body.innerHTML, frag = body.match(/<!--StartFragment-->([\s\S]*)<!--EndFragment-->/);
-  return frag ? frag[1] : body;
+  const whole = frag && !/^\s*<(\/|(tr|td|th|col|colgroup|tbody|thead|tfoot|caption)[\s>])/i.test(frag[1]) ? frag[1] : body;
+  return whole.replace(/<!--(Start|End)Fragment-->/g, '');
 }
 $('#cmp-editor').addEventListener('paste', async (e) => {
   // Excel and Word put an HTML table AND a picture of it on the clipboard: when HTML

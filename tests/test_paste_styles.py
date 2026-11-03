@@ -22,6 +22,14 @@ class WiringTest(unittest.TestCase):
         self.assertIn("rule + (el.getAttribute('style') || '')", fn)
         self.assertIn("removeAttribute('class')", fn)
 
+    def test_excel_fragment_inside_the_table_keeps_the_table(self):
+        # Excel puts <!--StartFragment--> after the <col>s; once parsed the cut starts with
+        # </colgroup>, and taking only that left bare rows that went in as text.
+        app = (WEB / 'app.js').read_text(encoding='utf-8')
+        fn = app[app.index('function inlinePastedStyles'):app.index("$('#cmp-editor').addEventListener('paste'")]
+        self.assertIn(r"!/^\s*<(\/|(tr|td|th|col|colgroup|tbody|thead|tfoot|caption)[\s>])/i.test(frag[1])", fn)
+        self.assertIn("replace(/<!--(Start|End)Fragment-->/g, '')", fn)
+
     def test_excel_tables_are_tidied_with_hex_colours(self):
         app = (WEB / 'app.js').read_text(encoding='utf-8')
         fn = app[app.index('function tidyExcelTables'):app.index('function inlinePastedStyles')]
