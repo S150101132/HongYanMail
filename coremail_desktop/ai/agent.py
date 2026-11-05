@@ -57,7 +57,11 @@ FOLLOWUP_RULES = '''
 25. 问"哪些邮件对方还没回""要催谁"时用 followups：用户发出、在主送里提了问、几天没有回复的邮件。要起草跟进时按第 16 条用 draft_reply 回复那封邮件（mail 用 followups 返回的编号），purpose 写「礼貌地跟进进展」。'''
 REMEMBER_RULES = '''
 26. 用户说「记住……」「以后……」「我现在负责 / 不负责……」「某某是我的……」这类关于自己的长期情况时，调用 remember_me 提议记进「关于我」：每条 group 选最合适的一组，text 用一句话写清楚（不超过 100 字），更新了「关于用户」里的某一条就在 replaces 写它的 A 编号。同一次要记的多条（例如客户各模块的负责人，一人或一个模块一条）放进同一次调用，不要分几次、也不要因为条数多就省略。只是提议：用户勾选后点「记住」才写入，回答里一两句话说明，不要说已经记住。一次性的待办不要记，那是任务。对话里写着「用户已记住」的确实已经记下。'''
-WRAP_UP = '搜索和阅读的次数已用完。请只根据上面已经得到的信息回答，并说明还有哪些没能查到。'
+NOTE_RULES = '''
+27. 问题涉及【资料目录】里某份资料说的对象（某个客户、组织、系统、流程，谁负责、找谁）时，先用 read_note 读它（已附上的不用读）再答；用到资料时注明「据资料《标题》」。资料可能过时，和邮件不一致时以邮件为准。'''
+SAVE_NOTE_RULES = '''
+28. 用户说「记下来」「整理一下这个客户的组织」这类、内容是名单或多行细节（某组织的部门和负责人、各模块焦点人、找谁、流程）时，用 save_note 直接写进资料：同一对象已有资料就填它的 N 编号改那一份，没有就新建（title、folder、about，对应的邮箱域名写进 domains）；一行一件事。它会直接写入，回答里一句话说明记在哪份、几行，不要说「需要你确认」。一两句关于用户本人的长期情况仍按第 26 条用 remember_me。'''
+WRAP_UP ='搜索和阅读的次数已用完。请只根据上面已经得到的信息回答，并说明还有哪些没能查到。'
 CHAT_NOTE = ('这是连续对话。用户追问里的「第二封」「那封」「他」等指前面回答里提到的邮件、任务和人；'
              '下面这些编号仍然有效，可以直接用 read_mail / read_task 阅读，不必重新搜索：\n')
 CURRENT_NOTE = '用户正在看的邮件是 {line}。问题里的「这封」「这件事」指它；需要正文时用 read_mail 阅读。'
@@ -93,7 +97,8 @@ def ask(question, call, tools, progress=lambda step: None, cancelled=lambda: Fal
     rules = TASK_RULES + ((PLAN_RULES + (DRAFT_RULES if 'draft_reply' in names else NO_DRAFT_RULES)) if 'plan_tasks' in names
                           else READ_ONLY_RULES) + (MAIL_RULES if 'plan_mail' in names else '') + \
         (MEMORY_RULES if 'memory_search' in names else '') + (FOLLOWUP_RULES if 'followups' in names else '') + \
-        (REMEMBER_RULES if 'remember_me' in names else '')
+        (REMEMBER_RULES if 'remember_me' in names else '') + (NOTE_RULES if 'read_note' in names else '') + \
+        (SAVE_NOTE_RULES if 'save_note' in names else '')
     messages = [{'role': 'system', 'content': SYSTEM_PROMPT.format(today=today) + (rules if tasks is not None else '')}]
     if me:
         messages[0]['content'] += '\n' + ME_NOTE.format(me=me)
@@ -148,4 +153,6 @@ def ask(question, call, tools, progress=lambda step: None, cancelled=lambda: Fal
     task_cards = [{'ref': r, 'id': tasks[r]['id'], 'system': tasks[r]['system'], 'content': re.sub(r'\s+', ' ', str(tasks[r]['content']))[:120],
                    'status': tasks[r]['status'], 'due': tasks[r]['due']} for r in cited_tasks]
     return {'answer': answer, 'sources': sources, 'tasks': task_cards, 'steps': steps, 'rounds': rounds,
-            'limited': final, 'encrypted': len(tools.encrypted), 'plans': list(plans or ())}
+            'limited': final, 'encrypted': len(tools.encrypted), 'plans': list(plans or ()),
+            'notes': [{'id': n['id'], 'title': n['title']} for n in getattr(tools, 'notes_read', ())],
+            'notesSaved': list(getattr(tools, 'notes_saved', ()))}

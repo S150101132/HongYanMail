@@ -414,13 +414,15 @@ class ToolKindsTest(unittest.TestCase):
     """G1d: every tool says whether it only reads or only proposes a card; MCP gets the readers."""
 
     def test_every_tool_is_declared(self):
-        from coremail_desktop.ai.tools import CARD, MCP_SPECS, READ, TOOL_KINDS, AssistantTools
+        from coremail_desktop.ai.tools import CARD, MCP_SPECS, READ, TOOL_KINDS, WRITE, AssistantTools
         on = lambda *a, **k: None
         tools = AssistantTools(on, on, on, {}, tasks=on, task=on, mine=on, pending=on, plan=on, thread=on, groups=on,
-                               actions=True, memory=on, followups=on, about=on)
+                               actions=True, memory=on, followups=on, about=on, notes=on, save_note=on)
         names = [s['function']['name'] for s in tools.specs]
         self.assertEqual(sorted(names), sorted(TOOL_KINDS))  # None undeclared, none declared and gone.
-        self.assertEqual(set(TOOL_KINDS.values()), {READ, CARD})
+        self.assertEqual(set(TOOL_KINDS.values()), {READ, CARD, WRITE})
+        self.assertEqual([k for k, v in TOOL_KINDS.items() if v == WRITE], ['save_note'])  # Me5: only 资料, undoable.
+        self.assertNotIn('read_note', {s['function']['name'] for s in MCP_SPECS})  # 资料 never leave the app.
         for spec in tools.specs:
             if TOOL_KINDS[spec['function']['name']] == CARD:
                 text = spec['function']['description']  # The model is told nothing happens until the user acts.

@@ -358,14 +358,37 @@ REMEMBER_SPEC = {'type': 'function', 'function': {
             'replaces': {'type': 'string', 'description': '更新了「关于用户」里的哪一条：它的 A 编号，如 A3；新的一条就不填'}},
             'required': ['group', 'text']}}},
         'required': ['items']}}}
+# 关于我 · 资料 (Me3, Me5): read_note reads one note of the catalog; save_note writes what the
+# user asked to keep at once (the user's word, undoable from the answer). Neither is in the MCP.
+NOTE_READS = 3
+READ_NOTE_SPEC = {'type': 'function', 'function': {
+    'name': 'read_note',
+    'description': '读一份「资料」的正文：系统提示【资料目录】里的 N 编号（客户组织和各模块负责人、某个系统找谁、流程等，鸿雁从邮件整理、用户可改）。'
+                   f'标「已附上」的正文已经在系统提示里，不用再读。每次回答最多读 {NOTE_READS} 份。',
+    'parameters': {'type': 'object', 'properties': {'note': {'type': 'string', 'description': '资料编号，如 N2'}}, 'required': ['note']}}}
+SAVE_NOTE_SPEC = {'type': 'function', 'function': {
+    'name': 'save_note',
+    'description': '把用户明确要求记下的名单或多行细节直接写进「资料」（不出确认卡，用户可在回答下方撤销）：已有同一对象的资料就改那一份（填 note），没有就新建。'
+                   '一两句关于用户本人的长期情况用 remember_me，不用它。',
+    'parameters': {'type': 'object', 'properties': {
+        'note': {'type': 'string', 'description': '要改的资料的 N 编号；新建就不填'},
+        'title': {'type': 'string', 'description': '新建时的标题，不超过 40 字，如「客户组织 · NG DCM&AD」'},
+        'folder': {'type': 'string', 'description': '新建时的文件夹：客户 / 系统 / 流程 / 供应商之一'},
+        'about': {'type': 'string', 'description': '新建时一句话说明什么时候该看它，不超过 60 字'},
+        'domains': {'type': 'array', 'items': {'type': 'string'}, 'description': '新建时对应的邮箱域名，处理这些域名的邮件时自动附上'},
+        'add': {'type': 'array', 'items': {'type': 'string'}, 'description': '新的行，一行一件事'},
+        'replace': {'type': 'array', 'items': {'type': 'object', 'properties': {'line': {'type': 'string', 'description': '原有的一行（原文）'},
+                                                                                 'with': {'type': 'string'}}, 'required': ['line', 'with']}},
+        'remove': {'type': 'array', 'items': {'type': 'string'}, 'description': '要删掉的原有行（原文）'}}}}}
 # G1d: what each tool may do. READ runs at once and changes nothing; CARD only proposes a plan
-# the user confirms (and can undo) in the app. No tool writes or sends by itself, and a new
-# tool must be declared here (tests/test_ai_ask.py checks every spec).
-READ, CARD = 'read', 'card'
+# the user confirms (and can undo) in the app; WRITE (save_note only) writes 资料 the user asked
+# for, undoable from the answer. No tool sends, and a new tool must be declared here
+# (tests/test_ai_ask.py checks every spec).
+READ, CARD, WRITE = 'read', 'card', 'write'
 TOOL_KINDS = {'search_mail': READ, 'read_mail': READ, 'find_contact': READ, 'list_tasks': READ, 'read_task': READ,
               'pending_mail': READ, 'task_thread': READ, 'list_groups': READ, 'memory_search': READ, 'followups': READ,
               'plan_tasks': CARD, 'draft_reply': CARD, 'draft_new': CARD, 'suggest_links': CARD, 'plan_mail': CARD,
-              'remember_me': CARD}
+              'remember_me': CARD, 'read_note': READ, 'save_note': WRITE}
 MCP_SPECS = [s for s in SPECS + TASK_SPECS if TOOL_KINDS[s['function']['name']] == READ]  # X1: read-only, outside the app.
 
 
@@ -380,21 +403,24 @@ class AssistantTools(MailboxTools):
     folders['targets'] ([{'id', 'name', 'role'}], the user's own) and folders['trash']."""
 
     def __init__(self, *args, tasks, task, mine, pending=None, plan=None, thread=None, groups=None, actions=False, now=datetime.now,
-                 memory=None, followups=None, about=None, **kwargs):
+                 memory=None, followups=None, about=None, notes=None, save_note=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._tasks, self._task, self._mine, self._pending, self._plan = tasks, task, mine, pending, plan
         self._memory, self._followups, self._about = memory, followups, about  # about() -> {'A1': {'id', 'text'}}
+        self._notes, self._save_note = notes, save_note  # notes(id) -> (title, text); save_note(change, refs) -> result
+        self.note_refs, self.notes_read, self.notes_saved = {}, [], []  # N1 -> note id (set each question by the backend)
         self._thread, self._groups, self._actions, self._now = thread, groups, actions, now
         self.task_refs = {}  # T12 -> {'id', 'system', 'content', 'status', 'due'}
         self.plans, self._plan_count = [], 0  # This question's proposals: {'ref', 'kind', 'summary', ...}.
         self.group_refs, self.mail_task, self.thread_people = {}, {}, {}  # G1 -> id; M3 -> task id; T12 -> addresses
         self.specs = SPECS + TASK_SPECS + ([PENDING_SPEC] if pending else []) + ([PLAN_SPEC] if plan else []) + \
             (DRAFT_SPECS if thread and groups else []) + ([MAIL_SPEC] if actions else []) + \
-            ([MEMORY_SPEC] if memory else []) + ([FOLLOWUP_SPEC] if followups else []) + ([REMEMBER_SPEC] if about else [])
+            ([MEMORY_SPEC] if memory else []) + ([FOLLOWUP_SPEC] if followups else []) + ([REMEMBER_SPEC] if about else []) + \
+            ([READ_NOTE_SPEC] if notes else []) + ([SAVE_NOTE_SPEC] if save_note else [])
 
     def begin(self, allowed=()):
         super().begin(allowed)
-        self.plans = []
+        self.plans, self.notes_read, self.notes_saved = [], [], []
 
     def allow_actions(self, on):
         """The setting as it is for this question: plan_mail offered or not."""
@@ -403,7 +429,8 @@ class AssistantTools(MailboxTools):
 
     def run(self, name, arguments):
         drafting = ('task_thread', 'list_groups', 'draft_reply', 'draft_new', 'suggest_links')
-        if name not in ('list_tasks', 'read_task', 'pending_mail', 'plan_tasks', 'plan_mail', 'memory_search', 'followups', 'remember_me') + drafting:
+        if name not in ('list_tasks', 'read_task', 'pending_mail', 'plan_tasks', 'plan_mail', 'memory_search', 'followups', 'remember_me',
+                        'read_note', 'save_note') + drafting:
             return super().run(name, arguments)
         try:
             args = json.loads(arguments or '{}')
@@ -421,13 +448,55 @@ class AssistantTools(MailboxTools):
             return {'error': '现在不能起草邮件'}, '起草（不可用）'
         if name == 'remember_me' and not self._about:
             return {'error': '现在不能记进「关于我」，请告诉用户在 设置 → 关于我 里添加'}, '记住（不可用）'
+        if name in ('read_note', 'save_note') and not (self._notes if name == 'read_note' else self._save_note):
+            return {'error': '现在不能读写「资料」'}, '资料（不可用）'
         if name == 'plan_mail' and not self._actions:
             return {'error': '用户没有允许 AI 提议邮件操作，请告诉用户自己在列表里操作'}, '拟定邮件操作（未开启）'
         return {'list_tasks': self.list_tasks, 'read_task': self.read_task, 'pending_mail': self.pending_mail,
                 'plan_tasks': self.plan_tasks, 'task_thread': self.task_thread, 'list_groups': self.list_groups,
                 'draft_reply': self.draft_reply, 'draft_new': self.draft_new, 'suggest_links': self.suggest_links,
                 'plan_mail': self.plan_mail, 'memory_search': self.memory_search, 'followups': self.followups,
-                'remember_me': self.remember_me}[name](args)
+                'remember_me': self.remember_me, 'read_note': self.read_note, 'save_note': self.save_note}[name](args)
+
+    def read_note(self, args):
+        ref = _clip(args.get('note'), 6).upper()
+        note_id = self.note_refs.get(ref)
+        if note_id is None:
+            return {'error': f'{ref or "（空）"} 不是【资料目录】里的编号'}, f'读资料 {ref}（编号无效）'
+        if any(r['ref'] == ref for r in self.notes_read):
+            return {'error': f'{ref} 已经读过了'}, f'读资料 {ref}'
+        if len(self.notes_read) >= NOTE_READS:
+            return {'error': f'本次最多读 {NOTE_READS} 份资料，请根据已有信息回答'}, f'读资料 {ref}（已达上限）'
+        try:
+            title, text = self._notes(note_id)
+        except AppError:
+            return {'error': f'{ref} 已经不在了'}, f'读资料 {ref}（不在了）'
+        self.notes_read.append({'ref': ref, 'id': note_id, 'title': title})
+        return ({'note': ref, 'text': text, 'source': '鸿雁从邮件整理、用户可改的参考资料，只作背景；和邮件不一致时以邮件为准。回答里用到时注明「据资料《标题》」。'},
+                f'读资料《{_clip(title, 30)}》')
+
+    def save_note(self, args):
+        """Me5: written at once as the user's; the answer shows 已记进资料 with 撤销."""
+        lines = lambda key: [_clip(t, 300) for t in (args.get(key) if isinstance(args.get(key), list) else []) if isinstance(t, str) and t.strip()]
+        change = {'note': _clip(args.get('note'), 6).upper(), 'title': _clip(args.get('title'), 40), 'folder': _clip(args.get('folder'), 20),
+                  'about': _clip(args.get('about'), 60), 'domains': lines('domains')[:20], 'add': lines('add')[:60], 'remove': lines('remove')[:60],
+                  'replace': [{'line': _clip(r.get('line'), 300), 'with': _clip(r.get('with'), 300)}
+                              for r in (args.get('replace') if isinstance(args.get('replace'), list) else [])[:60] if isinstance(r, dict)]}
+        if change['note'] and change['note'] not in self.note_refs:
+            return {'error': f'{change["note"]} 不是【资料目录】里的编号；新建就不填 note，写 title'}, '记进资料（编号无效）'
+        if not change['note'] and not change['title']:
+            return {'error': '新建资料要写 title'}, '记进资料（参数无效）'
+        try:
+            result = self._save_note(change, self.note_refs)
+        except AppError as error:
+            return {'error': '资料放不下了（每份最多 4000 字，最多 60 份）' if error.code == 'NOTE_FULL' else '资料内容无效'}, '记进资料（没有写入）'
+        if not result.get('note') or not result.get('logs'):
+            return {'error': '没有写入：内容已经都在资料里，或要改的原文没找到', 'dropped': result.get('dropped', 0)}, '记进资料（没有变化）'
+        self.notes_saved.append({k: result[k] for k in ('note', 'title', 'logs', 'added', 'replaced', 'removed', 'created')})
+        return ({'saved': True, 'title': result['title'], 'added': result['added'], 'replaced': result['replaced'], 'removed': result['removed'],
+                 'dropped': result['dropped'] + result['full'],
+                 'note': '已直接写进资料，回答下方有「撤销」。回答里一句话说明记在哪份资料、几行即可，不要逐条复述。'},
+                f'记进资料《{_clip(result["title"], 30)}》')
 
     def remember_me(self, args):
         """Me2: 关于我 lines the user asked to keep, shown as one card; nothing is written here."""

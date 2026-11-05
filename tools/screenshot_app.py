@@ -490,6 +490,35 @@ STEPS += [
 ]
 
 
+# 关于我 · 资料 (Me3–Me5): the 资料 tab, a partner mail updating a note, 问鸿雁 reading and saving (HONGYAN_WALK_NT=1; demo AI).
+NT = len(STEPS)
+
+
+def nt_understand():
+    from coremail_desktop.app.demo import DemoAiClient, seed_notes
+    backend.ai_client = DemoAiClient()
+    seed_notes(backend)
+    backend.set_understand('on')
+    backend.understand_fetch(['demo20'])  # 合作伙伴 · 外部: Re: 接口联调时间确认.
+    backend.understand_mail('demo20')
+
+
+STEPS += [
+    (2500, lambda: (setattr(backend, 'ai_client', __import__('coremail_desktop.app.demo', fromlist=['DemoAiClient']).DemoAiClient()),
+                    __import__('coremail_desktop.app.demo', fromlist=['seed_notes']).seed_notes(backend)), None),
+    (300, "openSettings('me'); meTab('notes')", None),
+    (1200, "$('#nt-list [data-nt]').click()", 'nt-list'),
+    (300, nt_understand, None),
+    (900, "$('#prompt').classList.add('hidden'); renderNotes().then(() => { $('#nt-recent details').open = true; $$('#nt-list [data-nt]').find((li) => li.textContent.includes('合作伙伴')).click(); })", 'nt-recent'),
+    (600, "$('[data-nt-act=edit]').click()", 'nt-edit'),
+    (300, "$('#nt-cancel').click(); meTab('me')", None),
+    (600, "$('#settings').classList.add('hidden'); showAsk(); $('#ask-input').value = '合作伙伴的接口联调焦点人找谁？'; askMailbox()", None),
+    (3500, "document.body.offsetWidth", 'nt-chat-read'),
+    (300, "$('#ask-input').value = '记下来：测试环境由钱工维护'; askMailbox()", None),
+    (3500, "document.body.offsetWidth", 'nt-chat-save'),
+]
+
+
 def run(index=0):
     if index >= len(STEPS):
         app.quit()
@@ -513,6 +542,6 @@ def run(index=0):
     QTimer.singleShot(delay, act)
 
 
-run(C3 if os.environ.get("HONGYAN_WALK_C3") else ME if os.environ.get("HONGYAN_WALK_ME") else AM if os.environ.get("HONGYAN_WALK_AM") else X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
+run(NT if os.environ.get("HONGYAN_WALK_NT") else C3 if os.environ.get("HONGYAN_WALK_C3") else ME if os.environ.get("HONGYAN_WALK_ME") else AM if os.environ.get("HONGYAN_WALK_AM") else X1 if os.environ.get('HONGYAN_WALK_X1') else N1 if os.environ.get('HONGYAN_WALK_N1') else R5 if os.environ.get('HONGYAN_WALK_R5') else POLISH if os.environ.get('HONGYAN_WALK_POLISH') else R2 if os.environ.get('HONGYAN_WALK_R2') else M2 if os.environ.get('HONGYAN_WALK_M2') else SEC if os.environ.get('HONGYAN_WALK_SEC') else U1 if os.environ.get('HONGYAN_WALK_U1') else V10 if os.environ.get('HONGYAN_WALK_V10') else V07 if os.environ.get('HONGYAN_WALK_V07') else V05 if os.environ.get('HONGYAN_WALK_V05') else 0)
 app.exec()
 print('saved to', out)

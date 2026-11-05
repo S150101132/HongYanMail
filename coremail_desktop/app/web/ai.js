@@ -593,6 +593,8 @@ function turnCard(a, index, latest) {
     `</div><div class="ai-body"><p class="ask-answer">${answer}</p>` +
     (r.limited ? '<p class="ask-limited">已达到查找次数或时间的上限，答案可能不完整。</p>' : '') +
     (r.plans || []).map((p, j) => planCard(p, index, j)).join('') +
+    (r.notesSaved || []).map(noteSavedLine).join('') +
+    ((r.notes || []).length ? `<p class="ask-notes muted small">据资料：${r.notes.map((n) => `<a href="#" data-note-open="${esc(n.id)}">《${esc(n.title)}》</a>`).join('、')}</p>` : '') +
     (tasks.length ? `<div class="ask-sources"><h4>任务</h4>${tasks.map(taskCard).join('')}</div>` : '') +
     (cited.length ? `<div class="ask-sources"><h4>出处</h4>${cited.map(card).join('')}</div>` : '') +
     (other.length ? `<details class="ask-process"><summary>也查阅过 ${other.length} 封</summary>${other.map(card).join('')}</details>` : '') +

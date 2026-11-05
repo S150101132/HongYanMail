@@ -105,6 +105,9 @@ BACKEND_METHODS = {
     'followupDismiss': 'followup_dismiss',
     'aboutMe': 'about_me', 'aboutEntry': 'about_entry', 'aboutAdd': 'about_add', 'aboutPrepare': 'about_prepare', 'aboutDraft': 'about_draft',
     'aboutPending': 'about_pending', 'aboutRestore': 'about_restore', 'aboutRemove': 'about_remove', 'assistantRememberRun': 'assistant_remember_run',
+    'notesList': 'notes_list', 'noteSave': 'note_save', 'noteRemove': 'note_remove', 'noteState': 'note_state', 'noteUndo': 'note_undo',
+    'noteStale': 'note_stale', 'notesBackfill': 'notes_backfill', 'notesBackfillPlan': 'notes_backfill_plan',
+    'aboutToNote': 'about_to_note',
 }
 # Read-only calls may run beside a long send or list fetch. 撤销 (cancelSend) must not
 # wait behind other mail work: the backend's hold lock decides between undo and release.
@@ -113,11 +116,11 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
                 'recipientGroups', 'aiSettings', 'mcpStatus', 'setMcp', 'cancelAsk', 'cancelAi', 'precheck', 'archiveStatus', 'archiveView', 'searchArchive',
                 'cancelSend', 'heldSends', 'threadCounts', 'openAttachment',
                 'aiEncrypted', 'understandStatus', 'understandPending', 'understandCards', 'understandView', 'understandRules',
-                'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups', 'aboutMe'}
+                'memoryProjects', 'memoryFacts', 'memoryRecent', 'memoryWeek', 'memoryPerson', 'followups', 'aboutMe', 'notesList'}
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'aiModels', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
               'replyIdeas', 'draftReply', 'writeFromNote', 'styleTables', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
-              'memoryWeekBrief', 'trending', 'dailyNews', 'aboutDraft', 'contactCompanies'}
+              'memoryWeekBrief', 'trending', 'dailyNews', 'aboutDraft', 'contactCompanies', 'notesBackfill'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
 STREAM_METHODS = {'draftReply', 'writeFromNote', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
@@ -1098,6 +1101,32 @@ class AppShell(_PrintHost, QMainWindow):
         """关于我: the user's own notes for the first draft ('' when cancelled); only the path goes back."""
         path, _ = QFileDialog.getOpenFileName(self._parent(), '选择参考资料', '', '文本 (*.md *.markdown *.txt)')
         return path or ''
+
+    def native_noteImport(self):
+        """资料 导入 .md: the file is read here, only its text reaches the backend (None when cancelled)."""
+        path, _ = QFileDialog.getOpenFileName(self._parent(), '导入资料', '', '文本 (*.md *.markdown *.txt)')
+        if not path:
+            return None
+        if Path(path).stat().st_size > 64 * 1024:
+            raise AppError('NOTE_IMPORT')
+        try:
+            text = Path(path).read_bytes().decode('utf-8-sig')
+        except (OSError, UnicodeDecodeError):
+            raise AppError('NOTE_IMPORT') from None
+        return self.backend.note_import(text)
+
+    def native_noteExport(self, id=''):
+        """资料 导出 .md: a plain file the user keeps themselves (the page says so)."""
+        name, text = self.backend.note_export(id)
+        target, _ = QFileDialog.getSaveFileName(self._parent(), '导出资料', str(_save_dir(self.backend) / name), 'Markdown (*.md)')
+        if not target:
+            return False
+        try:
+            Path(target).write_text(text, encoding='utf-8')
+        except OSError:
+            raise AppError('NOTE_EXPORT') from None
+        _saved(target)
+        return True
 
     def native_pickPst(self):
         """An Outlook data file chosen by the user ('' when cancelled); only its path goes back."""

@@ -643,6 +643,33 @@ class DemoNetProbe:
 PREVIEW_DEMO_ID = 'demo1'
 
 
+# 关于我 · 资料 (Me3–Me5) in demo mode: two sample notes, and a partner mail that changes one line.
+DEMO_NOTES = [('客户组织 · 合作伙伴', '客户', '合作伙伴各模块负责人和签核人', {'domains': ['external.example']},
+               ['## 项目组', '项目经理：合作伙伴 · 外部（partner@external.example）', 'Inventory 签核：王工（演示）', '接口联调焦点人：赵工（演示）']),
+              ('系统 · 接口平台', '系统', '接口联调找谁、测试环境', {'words': ['接口联调']},
+               ['对接人：张晓明（zhangxm@example.invalid）', '测试环境账号找 IT 服务台'])]
+
+
+def seed_notes(backend):
+    """Demo: the sample notes, once (the demo folder starts empty each run)."""
+    from coremail_desktop.memory import notes as N
+    try:
+        if not backend._notes_items():
+            backend._memory().set('notes', [N.note(t, f, a, m, lines, 'ai' if i == 0 else 'user', 'mail' if i == 0 else '') for i, (t, f, a, m, lines) in enumerate(DEMO_NOTES)])
+    except Exception:
+        pass
+
+
+def demo_notes(system, subject):
+    """理解新邮件 / 整理 in demo mode: a mail from the partner about 接口联调 says the focal point changed."""
+    import re
+    ref = re.search(r'^- (N\d+) 客户组织 · 合作伙伴', system, re.M)
+    if not ref or '【资料：客户组织 · 合作伙伴】' not in system or '联调' not in subject:
+        return []
+    return [{'note': ref.group(1), 'replace': [{'line': '接口联调焦点人：赵工（演示）', 'with': '接口联调焦点人：钱工（演示，来信说改由钱工负责）'}],
+             'add': ['联调时间由项目经理确认（演示）']}]
+
+
 class DemoAiClient:
     """Stand-in for the AI service in demo mode: a fixed-shape summary built from the
     prompt itself, no network."""
@@ -722,7 +749,13 @@ class DemoAiClient:
                 card = {'kind': 'ignore', 'sure': True, 'gist': f'{topic}（例行通知）', 'ask': '', 'due': ''}
             else:
                 card = {'kind': 'know', 'sure': False, 'gist': topic[:30], 'ask': '', 'due': ''}
+            notes = demo_notes(messages[0]['content'], subject)
+            if notes:
+                card['notes'] = notes
             return json.dumps({'project': project if card['kind'] != 'ignore' else '', 'facts': [], **card}, ensure_ascii=False), 0
+        if '鸿雁的资料整理助手' in messages[0]['content']:  # 从最近 30 天邮件整理 (Me5).
+            subject = (re.search(r'主题：(.*)', text) or [None, ''])[1]
+            return json.dumps({'notes': demo_notes(messages[0]['content'], subject)}, ensure_ascii=False), 0
         if '鸿雁任务助手' in messages[0]['content']:
             mail = next((m['content'] for m in messages if m['role'] == 'user' and '请根据下面的邮件' in m['content']), '')
             if mail:
@@ -823,6 +856,22 @@ class DemoAiClient:
         task = next((re.match(r'用户附带了当前任务 (T\d+)｜', m['content']) for m in messages
                      if m['role'] == 'system' and m['content'].startswith('用户附带了当前任务')), None)
         offered = {s['function']['name'] for s in tools or ()}
+        catalog = re.findall(r'^- (N\d+) (.+?)(?: — |（|$)', messages[0]['content'], re.M)
+        if 'save_note' in offered and re.search(r'记下来|记到资料|整理一下', question) or any(r.get('saved') for r in results):
+            done = next((r for r in results if 'saved' in r or 'error' in r), None)
+            if done is None:  # 资料 (Me5): written at once, undone from the answer.
+                return call('save_note', {'title': '客户组织 · 合作伙伴', 'add': ['问鸿雁记下的一行（演示）']} if not catalog else
+                            {'note': catalog[0][0], 'add': [re.sub(r'^.*?(记下来|记到资料)[：:，, ]*', '', question).strip(' 。') or '问鸿雁记下的一行（演示）']})
+            return {'content': (f'演示模式：已记进资料《{done["title"]}》，新增 {done["added"]} 行。' if done.get('saved') else
+                                f'演示模式：没有写进资料：{done.get("error", "")}') + '\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
+        if 'read_note' in offered and catalog and re.search(r'找谁|谁负责|负责人|焦点人|对接人|签核', question):
+            read = next((r for r in results if 'note' in r and 'text' in r), None)
+            if read is None:  # 资料 (Me3): the model reads the note first.
+                return call('read_note', {'note': catalog[0][0]})
+            words = {question[i:i + 2] for i in range(len(question) - 1)}
+            line = max(read['text'].splitlines()[1:] or [''], key=lambda l: sum(w in l for w in words))
+            title = dict(catalog).get(read['note'], '')
+            return {'content': f'演示模式：据资料《{title}》，{line}。资料可能过时，以最新邮件为准。\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
         op = re.search(r'标为已读|标记为已读|标为未读|取消星标|星标|移到|移动到|删除', question)
         if op and ('plan_mail' in offered or results) and not re.search(r'任务', question):  # 操作类工具 A3: search, then a plan.
             action = {'标为已读': 'read', '标记为已读': 'read', '标为未读': 'unread', '取消星标': 'unflag', '星标': 'flag',

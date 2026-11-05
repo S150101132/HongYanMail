@@ -1359,4 +1359,41 @@ html:not(.tb-lean) .lean-only { display: none !important; }
 #prompt #me-why { width: 100%; }
 .me-bulk { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 2px 8px rgba(0, 0, 0, .06); font-size: var(--fs-sm); }
 .me-bulk .spacer { flex: 1; }
+/* 关于我 · 资料 (Me3–Me5) */
+.me-tabs { display: flex; gap: 4px; margin: 4px 0 12px; border-bottom: 1px solid var(--line); }
+.me-tab { border: 0; background: none; padding: 6px 12px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--text-2); font: inherit; cursor: pointer; }
+.me-tab:hover { color: var(--text); }
+.me-tab.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.nt-bar input[type=search] { flex: 1; min-width: 140px; }
+.nt-recent-box { margin: 8px 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.nt-recent-box summary { cursor: pointer; }
+.nt-split { display: grid; grid-template-columns: minmax(200px, 38%) 1fr; gap: 12px; margin: 10px 0; min-height: 260px; }
+.nt-list { border: 1px solid var(--line); border-radius: 8px; padding: 4px 0; overflow: auto; max-height: 460px; }
+.nt-folder { padding: 6px 12px 2px; }
+.nt-items { list-style: none; margin: 0; padding: 0; }
+.nt-items li { padding: 6px 12px; cursor: pointer; font-size: var(--fs-sm); line-height: 1.5; border-left: 2px solid transparent; }
+.nt-items li:hover { background: var(--line-2); }
+.nt-items li.on { background: var(--accent-soft); border-left-color: var(--accent); }
+.nt-items li.nt-unused { opacity: .6; }
+.nt-items i[data-icon] svg { width: 12px; height: 12px; vertical-align: -1px; }
+.nt-flag { font-size: var(--fs-xs); color: var(--warn-strong); background: var(--warn-bg); border-radius: 4px; padding: 0 4px; }
+.nt-warn { margin: 4px 12px; color: var(--warn-strong); }
+.nt-archived { padding: 4px 12px; }
+.nt-edit { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; overflow: auto; max-height: 460px; }
+.nt-empty { margin-top: 40px; text-align: center; }
+.nt-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.nt-lines { list-style: none; margin: 8px 0; padding: 0; font-size: var(--fs-sm); line-height: 1.6; }
+.nt-lines li { padding: 1px 0 1px 8px; border-left: 2px solid transparent; }
+.nt-lines li.ai { border-left-color: var(--accent-soft); }
+.nt-lines li.h { font-weight: 600; margin-top: 6px; }
+.nt-stale { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--warn-line); background: var(--warn-bg); }
+.nt-stale > span { flex: 1; }
+.nt-actions { flex-wrap: wrap; margin-top: 10px; }
+.nt-field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: var(--fs-sm); color: var(--text-2); }
+.nt-field input, .nt-field textarea { color: var(--text); }
+.chat-note-saved { display: flex; align-items: center; gap: 8px; margin: 8px 0; padding: 6px 10px; border-radius: 6px; background: var(--ok-bg); color: var(--ok-strong); }
+.chat-note-saved .spacer { flex: 1; }
+.chat-note-saved i[data-icon] svg { width: 14px; height: 14px; }
+.ask-notes { margin: 6px 0 0; }
+@media (max-width: 760px) { .nt-split { grid-template-columns: 1fr; } }
 .me-tick { flex: none; margin: 0 2px 0 0; }

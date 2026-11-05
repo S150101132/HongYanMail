@@ -38,6 +38,7 @@ DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify'
                  'toolbar': 'lean',  # A4: 'lean' folds low-use buttons into ⋯ / 格式 / the send menu; 'full' shows them all.
                  'startPage': 'inbox',  # R2a/R3b: 'inbox' opens the 收件箱 after signing in, 'today' GitHub Trending (G1).
                  'memoryFacts': False,  # R3c: the 理解层 also keeps project facts (工作记忆); off: it only sorts mail.
+                 'notesFromMail': True,  # Me4: the 理解层 keeps 资料 (who does what) from mail, each change undoable.
                  'hiddenFolders': [],  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
                  'tables': {}}  # T2 表格: theme / headAlign / dateAlign / keepColors chosen by the user (TABLE_PREFS).
 CLOSE_ACTIONS = ('', 'tray', 'quit')
@@ -2735,7 +2736,7 @@ class MailBackend:
             return {**saved[mid], 'cached': True}
         summary = self.cache.summary(mid) or {}
         messages = self._with_about(build_messages(document, summary.get('date') or '', self.display_name, [self.account or '', *self.identities],
-                                                   attachment_texts(document, self.pdf_text)))
+                                                   attachment_texts(document, self.pdf_text)), seen=self._seen([document]))
         content, _ = self._ai_call(messages, max_tokens=SUMMARY_TOKENS, json_mode=True)
         result = {**parse_summary(content), 'model': model, 'at': datetime.now().strftime('%Y-%m-%d %H:%M'), 'encrypted': encrypted,
                   'v': SUMMARY_VERSION}
@@ -2843,7 +2844,7 @@ class MailBackend:
             raise AppError('NOT_AUTHENTICATED')
         self._ai()
         document, encrypted = self._ai_document(mid, allow_encrypted)
-        content, _ = self._ai_call(self._with_about(idea_messages(document, (self.cache.summary(mid) or {}).get('date') or '')),
+        content, _ = self._ai_call(self._with_about(idea_messages(document, (self.cache.summary(mid) or {}).get('date') or ''), seen=self._seen([document])),
                                    max_tokens=IDEA_TOKENS, json_mode=True)
         return {'ideas': parse_ideas(content), 'encrypted': encrypted}
 
@@ -2856,7 +2857,7 @@ class MailBackend:
             raise AppError('NOT_AUTHENTICATED')
         self._ai()
         document, _ = self._ai_document(mid, allow_encrypted)
-        messages = self._with_about(draft_messages(document, idea, note, (self.cache.summary(mid) or {}).get('date') or ''))
+        messages = self._with_about(draft_messages(document, idea, note, (self.cache.summary(mid) or {}).get('date') or ''), seen=self._seen([document]))
         return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
 
     def write_from_note(self, note, subject='', to=(), cc=(), mid='', how='new', allow_encrypted=False, rounds=(),
@@ -2884,7 +2885,9 @@ class MailBackend:
                     raise
         external = any(str(p.get('email') or '').rpartition('@')[2].casefold() not in inside
                        for p in [*to, *cc] if isinstance(p, dict) and p.get('email'))
-        messages = self._with_about(note_messages(note, subject, who(to), who(cc), document, date, how, rounds, self._style_samples(external)))
+        messages = self._with_about(note_messages(note, subject, who(to), who(cc), document, date, how, rounds, self._style_samples(external)),
+                                    seen=self._seen([document] if document else [], [str(p.get('email') or '') for p in [*to, *cc] if isinstance(p, dict)],
+                                                    subject if isinstance(subject, str) else ''))
         return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
 
     def _style_samples(self, external):
@@ -2985,7 +2988,7 @@ class MailBackend:
                 skipped += 1
                 continue
             mails.append({'id': row['id'], 'date': row.get('date') or '', 'document': document, 'encrypted': encrypted})
-        content, _ = self._ai_call(self._with_about(build_messages(mails, left_out)), max_tokens=THREAD_TOKENS, json_mode=True)
+        content, _ = self._ai_call(self._with_about(build_messages(mails, left_out), seen=self._seen([m['document'] for m in mails])), max_tokens=THREAD_TOKENS, json_mode=True)
         result = parse(content, len(mails))
         for step in result['timeline']:
             mail = mails[step['n'] - 1]
@@ -3033,7 +3036,9 @@ class MailBackend:
                                    thread=self._assist_thread, groups=self._assist_groups,
                                    memory=self._memory_search if self._understand_on() else None,
                                    followups=self.followups if self._understand_on() else None,
-                                   about=self._about_known if self.memory is not None else None)
+                                   about=self._about_known if self.memory is not None else None,
+                                   notes=self._note_read if self.memory is not None else None,
+                                   save_note=self._note_write if self.memory is not None else None)
             chat, state = uuid.uuid4().hex[:16], {'tools': tools, 'turns': [], 'shown': []}
             while len(self._chats) >= self.CHATS:
                 self._chats.pop(next(iter(self._chats)))
@@ -3062,9 +3067,13 @@ class MailBackend:
                 return message
             finally:
                 self._count_ai(tokens)
+        tools.note_refs = {}
+        to = row.get('to') if row else ''
+        seen = self._seen(addresses=[a for _, a in getaddresses([str(row.get('from') or ''), ', '.join(map(str, to)) if isinstance(to, (list, tuple)) else str(to or '')])]
+                          + [row.get('fromEmail') or ''], text=row.get('subject') or '') if row else None
         result = ask(question, call, tools, progress or (lambda step: None), self._ask_cancel.is_set,
                      today=datetime.now().strftime('%Y-%m-%d'), history=turns, known=state['shown'], current=here,
-                     current_task=task_here, me=self._me(), about=self._about(numbered=True))
+                     current_task=task_here, me=self._me(), about=self._about(numbered=True, seen=seen, refs_out=tools.note_refs))
         state['turns'] = turns + [(question, result['answer'])]
         refs = [s['ref'] for s in result['sources']] + [t['ref'] for t in result['tasks']]
         state['shown'] = ([r for r in state['shown'] if r not in refs] + refs)[-60:]
@@ -3405,7 +3414,8 @@ class MailBackend:
             from coremail_desktop.tasks.center import _shown
             fields = {k: str(_shown(task[k]))[:600] for k in ('system', 'content', 'latest', 'next') if task and task.get(k)}
             messages = new_messages(entry['purpose'], points, [c['name'] for c in entry['contacts']], fields)
-        messages = self._with_about(messages)
+        seen = self._seen([document], text=entry['purpose']) if entry['reply'] else             self._seen(addresses=[c['email'] for c in entry['contacts']], text=' '.join((entry['subject'], fields.get('system', ''))))
+        messages = self._with_about(messages, seen=seen)
         return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
 
     def assistant_sent(self, plan):
@@ -3892,7 +3902,8 @@ class MailBackend:
         self._ai()  # Not configured: say so before reading the mail.
         mails = [self._task_mail(mid, {str(a) for a in allow}) for mid in dict.fromkeys(mids)]
         messages = self._with_about(assistant.build_mail_messages(mails, target, text, history, list(center.store.tasks.values()), center.today(),
-                                                                  check=check and isinstance(target, int)))
+                                                                  check=check and isinstance(target, int)),
+                                    seen=self._seen([self._docs.get(m['mid']) for m in mails], text=text))
         content, _ = self._ai_call(messages, max_tokens=assistant.PLAN_TOKENS, json_mode=True)
         plan = assistant.parse_plan(content)
         refs = [{k: m[k] for k in assistant.MAIL_KEYS} for m in mails]
@@ -3983,7 +3994,8 @@ class MailBackend:
         center = self._tasks()
         if center.status()['mode'] == 'off':
             raise AppError('TASK_NOT_IMPORTED')
-        messages = self._with_about(assistant.build_messages(text, history, list(center.store.tasks.values()), center.today()))
+        messages = self._with_about(assistant.build_messages(text, history, list(center.store.tasks.values()), center.today()),
+                                    seen={'addresses': [], 'text': text})
         content, _ = self._ai_call(messages, max_tokens=assistant.PLAN_TOKENS, json_mode=True)
         plan = assistant.parse_plan(content)
         preview = center.preview(plan['actions'])
@@ -4078,7 +4090,7 @@ class MailBackend:
         from coremail_desktop.memory import merge
         mid = str(mid)
         memory = self._memory()
-        refs = {}
+        refs, note_refs = {}, {}
         row = self.cache.summary(mid) or {}
         rule = understand.rule_for(list(memory.rules.values()), row)
         if rule and rule['kind'] == 'ignore':
@@ -4095,23 +4107,28 @@ class MailBackend:
             keep = self.prefs()['memoryFacts']  # R3c: off, the card only sorts the mail; no project facts.
             refs = merge.prompt_facts(memory.facts, projects) if keep else {}
             brief = [(t['id'], ' '.join(filter(None, (t.get('system'), t.get('content'))))) for t in sorted(tasks, key=lambda t: t['id'])][-understand.TASKS:]
+            learn = self.prefs()['notesFromMail']  # Me4: 资料 kept from mail too.
             messages = understand.build_messages(document, self.display_name, [self.account or '', *self.identities], projects,
-                                                 row.get('date') or '', datetime.now().date(), tasks=brief, facts=refs)
-            messages = self._with_about(messages, projects=False, numbered=True)  # The card lists the projects itself.
-            content, _ = self._ai_call(messages, max_tokens=understand.CARD_TOKENS, json_mode=True)
+                                                 row.get('date') or '', datetime.now().date(), tasks=brief, facts=refs, notes=learn)
+            messages = self._with_about(messages, projects=False, numbered=True,  # The card lists the projects itself.
+                                        seen=self._seen([document]), refs_out=note_refs)
+            content, _ = self._ai_call(messages, max_tokens=understand.CARD_TOKENS + (understand.NOTES_TOKENS if learn else 0), json_mode=True)
             me_refs = self._about_refs()
             try:
-                card = understand.apply_rule(understand.parse(content, {i for i, _ in brief}, refs, me_refs), rule)
+                card = understand.apply_rule(understand.parse(content, {i for i, _ in brief}, refs, me_refs, learn), rule)
             except AppError:
                 self._understand_failed[mid] = 'AI_BAD_RESPONSE'  # Not asked again this session.
                 raise
             card['model'] = getattr(client, 'model', '')
         card.update(v=understand.CARD_VERSION, at=datetime.now().strftime('%Y-%m-%d %H:%M'), actor='ai',
                     messageId=(self._docs[mid].headers.get('message-id', ('',))[0].strip('<> ') if mid in self._docs else ''))
-        ideas = card.pop('me', None)
+        ideas, changes = card.pop('me', None), card.pop('notes', None)
         memory.put_card(mid, card)
+        sender = row.get('fromEmail') or parseaddr(row.get('from') or '')[1]
         if ideas and card['kind'] != 'ignore':
-            self._about_propose(mid, ideas, self._internal(row.get('fromEmail') or parseaddr(row.get('from') or '')[1]), me_refs)
+            self._about_propose(mid, ideas, self._internal(sender), me_refs)
+        if changes and card['kind'] != 'ignore':
+            self._notes_learn(mid, changes, sender, self._internal(sender), note_refs)
         if card.get('facts') and card['kind'] != 'ignore' and self.prefs()['memoryFacts']:
             self._remember(mid, card, row, refs)
         month = datetime.now().strftime('%Y-%m')
@@ -4439,21 +4456,280 @@ class MailBackend:
         from coremail_desktop.memory.profile import entries
         return entries(self._memory().get('profile'))
 
-    def _about(self, projects=True, numbered=False):
+    def _about(self, projects=True, numbered=False, seen=None, refs_out=None):
         """The 关于我 text for an AI call's system prompt ('' without one). projects: add the
         project list (理解新邮件 lists it itself); numbered: lines carry their A1… refs, for
-        the calls that may propose a change (理解新邮件, 问鸿雁's remember_me)."""
+        the calls that may propose a change (理解新邮件, 问鸿雁's remember_me). The 资料 catalog
+        follows (Me3); seen ({'addresses', 'text'}: the mail at hand) attaches the notes it
+        matches (Me4); refs_out receives the catalog's {'N1': note id}."""
         from coremail_desktop.memory.profile import entries, prompt
         if self.memory is None:
             return ''
         try:
-            return prompt(entries(self.memory.get('profile')), self._projects() if projects else (), numbered)
+            about = prompt(entries(self.memory.get('profile')), self._projects() if projects else (), numbered)
         except AppError:
-            return ''  # A help only: no AI call fails for want of it.
+            about = ''  # A help only: no AI call fails for want of it.
+        return '\n\n'.join(t for t in (about, self._notes_prompt(seen, refs_out)) if t)
 
-    def _with_about(self, messages, projects=True, numbered=False):
+    def _with_about(self, messages, projects=True, numbered=False, seen=None, refs_out=None):
         from coremail_desktop.memory.profile import with_profile
-        return with_profile(messages, self._about(projects, numbered))
+        return with_profile(messages, self._about(projects, numbered, seen, refs_out))
+
+    def _seen(self, documents=(), addresses=(), text=''):
+        """What a call's mail shows for matching 资料: everyone on it but the user, and the subject."""
+        own = {a.casefold() for a in [self.account or '', *self.identities] if a}
+        found, subjects = list(addresses), [text] if text else []
+        for document in documents:
+            if document is None:
+                continue
+            found += [a for _, a in getaddresses([', '.join(document.headers.get(k, ())) for k in ('from', 'to', 'cc')])]
+            subjects.append(', '.join(document.headers.get('subject', ())))
+        return {'addresses': [a for a in dict.fromkeys(a.casefold() for a in found if '@' in a) if a not in own][:100],
+                'text': ' '.join(subjects)[:500]}
+
+    # 关于我 · 资料 (Me3–Me5, memory/notes.py): reference notes kept in the 工作记忆 store.
+    # The AI writes them from mail at once (each change undoable); the user's lines and
+    # locked notes it never changes. One lock: the page, the 理解层 and 问鸿雁 all write.
+    def _notes_items(self):
+        from coremail_desktop.memory.notes import notes
+        return notes(self.memory.get('notes')) if self.memory is not None else []
+
+    def _notes_change(self, change):
+        """change(items) -> new items (or (items, extra)), written under the lock -> extra."""
+        lock = self.__dict__.setdefault('_notes_lock', threading.RLock())
+        with lock:
+            out = change(self._notes_items())
+            items, extra = out if isinstance(out, tuple) else (out, None)
+            self._memory().set('notes', items)
+            return extra
+
+    def _notes_prompt(self, seen=None, refs_out=None):
+        from coremail_desktop.memory import notes as N
+        try:
+            items = self._notes_items()
+            numbered = N.refs(items)
+            attached, related = N.match(items, seen) if seen else ([], [])
+            if refs_out is not None:
+                refs_out.update(numbered)
+            text = N.prompt(items, attached, related)
+            if attached:
+                self._notes_change(lambda now: N.touch(now, attached))
+            return text
+        except AppError:
+            return ''
+
+    def _note_read(self, note_id):
+        """read_note (问鸿雁): the note's text, counted as used."""
+        from coremail_desktop.memory import notes as N
+        items = self._notes_items()
+        found = next((n for n in N.current(items) if n['id'] == note_id), None)
+        if found is None:
+            raise AppError('NOTE_INVALID')
+        self._notes_change(lambda now: N.touch(now, [note_id]))
+        return found['title'], N.read(items, 'N1', {'N1': note_id})[1]
+
+    def _note_write(self, change, refs):
+        """save_note (问鸿雁, Me5): the user asked for it, so it is written at once as theirs.
+        -> {'note', 'title', 'logs', counts}; logs undo it in one go."""
+        from coremail_desktop.memory import notes as N
+
+        def write(items):
+            before = {n['id']: {e['id'] for e in n.get('log') or []} for n in items}
+            items, result = N.apply(items, change, 'user', numbered=refs)
+            found = next((n for n in items if n['id'] == result['note']), None)
+            logs = [e['id'] for e in (found or {}).get('log') or [] if e['id'] not in before.get(result['note'], set())]
+            return items, {**result, 'title': found['title'] if found else '', 'logs': logs}
+        return self._notes_change(write)
+
+    def _notes_learn(self, mid, changes, sender, inside, refs):
+        """理解新邮件 (Me4): the card's notes changes written at once (at most MAIL_NOTES per mail)."""
+        from coremail_desktop.memory import notes as N
+        if not changes or not self.prefs()['notesFromMail']:
+            return
+
+        def write(items):
+            gone = self.memory.get('notesGone') or []
+            for change in changes[:N.MAIL_NOTES]:
+                items, _ = N.apply(items, change, 'ai', mid, inside, sender, refs, gone)
+            return items
+        try:
+            self._notes_change(write)
+        except AppError:
+            pass  # Never in the way of the card itself.
+
+    def notes_list(self):
+        """The 资料 page: current and archived notes, AI 最近整理 (7 days), the switch."""
+        from coremail_desktop.memory import notes as N
+        items = self._notes_items()
+        numbered = {v: k for k, v in N.refs(items).items()}
+        catalog = N.prompt(items)
+        shown = sum(1 for line in catalog.split('\n') if re.match(r'^- N\d+ ', line))
+        rows = sorted(items, key=lambda n: (n.get('folder') or '￿', n['title'].casefold()))
+        return {'notes': [{**N.view(n), 'ref': numbered.get(n['id'], '')} for n in rows], 'recent': N.recent(items)[:100],
+                'cut': len(N.current(items)) - shown, 'on': self.prefs()['notesFromMail'], 'max': N.MAX_NOTES, 'body': N.BODY}
+
+    def note_save(self, id='', title='', folder='', about='', match=None, text=''):
+        from coremail_desktop.memory import notes as N
+        if not isinstance(id, str) or not isinstance(text, str) or len(text) > N.BODY * 2 or not isinstance(match, (dict, type(None))):
+            raise AppError('NOTE_INVALID')
+        saved = self._notes_change(lambda items: N.save(items, id, title, folder, about, match, text))
+        return {**self.notes_list(), 'saved': saved['id']}
+
+    def note_remove(self, id=''):
+        """删除 (only the user): a note the AI made from mail is not made again from the same
+        domain within GONE_DAYS."""
+        from coremail_desktop.memory import notes as N
+
+        def drop(items):
+            items, gone = N.remove(items, id)
+            if gone.get('src') == 'mail':
+                domains = gone['match'].get('domains') or []
+                self.memory.set('notesGone', ((self.memory.get('notesGone') or []) + [{'title': gone['title'], 'domain': domains[0] if domains else '',
+                                                                                       'at': time.time()}])[-100:])
+            return items
+        self._notes_change(drop)
+        return self.notes_list()
+
+    def note_state(self, id='', archived=None, locked=None, checked=False):
+        """归档 / 恢复, 只由我维护, 仍然有效."""
+        from coremail_desktop.memory import notes as N
+        if not all(v is None or isinstance(v, bool) for v in (archived, locked, checked)):
+            raise AppError('NOTE_INVALID')
+
+        def change(items):
+            if archived is not None:
+                items = N.archive(items, id) if archived else N.unarchive(items, id)
+            if locked is not None:
+                items = N.lock(items, id, locked)
+            return N.check(items, id) if checked else items
+        self._notes_change(change)
+        return self.notes_list()
+
+    def note_undo(self, note='', logs=()):
+        """撤销 one change of AI 最近整理, or all of one save_note answer (logs: newest last)."""
+        from coremail_desktop.memory import notes as N
+        if not isinstance(logs, list) or not 0 < len(logs) <= 40 or not all(isinstance(i, str) for i in logs):
+            raise AppError('NOTE_INVALID')
+
+        def undo(items):
+            for log_id in reversed(logs):
+                if not any(n['id'] == note for n in items):
+                    break  # The note it made is gone with the first undo.
+                items, gone = N.undo(items, note, log_id)
+                if gone and gone['domain']:
+                    self.memory.set('notesGone', ((self.memory.get('notesGone') or []) + [gone])[-100:])
+            return items
+        self._notes_change(undo)
+        return self.notes_list()
+
+    def note_stale(self, note='', stale='', fix=False):
+        """可能过时: 按邮件改 (fix) or 不是过时."""
+        from coremail_desktop.memory import notes as N
+        if not isinstance(fix, bool):
+            raise AppError('NOTE_INVALID')
+        self._notes_change(lambda items: N.stale_fix(items, note, stale) if fix else N.stale_drop(items, note, stale))
+        return self.notes_list()
+
+    def note_import(self, text=''):
+        """导入 .md (the shell reads the file): one note, every line the user's."""
+        from coremail_desktop.memory import notes as N
+        if not isinstance(text, str) or len(text) > 64 * 1024:
+            raise AppError('NOTE_IMPORT')
+        try:
+            made = N.from_md(text)
+        except AppError as error:
+            raise AppError('NOTE_FULL' if error.code == 'NOTE_FULL' else 'NOTE_IMPORT') from None
+
+        def add(items):
+            if len(N.current(items)) >= N.MAX_NOTES:
+                raise AppError('NOTE_FULL')
+            return items + [made]
+        self._notes_change(add)
+        return {**self.notes_list(), 'saved': made['id']}
+
+    def note_export(self, id=''):
+        """导出 .md -> (file name, text); the shell asks where to save it."""
+        from coremail_desktop.memory import notes as N
+        found = next((n for n in self._notes_items() if n['id'] == id), None) if isinstance(id, str) else None
+        if found is None:
+            raise AppError('NOTE_INVALID')
+        return re.sub(r'[\\/:*?"<>|\s]+', '_', found['title']).strip('_')[:60] + '.md', N.to_md(found)
+
+    # Me5: 从最近 30 天邮件整理 — the page runs it mail by mail (and can stop), like the 理解层.
+    BACKFILL_DAYS, BACKFILL_TOKENS = 30, 2500  # Tokens per mail, for the estimate shown first.
+
+    def notes_backfill_plan(self):
+        """-> {ids (newest first), missing (bodies to download first), tokens}: received mail of
+        the last 30 days, not 可以忽略, encrypted only when allowed for all."""
+        if self.memory is None or self.cache is None:
+            raise AppError('MEMORY_UNAVAILABLE')
+        self._ai()
+        folders = self._folders or self.cache.get('folders') or []
+        roles = {f['id']: f.get('role') for f in folders}
+        cutoff = time.time() - self.BACKFILL_DAYS * 86400
+        rows = self.cache.matching(lambda r: not r.get('mailbox') and r['fid'] in roles and roles[r['fid']] not in UNDERSTAND_SKIP
+                                   and (r.get('ts') or 0) >= cutoff and not r['flags'].get('draft'))
+        rows = [r for r in rows if (self.memory.card(r['id']) or {}).get('kind') != 'ignore'
+                and (not r['flags'].get('encrypted') or self._encrypted_ok(r['id']))]
+        rows.sort(key=lambda r: r.get('ts') or 0, reverse=True)
+        ids = [r['id'] for r in rows[:500]]
+        return {'ids': ids, 'missing': [m for m in ids if self.cache.get_body(m) is None], 'tokens': len(ids) * self.BACKFILL_TOKENS}
+
+    def notes_backfill(self, mid=''):
+        """One mail read for its 资料 only (AI thread) -> {'changed': n notes touched}."""
+        from coremail_desktop.ai import understand
+        mid = str(mid)
+        if self.cache is None or self.cache.summary(mid) is None:
+            raise AppError('AI_MAIL_UNAVAILABLE')
+        self._ai()
+        document, _ = self._ai_document(mid, False)
+        refs, row = {}, self.cache.summary(mid)
+        messages = self._with_about(understand.notes_messages(document, self.display_name, row.get('date') or ''),
+                                    projects=False, seen=self._seen([document]), refs_out=refs)
+        content, _ = self._ai_call(messages, max_tokens=understand.NOTES_TOKENS + 300, json_mode=True)
+        changes = understand.parse_notes_only(content)
+        sender = row.get('fromEmail') or parseaddr(row.get('from') or '')[1]
+        before = len(self._notes_recent_ids())
+        if changes:
+            from coremail_desktop.memory import notes as N
+            gone = self.memory.get('notesGone') or []
+
+            def write(items):
+                for change in changes[:N.MAIL_NOTES]:
+                    items, _ = N.apply(items, change, 'ai', mid, self._internal(sender), sender, refs, gone)
+                return items
+            self._notes_change(write)
+        return {'changed': len(self._notes_recent_ids()) - before}
+
+    def _notes_recent_ids(self):
+        from coremail_desktop.memory import notes as N
+        return [e['log_id'] for e in N.recent(self._notes_items(), days=1)]
+
+    def about_to_note(self, ids=(), note='', title=''):
+        """从「人」移到资料 (Me5): the ticked entries appended to a note (or a new one titled
+        title) as the user's lines; the entries become 以前 (恢复 brings them back)."""
+        from coremail_desktop.memory import notes as N
+        from coremail_desktop.memory.profile import state, trim_past
+        if not isinstance(ids, list) or not 0 < len(ids) <= 80 or not all(isinstance(i, str) for i in ids) or not isinstance(note, str) or not isinstance(title, str):
+            raise AppError('PROFILE_INVALID')
+        items = self._profile_items()
+        moving = [e for e in items if e['id'] in set(ids) and state(e) == 'current']
+        if not moving:
+            raise AppError('PROFILE_INVALID')
+        lines = [e['text'] + (f'（{e["email"]}）' if e.get('email') else '') for e in moving]
+
+        def write(notes_now):
+            numbered = {'N0': note} if note else {}
+            if note and not any(n['id'] == note for n in N.current(notes_now)):
+                raise AppError('NOTE_INVALID')
+            notes_now, result = N.apply(notes_now, {'note': 'N0' if note else '', 'title': title, 'add': lines}, 'user', numbered=numbered)
+            if not result['note']:
+                raise AppError('NOTE_INVALID' if result['full'] == 0 else 'NOTE_FULL')
+            return notes_now, result
+        result = self._notes_change(write)
+        now, gone = time.time(), {e['id'] for e in moving}
+        self._memory().set('profile', trim_past([{**e, 'state': 'past', 'until': now} if e['id'] in gone else e for e in items]))
+        return {**self.about_me(), 'note': result['note'], 'added': result['added']}
 
     def _about_refs(self):
         """{'A1': entry id}: the numbering _about(numbered=True) sent."""

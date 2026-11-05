@@ -325,7 +325,7 @@ async function renderMe() {
     const items = d.entries.filter((e) => e.group === g.key && e.state === 'current');
     const past = d.entries.filter((e) => e.group === g.key && e.state === 'past');
     $('#me-' + g.key).innerHTML = `<div class="me-head"><b>${esc(g.title)}</b><span class="muted small">${items.length ? `${items.length} 条` : ''}` +
-      `${g.left ? `，太长，AI 只看到前 ${items.length - g.left} 条` : ''}</span><span class="spacer"></span>` +
+      `${g.left ? `，太长，AI 只看到前 ${items.length - g.left} 条${g.key === 'people' ? '；客户名单这类可以勾选后「移到资料」' : ''}` : ''}</span><span class="spacer"></span>` +
       (items.length > 1 ? `<button class="btn ghost sm" data-me-all="${g.key}" title="选中这一组的全部条目，再在上面点「删除所选」">全选</button>` : '') +
       `<button class="btn ghost sm" data-me-add="${g.key}">添加</button></div>` +
       (items.length ? '<ul class="uc-rule-list me-list">' + items.map((e) => `<li data-me="${esc(e.id)}">` +
@@ -446,7 +446,9 @@ function meBulk() {
   bar.classList.toggle('hidden', !n);
   if (!n) { bar.innerHTML = ''; return; }
   bar.innerHTML = `<span>已选 ${n} 条</span><span class="spacer"></span><button class="btn ghost sm" id="me-bulk-none">取消选择</button>` +
+    '<button class="btn ghost sm" id="me-bulk-note" title="名单类内容（某个客户的组织、各模块负责人）放进资料：处理相关邮件时才带给 AI">移到资料…</button>' +
     `<button class="btn sm danger" id="me-bulk-del">删除所选</button>`;
+  $('#me-bulk-note').onclick = () => meToNote([...ME.picked]);
   $('#me-bulk-none').onclick = () => { ME.picked.clear(); $$('[data-me-tick]').forEach((c) => { c.checked = false; }); meBulk(); };
   $('#me-bulk-del').onclick = async () => {
     if (!await confirmDialog(`删除 ${n} 条？`, '删除后 AI 就不再参考这些条目；不能撤销，需要时可以重新添加。', '删除')) return;

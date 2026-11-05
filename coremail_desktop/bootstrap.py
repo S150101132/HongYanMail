@@ -152,6 +152,8 @@ def run_app(demo=False,minimized=False,eml=None):
         from .app.demo import DemoNetProbe
         backend.net_probe=DemoNetProbe(backend)
         backend.login('https://demo.invalid/coremail/','demo@example.invalid','demo',True)
+        from .app.demo import seed_notes
+        seed_notes(backend)
     else:
         from .crypto.service import CryptoService
         try:
