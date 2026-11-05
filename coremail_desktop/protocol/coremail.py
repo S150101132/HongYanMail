@@ -99,6 +99,12 @@ class DesktopSession(CoremailSession):
         if func not in self.ALLOWED: raise AppError('RPC_NOT_ALLOWED')
         raw,_ = self._fetch(Request(self._rpc_url(func,**parameters),headers={'Accept':'image/*,text/x-json'}))
         return raw
+    def get_part(self,mid,part,mboxa=''):
+        """One decoded part of a mail (mbox:getMessageData {mid, part}); the query carries
+        mboxa like webmail's mbox-data URLs. A refusal answers JSON {"code": ...}."""
+        raw,_ = self._fetch(Request(self._rpc_url('mbox:getMessageData',mid=mid,part=part,**({'mboxa':mboxa} if mboxa else {}))))
+        if re.match(rb'\s*\{\s*"code"\s*:',raw[:64]): raise AppError('MESSAGE_UNAVAILABLE')
+        return raw
     def push_credentials(self):
         """Everything the push channel needs, or None when push is off or signed out.
 
@@ -356,6 +362,23 @@ class CoremailAdapter:
         message = BytesParser(policy=policy.default).parsebytes(raw)
         if not message.get('From') or not any(message.get(k) for k in ('To','Subject','Message-ID','Date')): raise AppError('MESSAGE_UNAVAILABLE')
         return raw
+    # A mail too large to download whole is read part by part, as webmail does: verified
+    # read-only 2026-11-03 (analysis/large-message-shape-2026-11-03.json). readMessage
+    # {id, markRead:false} lists the parts without content and leaves the mail unread:
+    # var {subject, from[], to[], cc[], sentDate, html/text {id, contentType, estimateSize},
+    # attachments [{id, filename, contentType, contentId?, estimateSize}]}; getMessageData
+    # {mid, part} answers one part decoded.
+    def read_structure(self, message_id, mboxa=''):
+        var = self._call('mbox:readMessage', {'id':message_id,'markRead':False,**_box(mboxa)}, True).get('var')
+        if not isinstance(var,dict): raise AppError('INVALID_RESPONSE')
+        return var
+    def fetch_part(self, message_id, part, mboxa=''):
+        if self._session is None: raise AppError('NOT_AUTHENTICATED')
+        for attempt in range(3):
+            try: return self._session.get_part(message_id, str(part), **_box(mboxa))
+            except (CoremailError,AppError) as error:
+                if error.code in ('TRANSPORT_ERROR','NETWORK_ERROR','TLS_ERROR') and attempt < 2: continue
+                raise AppError(error.code) from None
     # Webmail's advanced search form (X.03931.js: '!mail:searchMessages' picks pattern,
     # fid, subject, from, to, sentDate, attachType, flagType, read, dealings ...).
     # Verified read-only 2026-10-18 (analysis/contacts-search-shape-2026-10-18.json):

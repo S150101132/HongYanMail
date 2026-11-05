@@ -582,7 +582,13 @@ function listItems() {
   return conversations(rows);
 }
 // The whole conversation once fetched (newest first), else the loaded rows of it.
-function threadRows(item) { return (item.key && S.thread.get(item.key)) || item.rows; }
+// A list refresh replaces S.rows with new objects, so rows also in the list resolve to the
+// current ones: flags changed on opening then show in the conversation too.
+function threadRows(item) {
+  const rows = item.key && S.thread.get(item.key); if (!rows) return item.rows;
+  const live = new Map(S.rows.map((r) => [r.id, r]));
+  return rows.map((r) => live.get(r.id) || r);
+}
 function threadSize(item) { return item.key ? Math.max(item.ids.length, S.counts.get(item.id) || 0, threadRows(item).length) : item.ids.length; }
 function threadOf(id) { return S.items.find((it) => it.key && S.open.has(it.key) && threadRows(it).some((r) => r.id === id)); }
 // A message's summary: loaded in the list, or shown in an expanded conversation (other folders).
@@ -884,6 +890,8 @@ async function selectMessage(id, opts = {}) {
     if (typeof chatMailChanged === 'function') chatMailChanged();
     if (READER_MID) { document.title = (m.subject || '（无主题）') + ' · 鸿雁'; if (m.markedRead) notifyMain({ kind: 'flags', id, flags: { read: true } }); }
     if (m.markedRead && summary && !early) showRead(true);
+    // A sync while the body loaded (slow for large mail) brought the row back unread from the server.
+    else if (m.markedRead) { const now = rowOf(id); if (now && !now.flags.read) { now.flags.read = true; renderList(); } }
     else if (early && !m.markedRead && !(m.flags || {}).read) showRead(false);
   } catch (err) {
     if (token !== openToken) return;

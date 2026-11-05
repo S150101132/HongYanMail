@@ -216,6 +216,25 @@ def _schedule_ms(iso):
 SENT_GAP = timedelta(minutes=30)
 
 
+RAW_LIMIT = 64 * 1024 * 1024  # The transport refuses a larger answer; such mail is read part by part.
+INLINE_LIMIT = 5 * 1024 * 1024  # A larger picture the body shows stays a listed attachment.
+PARTED = 'server-parts'  # raw_digest of a document read part by part: attachments are fetched when asked.
+
+
+def _decode_body(data):
+    """A body part from mbox:getMessageData, which drops the part's charset: UTF-8, else
+    the charset the HTML names, else GB18030 (the usual one for Chinese mail)."""
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError:
+        pass
+    named = re.search(rb'''charset=["']?([A-Za-z0-9_-]{2,20})''', data[:4096])
+    try:
+        return data.decode(named.group(1).decode('ascii') if named else 'gb18030', errors='replace')
+    except LookupError:
+        return data.decode('gb18030', errors='replace')
+
+
 def _sent_date(header_date, received):
     """The sender's Date header as a server-zone string, when it is SENT_GAP or more away
     from the server's received time (a mail held on the way); otherwise ''."""
@@ -826,10 +845,56 @@ class MailBackend:
     def _document(self, mid):
         if mid in self._docs:
             return self._docs[mid]
-        document = self._parse(self._raw(mid), mid)
+        large = not self._local_only(mid) and ((self.cache.summary(mid) or {}).get('size') or 0) > RAW_LIMIT
+        if large and self.cache.get_body(mid) is None:
+            document = self._parted_document(mid)
+        else:
+            try:
+                document = self._parse(self._raw(mid), mid)
+            except AppError as error:
+                if error.code != 'RESPONSE_TOO_LARGE' or self._local_only(mid):
+                    raise
+                document = self._parted_document(mid)
         if document.encryption_state != 'locked':
             self._docs = {mid: document, **dict(list(self._docs.items())[:7])}
         return document
+
+    def _parted_document(self, mid):
+        """A mail whose source is over the download limit (large attachments), read part by
+        part as webmail does: the body and the pictures it shows now, each attachment only
+        when opened or saved. Encrypted mail can only be read whole, so it stays refused."""
+        from coremail_desktop.mime.parser import IMAGE_TYPES
+        from coremail_desktop.mime.sanitizer import html_to_text, normalize_cid, sanitize_rich_html
+        from coremail_desktop.models import AttachmentInfo, MessageDocument
+        remote, box = self._locate(mid)
+        args = self._box_args(box)
+        var = self._online(self.adapter.read_structure, remote, **args)
+        fetch = lambda part: self._online(self.adapter.fetch_part, remote, str(part), **args)
+        body = lambda info: _decode_body(fetch(info['id'])) if isinstance(info, dict) and info.get('id') is not None else ''
+        source, text = body(var.get('html')), body(var.get('text'))
+        if not source and not text:
+            raise AppError('RESPONSE_TOO_LARGE')
+        shown = {normalize_cid(ref) for ref in re.findall(r'''cid:([^"'\s>)]+)''', source)}
+        resources, attachments = {}, []
+        for item in var.get('attachments') or []:
+            if not isinstance(item, dict) or item.get('id') is None:
+                continue
+            kind = str(item.get('contentType') or 'application/octet-stream').lower()
+            size = item.get('estimateSize') if type(item.get('estimateSize')) is int else None
+            cid = normalize_cid(str(item.get('contentId') or ''))
+            if cid and cid in shown and kind in IMAGE_TYPES and (size or 0) <= INLINE_LIMIT:
+                try:
+                    resources[cid] = (kind, fetch(item['id']))
+                    continue
+                except AppError:
+                    pass  # The picture stays listed; the body shows without it.
+            attachments.append(AttachmentInfo(str(item['id']), str(item.get('filename') or '未命名附件'), kind, size))
+        names = lambda key: tuple(str(v) for v in (var.get(key) or []) if v)
+        headers = {key: names(key) for key in ('from', 'to', 'cc') if names(key)}
+        if var.get('subject'):
+            headers['subject'] = (str(var['subject']),)
+        html_body = sanitize_rich_html(source, resources) if source else None
+        return MessageDocument(mid, PARTED, text or html_to_text(html_body or ''), html_body, attachments, headers, resources)
 
     def open_message(self, mid, mark_read=None):
         document = self._document(mid)
@@ -900,6 +965,9 @@ class MailBackend:
             return (found[1] or 'invite.ics'), 'text/calendar', found[0]
         data = document.attachment_payloads.get(part)
         info = next((a for a in document.attachments if a.part_id == part), None)
+        if data is None and info is not None and document.raw_digest == PARTED:
+            remote, box = self._locate(mid)
+            data = self._online(self.adapter.fetch_part, remote, part, **self._box_args(box))
         if data is None or info is None:
             raise AppError('MESSAGE_UNAVAILABLE')
         return info.name, info.media_type, data
