@@ -44,6 +44,21 @@ class SearchMoveTests(unittest.TestCase):
             with self.assertRaises(Exception): a.search_messages(query,offset)
         self.assertEqual(len(a._session.requests),1)
 
+    def test_search_dates_are_riyadh_time_like_the_list(self):
+        # The form route takes no tz header: its dates come in the account's zone (Asia/Shanghai on the
+        # deployment), 5 hours ahead of listMessages. A sent mail cached from a thread search showed
+        # 16:50 for a mail sent at 11:50 Riyadh time (2026-11-08).
+        class ZoneSession(SearchSession):
+            def _fetch(self,request):
+                self.requests.append(request)
+                if 'user%3AgetAttrs' in request.full_url or 'user:getAttrs' in request.full_url:
+                    return b'{"code":"S_OK","var":{"time_zone":"Asia/Shanghai"}}',request.full_url
+                return b'{"code":"S_OK","total":1,"var":[{"id":"a","fid":3,"subject":"Re","from":["a@example.test"],"flags":{},"date":"2026-11-08 16:50:12"}]}',request.full_url
+        a=CoremailAdapter(); a._session=ZoneSession()
+        self.assertEqual(a.search_messages('Re',0)['messages'][0].date_text,'2026-11-08 11:50:12')
+        a.search_messages('Re',0)
+        self.assertEqual(sum('getAttrs' in r.full_url for r in a._session.requests),1)  # The zone is asked once.
+
     def test_move_validates_destination_and_requires_affected_message(self):
         a=CoremailAdapter(); a._session=MoveSession()
         self.assertTrue(callable(getattr(a,'move_message',None)))

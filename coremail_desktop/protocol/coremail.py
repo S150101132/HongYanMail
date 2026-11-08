@@ -230,6 +230,14 @@ def account_zone(name):
         return timezone(timedelta(hours=hours if match.group(1)=='+' else -hours))
     raise AppError('SCHEDULE_ZONE_UNSUPPORTED')
 
+DATE_KEYS=('date','receivedDate','sentDate')
+
+def _in_response_zone(text,zone):
+    """A server date written in zone, rewritten in RESPONSE_ZONE; anything unreadable stays as it is."""
+    try: moment=datetime.strptime(str(text)[:19],'%Y-%m-%d %H:%M:%S').replace(tzinfo=zone)
+    except ValueError: return text
+    return moment.astimezone(RESPONSE_ZONE).strftime('%Y-%m-%d %H:%M:%S')
+
 def _schedule_at(item,flags):
     if not flags.get('scheduleDelivery'): return None
     try: moment=datetime.strptime(str(item.get('sentDate','')),'%Y-%m-%d %H:%M:%S').replace(tzinfo=RESPONSE_ZONE)
@@ -414,12 +422,27 @@ class CoremailAdapter:
         rows=response.get('var'); total=response.get('total')
         if not isinstance(rows,list) or type(total) is not int or total<0: raise AppError('INVALID_RESPONSE')
         messages=[]
+        # The form route takes no tz header: its dates are in the account's zone (Asia/Shanghai on the
+        # deployment), not RESPONSE_ZONE like every JSON-RPC list; written as the lists write them.
+        zone=self._search_zone() if any(isinstance(i,dict) and any(i.get(k) for k in DATE_KEYS) for i in rows) else None
         for item in rows:
             if not isinstance(item,dict) or not isinstance(item.get('id'),str) or not item['id'] or not isinstance(item.get('fid'),(int,str)) or not isinstance(item.get('flags',{}),dict): raise AppError('INVALID_RESPONSE')
             sender=item.get('from','')
             if isinstance(sender,list): sender=', '.join(str(x) for x in sender)
+            if zone: item={**item,**{k:_in_response_zone(item[k],zone) for k in DATE_KEYS if item.get(k)}}
             messages.append(_summary(item,str(item['fid']),sender))
         return {'messages':messages,'total':total}
+    def _search_zone(self):
+        """The account's zone for search dates; None (dates as written) when it has no fixed offset."""
+        try: return self._account_zone()
+        except AppError as error:
+            if error.code!='SCHEDULE_ZONE_UNSUPPORTED': raise
+            return None
+    def _account_zone(self):
+        if self._zone is None:
+            value=self._call('user:getAttrs',{'optionalAttrIds':['time_zone']},True).get('var')
+            self._zone=account_zone(value.get('time_zone') if isinstance(value,dict) else None)
+        return self._zone
     def move_message(self,message_id,folder_id,mboxa=''):
         if not isinstance(message_id,str) or not message_id or not isinstance(folder_id,str) or not folder_id: raise AppError('INVALID_MAIL_ACTION')
         if folder_id not in {folder.remote_id for folder in self.list_folders(mboxa)}: raise AppError('INVALID_MAIL_ACTION')
@@ -580,11 +603,8 @@ class CoremailAdapter:
                 **({'requestReadReceipt':True} if getattr(draft,'request_receipt',False) else {})}
     def _schedule_text(self,draft):
         """The draft's UTC moment as scheduleDate text in the account's zone."""
-        if self._zone is None:
-            value=self._call('user:getAttrs',{'optionalAttrIds':['time_zone']},True).get('var')
-            self._zone=account_zone(value.get('time_zone') if isinstance(value,dict) else None)
         moment=datetime.strptime(draft.schedule_at,'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-        return moment.astimezone(self._zone).strftime('%Y-%m-%d %H:%M:%S')
+        return moment.astimezone(self._account_zone()).strftime('%Y-%m-%d %H:%M:%S')
     def create_compose(self, draft):
         from coremail_desktop.compose.inline import extract_inline, fill_inline
         self._attrs(draft)  # Validate before creating a server-side session.
@@ -798,10 +818,7 @@ class CoremailAdapter:
         return True
     def account_now(self):
         """The current time in the account's zone, as the server writes times."""
-        if self._zone is None:
-            value=self._call('user:getAttrs',{'optionalAttrIds':['time_zone']},True).get('var')
-            self._zone=account_zone(value.get('time_zone') if isinstance(value,dict) else None)
-        return datetime.now(timezone.utc).astimezone(self._zone).strftime('%Y-%m-%d %H:%M:%S')
+        return datetime.now(timezone.utc).astimezone(self._account_zone()).strftime('%Y-%m-%d %H:%M:%S')
     def list_tags(self,mboxa=''):
         return self._call('mbox:listTags',{**_box(mboxa)},True).get('var') or []
     def manage_tags(self,op,payload):
