@@ -1,5 +1,5 @@
 """理解层 M1: cards (prompt, checks), correction rules, the encrypted-mail setting, the
-background round, 待我处理 / 需要知道 and the store. Demo adapter and fake chat clients
+background round, 要我做 / 知会 and the store. Demo adapter and fake chat clients
 only; nothing leaves."""
 import json
 import unittest

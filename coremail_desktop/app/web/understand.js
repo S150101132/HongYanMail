@@ -1,13 +1,13 @@
 'use strict';
 /* 鸿雁 · 理解新邮件 (理解层 M1): the AI reads every received mail once in the background and
-   keeps a card — 要我做 / 要我知道 / 可以忽略, a one-line 要点, what is asked and by when.
-   Here: the list's 要点 and its 要我做 / 知会 mark, the 等回复 view, the reader's strip, corrections and
+   keeps a card — 要我做 / 知会 / 可以忽略, a one-line 要点, what is asked and by when.
+   Here: the list's 要点 and its 要我做 / 知会 mark, the 在等别人 mail view, the reader's strip, corrections and
    their rules, the background rounds and the settings. Cards are plain text only (esc).
    Uses app.js globals; app.js asks UC for a row's extras, its group, the empty text and
    menu items. */
 
 const UC = window.UC = { status: null, cards: new Map(), busy: false };  // cards: mid -> card, or null (asked, none)
-const UC_KIND = { act: '要我做', know: '要我知道', ignore: '可以忽略' };
+const UC_KIND = { act: '要我做', know: '知会', ignore: '可以忽略' };
 const UC_ANSWERED = { reply: '回复', forward: '转发' };  // R3a: what went out for a 要我做 mail.
 const UC_SKIP = ['AI_ENCRYPTED_CONFIRM', 'CERT_LOCKED', 'AI_MAIL_UNAVAILABLE', 'AI_BAD_RESPONSE'];  // That mail only; go on.
 
@@ -69,13 +69,13 @@ async function ucLoad() {
 const _ucRenderList = renderList;
 renderList = function (...args) { const r = _ucRenderList(...args); ucLoad(); return r; };
 
-// ---------------------------------------------------------------- 等回复 (催办), opened from 今天 → 在等别人
+// ---------------------------------------------------------------- 在等别人的邮件, opened from 今天 → 在等别人
 async function showUnderstand(kind, quiet) {
   if (!quiet || S.local !== 'u-' + kind) {
     S.local = 'u-' + kind; S.search = null; S.filter = 'all'; S.listToken++; S.multi.clear(); renderSelection();
     S.rows = []; S.more = false; S.total = null; $('#search').value = '';
     const f = folderById(S.folderId);
-    $('#list-title').textContent = f ? folderTitle(f) : '等回复';
+    $('#list-title').textContent = f ? folderTitle(f) : '在等别人';
     $('#mail-list').innerHTML = '<div class="skeleton"></div>'.repeat(4);
   }
   const token = S.listToken;
@@ -245,7 +245,7 @@ async function ucAsk() {
   const ai = await api('aiSettings').catch(() => null);
   if (!ai || !ai.ready || S.prefs.understand) return;
   const value = await promptDialog({ title: '让 AI 先把新邮件读一遍？', okText: '开启',
-    body: '<p class="muted">鸿雁会把最近 30 天收到的邮件和以后的新邮件各读一次，分成「要我做」「要我知道」「可以忽略」，在列表里给邮件标上「要我做」「知会」并显示一句话要点，并记下你的项目的进展。</p>' +
+    body: '<p class="muted">鸿雁会把最近 30 天收到的邮件和以后的新邮件各读一次，分成「要我做」「知会」「可以忽略」，在列表里给邮件标上「要我做」「知会」并显示一句话要点，并记下你的项目的进展。</p>' +
       '<p class="muted small">邮件内容会发送到「设置 → AI 助手」中配置的 AI 服务，每月约 45 万 tokens。不会标为已读，不会移动、删除或回复邮件。以后可以在设置中关闭。</p>' +
       '<label class="check"><input id="uc-ask-enc" type="checkbox" checked> 包括加密邮件（可以在设置中排除个别文件夹和发件人）</label>',
     collect: () => ({ encrypted: $('#uc-ask-enc').checked }) });
@@ -285,7 +285,7 @@ async function renderUcSettings() {
   $('#uc-gist').checked = S.prefs.listGist !== false;
   $('#mem-facts').checked = !!S.prefs.memoryFacts;
   $('#uc-status').textContent = !st.available ? (st.unavailable || '无法打开本机的理解数据，「理解新邮件」暂不可用。') : st.state !== 'on' ? '未开启。' :
-    `本月已理解 ${st.month} 封邮件；要我做 ${st.counts.act} 封，知会 ${st.counts.know} 封未读，等回复 ${st.counts.wait || 0} 封` +
+    `本月已理解 ${st.month} 封邮件；要我做 ${st.counts.act} 封，知会 ${st.counts.know} 封未读，在等别人 ${st.counts.wait || 0} 封` +
     (st.failed ? `；${st.failed} 封这次无法读取（例如证书未解锁），已跳过` : '') + '。';
   const rules = st.available ? await api('understandRules').catch(() => []) : [];
   const who = (r) => r.sender ? (r.sender.startsWith('@') ? `来自 ${r.sender}` : `发件人 ${r.sender}`) : '任何发件人';

@@ -230,7 +230,7 @@ class MailboxTools:
         return {'people': people}, f'查找联系人「{name}」：{len(people)} 人'
 
 
-# 个人工作助理 (W1): the task center and 待我处理, read-only. Tasks are T12 (their number in
+# 个人工作助理 (W1): the task center and 要我做, read-only. Tasks are T12 (their number in
 # the task center); their fields are data like mail text, never instructions.
 TASK_ROWS = 40
 TASK_VIEWS = ('open', 'done', 'canceled', 'all')
@@ -326,7 +326,7 @@ MAIL_SPEC = {'type': 'function', 'function': {
         'summary': {'type': 'string', 'description': '一句话说明要做什么，显示在卡片上'}}, 'required': ['action']}}}
 PENDING_SPEC = {'type': 'function', 'function': {
     'name': 'pending_mail',
-    'description': '「要我做」（原「待我处理」）：AI 读过新邮件后认为需要用户本人做事的邮件（要做什么、截止日期、项目），已经关联到任务的不列出。',
+    'description': '「要我做」：AI 读过新邮件后认为需要用户本人做事的邮件（要做什么、截止日期、项目），已经关联到任务的不列出。',
     'parameters': {'type': 'object', 'properties': {}}}}
 
 # 工作记忆 (M2) and 催办 (M3): read-only like pending_mail.
@@ -340,7 +340,7 @@ MEMORY_SPEC = {'type': 'function', 'function': {
         'history': {'type': 'boolean'}}}}}
 FOLLOWUP_SPEC = {'type': 'function', 'function': {
     'name': 'followups',
-    'description': '催办：用户最近 30 天发出、在主送里提了问、几天还没有人回复的邮件（编号、主题、收件人、已等几天）。',
+    'description': '在等别人：用户最近 30 天发出、在主送里提了问、几天还没有人回复的邮件（编号、主题、收件人、已等几天）。',
     'parameters': {'type': 'object', 'properties': {}}}}
 MEMORY_ROWS = 20
 # 关于我 (Me2): 「记住……」 in 问鸿雁 becomes a card; the user's 记住 writes the lines left ticked.
@@ -600,7 +600,7 @@ class AssistantTools(MailboxTools):
         rows = self._followups()
         out = [{'ref': self._ref(r), 'subject': _clip(r.get('subject'), 120) or '（无主题）', 'to': _clip(r.get('toNames'), 120),
                 'date': str(r.get('date') or '')[:16], 'waiting_days': r.get('waiting', 0)} for r in rows[:20]]
-        return {'total': len(rows), 'rows': out}, f'等回复：{len(rows)} 封'
+        return {'total': len(rows), 'rows': out}, f'在等别人：{len(rows)} 封'
 
     def plan_tasks(self, args):
         """A proposal only: checked like the task center's preview and kept for the page's

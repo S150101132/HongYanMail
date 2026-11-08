@@ -1,4 +1,4 @@
-"""个人工作助理 W1–W3: the conversation reads the task center and 待我处理 — task refs, the
+"""个人工作助理 W1–W3: the conversation reads the task center and 要我做 — task refs, the
 "mine" rule, citations of tasks, the task brought along — proposes task changes that run
 only on 执行 (the plan cache), and drafts mail from a task's conversation that the user
 opens, checks and sends. Scripted models only; nothing leaves."""
@@ -25,7 +25,7 @@ def task(i, **values):
 
 
 class Board:
-    """A task center and 待我处理 the tools can read."""
+    """A task center and 要我做 the tools can read."""
     def __init__(self, tasks, pending=None):
         self.tasks, self.pending_rows = {t['id']: t for t in tasks}, pending
 

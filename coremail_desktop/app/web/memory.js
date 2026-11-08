@@ -1,7 +1,7 @@
 'use strict';
 /* 鸿雁 · 工作记忆 (M2) and its uses (M3). The 理解层 remembers the facts of the user's projects
    (backend memory_*); here: the reader's 「这个项目最近」 and task candidate, the project's
-   timeline with corrections, 本周你需要知道的 (on 今天 → 本周概括), 等回复 (催办) with 起草跟进,
+   timeline with corrections, 本周你需要知道的 (on 今天 → 本周概括), 在等别人 with 起草跟进,
    the person popover's extra lines and the project list in 设置 → AI 助手. Facts are plain
    text only (esc). Loaded after understand.js and contacts.js. */
 
@@ -27,7 +27,7 @@ renderUcStrip = function (m) {
   if (wait) {
     lines.push(`<div class="mem-line wait"><i data-icon="clock"></i><span class="uc-text">已等 ${wait.waiting} 天没有回复${wait.toNames ? '（' + esc(wait.toNames) + '）' : ''}</span>` +
       '<button class="btn ghost" data-mem="follow" title="用 AI 起草一封礼貌的跟进邮件（全部回复，由你检查后发送）">起草跟进</button>' +
-      '<button class="btn ghost" data-mem="nofollow" title="从「等回复」中移除">不用跟进</button></div>');
+      '<button class="btn ghost" data-mem="nofollow" title="从「在等别人」中移除">不用跟进</button></div>');
   }
   // 阅读条合并 (R1b): one strip above the mail. The task candidate is a button on it; 这个项目最近
   // opens from its project name and stays open (or closed) for the next mail.
@@ -89,7 +89,7 @@ async function memNoFollow(mid) {
   try {
     await set(false);
     if (UC.wait) UC.wait.delete(mid);
-    toast('已从「等回复」中移除', { ms: 8000, action: { label: '撤销', run: () => set(true).catch(fail) } });
+    toast('已从「在等别人」中移除', { ms: 8000, action: { label: '撤销', run: () => set(true).catch(fail) } });
   } catch (err) { fail(err); }
 }
 

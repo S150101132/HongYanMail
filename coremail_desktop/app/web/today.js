@@ -3,7 +3,7 @@
    own over the list and reader — 36氪's morning brief 9点1氪 (backend daily_news) beside today's
    GitHub Trending, each repository with a short Chinese intro the AI wrote once that day
    (backend trending). The old 今天 sub-pages stay three-pane, reached from the 命令框: 在等别人
-   (催办 and 受阻 tasks), 待我确认 (the task center's suggestions), 本周概括 (memory.js); there a
+   (sent mail nobody answered and 受阻 tasks), 待我确认 (the task center's suggestions), 本周概括 (memory.js); there a
    mail opens in the reader as ever, a task as a short card (记进展 / 完成 / 在任务中心打开).
    Every view keeps S.local 'today'. Loaded last but commands.js. */
 
@@ -240,7 +240,7 @@ afterSave = function (result, quiet) { _tdAfterSave(result, quiet); if (S.local 
 // ucRefreshStatus runs after every correction and every background round of the 理解层.
 const _tdUcRefreshStatus = ucRefreshStatus;
 ucRefreshStatus = function () { if (S.local === 'today' && TD.sub && TD.sub !== 'week') showToday(TD.sub, true); return _tdUcRefreshStatus(); };
-// 等回复 now lives on 今天 → 在等别人.
+// The waiting mail now lives on 今天 → 在等别人.
 const _tdUcOpen = ucOpen;
 ucOpen = function (kind) { return kind === 'wait' ? showToday('wait') : _tdUcOpen(kind); };
 

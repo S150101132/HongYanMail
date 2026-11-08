@@ -106,7 +106,7 @@ if (typeof document !== 'undefined') {
     add('命令', 'ask', '问邮箱', () => showAsk(), ['ai', '提问', '对话', '聊天', 'AI 助手'], 'Ctrl+J');
     add('命令', 'pen', '写邮件', () => startCompose('new'), ['新邮件', '写信', '新建邮件', '发邮件'], 'Ctrl+N');
     if (typeof showToday === 'function') {
-      add('前往', 'clock', '在等别人', () => showToday('wait'), ['等回复', '等对方回复', '催办', '跟进', '受阻']);
+      add('前往', 'clock', '在等别人', () => showToday('wait'), ['等回复', '等对方回复', '催办', '跟进', '受阻']); // 旧叫法也能搜到
       add('前往', 'spark', '待我确认', () => showToday('confirm'), ['待确认', 'AI 建议', '确认建议']);
       if (ucOn() && S.prefs.memoryFacts) add('前往', 'spark', '本周概括', () => showToday('week'), ['本周需要知道', '需要知道', '周报', '本周']);
     }

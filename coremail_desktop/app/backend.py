@@ -289,7 +289,7 @@ SENT_PAGES = 5  # 关于我初版: pages of the sent folder looked at, 100 each,
 # 理解层: which mail is read, how far back and how much per round (design 4.2 / 4.4).
 UNDERSTAND_SKIP = ('sent', 'drafts', 'trash', 'spam', 'virus')
 UNDERSTAND_DAYS, UNDERSTAND_ROUND = 30, 10
-# 催办 (M3): sent mail that asked something of its To recipients and got no reply.
+# 在等别人 (M3): sent mail that asked something of its To recipients and got no reply.
 FOLLOWUP_DAYS, FOLLOWUP_KEEP = 3, 500
 ASKING = re.compile(r'[?？]|请|麻烦|能否|是否|可否|确认|please|could you|can you|kindly|let me know|advise', re.I)
 
@@ -3448,7 +3448,7 @@ class MailBackend:
         self._ask_cancel.set()
         return True
 
-    # 个人工作助理 (W1): what the conversation may read of the task center and 待我处理.
+    # 个人工作助理 (W1): what the conversation may read of the task center and 要我做.
     def _assist_tasks(self, view, query):
         from coremail_desktop.tasks.center import _shown
         from coremail_desktop.tasks.rules import FIELDS
@@ -3470,7 +3470,7 @@ class MailBackend:
         return not owner or OWNER_DEFAULT in owner or any(n.casefold() in owner.casefold() for n in names)
 
     def _assist_pending(self):
-        """待我处理, without the mail already linked to a task."""
+        """要我做, without the mail already linked to a task."""
         linked = {str(link.get('mid')) for link in self._tasks().store.links() if link.get('mid')}
         return [r for r in self.understand_view('act')['rows'] if str(r['id']) not in linked]
 
@@ -4164,7 +4164,7 @@ class MailBackend:
         return found
 
     def understand_view(self, kind='act'):
-        """待我处理 (act: sure, not done; by due date, then newest) or 需要知道 (know: newest
+        """要我做 (act: sure, not done; by due date, then newest) or 知会 (know: newest
         first). Rows are the cached summaries with their card."""
         if kind not in ('act', 'know'):
             raise AppError('UNDERSTAND_INVALID')
@@ -4333,7 +4333,7 @@ class MailBackend:
 
     # 在等别人 (R2a; a sub-page of Trending since G1) ------------------------------------
     def today_waiting(self):
-        """在等别人: sent mail nobody answered (催办) and 受阻 tasks."""
+        """在等别人: sent mail nobody answered and 受阻 tasks."""
         center = self._tasks()
         tasks = [t for t in center.overview('open')['rows'] if t['status'] == '受阻'] if center.status()['mode'] != 'off' else []
         return {'mail': self.followups() if self._understand_on() else [], 'tasks': tasks}
@@ -4937,7 +4937,7 @@ class MailBackend:
                 to = '、'.join(p['name'] or p['email'] for p in _people(r.get('to') or ''))[:80]
                 sent.append({'date': (r.get('date') or '')[:10], 'to': to, 'subject': (r.get('subject') or '')[:120], 'text': body})
         tasks = [(t['id'], str(t.get('system') or ''), str(t.get('content') or '')) for t in sorted(self._open_tasks(), key=lambda t: t['id'])]
-        kinds = {'act': '要我做', 'know': '要我知道', 'ignore': '可以忽略'}
+        kinds = {'act': '要我做', 'know': '知会', 'ignore': '可以忽略'}
         rules = [((r['sender'] or '任何发件人') + (f'，主题含「{r["keyword"]}」' if r['keyword'] else ''), kinds.get(r['kind'], ''))
                  for r in memory.rules.values()]
         from coremail_desktop.memory.profile import GROUPS, current
@@ -5057,7 +5057,7 @@ class MailBackend:
 
     def memory_person(self, email, name=''):
         """人物卡片: what this person is in charge of (owner facts naming them), the latest mail
-        with them, their mail still waiting for me (待我处理) and mine waiting for them (催办)."""
+        with them, their mail still waiting for me (要我做) and mine waiting for them (在等别人)."""
         from coremail_desktop.memory.merge import norm
         email = email.strip().casefold() if isinstance(email, str) else ''
         if not email or len(email) > 200 or '@' not in email or not isinstance(name, str) or len(name) > 100:
@@ -5083,7 +5083,7 @@ class MailBackend:
         return {'on': True, 'about': about[:3], 'owner': owner[:5], 'recent': [light(r) for r in rows[:5]], 'waiting': waiting[:5], 'chase': chase[:5]}
 
     def followups(self):
-        """催办: mail I sent in the last 30 days, at least FOLLOWUP_DAYS ago, that asked
+        """在等别人: mail I sent in the last 30 days, at least FOLLOWUP_DAYS ago, that asked
         something (a question mark or a request word in the subject or preview) of its To
         recipients, with no later mail from anyone else in its conversation and no later one
         of mine. Mail the user said needs no follow-up is left out. Only cached mail counts."""

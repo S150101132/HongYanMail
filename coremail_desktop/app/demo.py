@@ -947,7 +947,7 @@ class DemoAiClient:
             f = (results[-1] if results else {}).get('fields') or {}
             return {'content': f'演示模式：这条任务「{f.get("content", "")[:40]}」现在是{f.get("status", "")}' +
                     (f'，下一步：{f["next"][:40]}' if f.get('next') else '') + f' [{task.group(1)}]\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
-        if 'list_tasks' in offered and re.search(r'任务|要我做|待办|待我处理', question):
+        if 'list_tasks' in offered and re.search(r'任务|要我做|待办', question):
             if not results:
                 return call('list_tasks', {'mine': True})
             if len(results) == 1 and 'pending_mail' in offered:
@@ -958,7 +958,7 @@ class DemoAiClient:
                      for r in (results[1]['rows'] if len(results) > 1 else [])[:3]]
             text = f'演示模式：你负责的未完成任务有 {results[0]["total"]} 条：\n' + '\n'.join(lines) if lines else '演示模式：没有你负责的未完成任务。'
             if mails:
-                text += '\n待我处理的邮件：\n' + '\n'.join(mails)
+                text += '\n要我做的邮件：\n' + '\n'.join(mails)
             return {'content': text + '\n（演示模式由本机生成，没有联网。）', 'tool_calls': []}, 0
         if tools and not results:
             words = re.findall(r'[A-Za-z0-9]+|[一-龥]{2}', question)

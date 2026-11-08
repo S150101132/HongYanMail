@@ -1,6 +1,6 @@
 """理解卡片: each new mail read once in the background -> what it means for the user.
 
-kind: act (要我做), know (要我知道) or ignore (可以忽略), with a one-line gist (and a few-word tag
+kind: act (要我做), know (知会) or ignore (可以忽略), with a one-line gist (and a few-word tag
 for the mail list), what is asked
 of the user and by when, the project, and facts worth remembering (kept for 工作记忆).
 The mail is untrusted like everywhere else (summary.py): visible text only, between a
@@ -36,7 +36,7 @@ SYSTEM_PROMPT = '''你是鸿雁的邮件理解助手，替用户「{me}」读一
 
 kind 三选一：
 - act（要我做）：明确需要用户本人做事——回复、提供资料、确认、审批、参加、完成某项工作。只是抄送给用户、群发通知、对别人提的要求都不算。
-- know（要我知道）：用户需要知道但不用做什么——知会、抄送、别人的周报日报、会议纪要、决定通告、不归用户负责的项目进展（「我关注的项目」默认是 know）。
+- know（知会）：用户需要知道但不用做什么——通知、抄送、别人的周报日报、会议纪要、决定通告、不归用户负责的项目进展（「我关注的项目」默认是 know）。
 - ignore（可以忽略）：系统自动通知、广告营销、自动回复、与用户工作无关的群发公告。
 拿不准时 sure 写 false。
 
