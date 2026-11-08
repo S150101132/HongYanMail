@@ -11,7 +11,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, HTTPRedirectHandler, HTTPCookieProcessor, build_opener
 from urllib.parse import urljoin, urlencode, urlsplit, parse_qs
 from probe.coremail_transport import CoremailSession, CoremailError, SameOriginRedirectHandler, _origin, decode_extended_json
+from coremail_desktop.protocol import mailtime
 from coremail_desktop.protocol.keepalive import KeepAliveHTTPSHandler
+from coremail_desktop.protocol.mailtime import account_zone  # noqa: F401 (callers import it from here)
 from coremail_desktop.models import Folder, MessageSummary
 from coremail_desktop.errors import AppError
 from coremail_desktop.compose.recipients import normalize_recipients
@@ -74,7 +76,7 @@ class DesktopSession(CoremailSession):
         raise AppError(code)
     def call(self,func,payload):
         if func not in self.ALLOWED: raise AppError('RPC_NOT_ALLOWED')
-        request = Request(self._rpc_url(func),data=json.dumps(payload,ensure_ascii=False).encode('utf-8'),headers={'Accept':'text/x-json','Content-Type':'text/x-json; tz="Asia/Riyadh"'})
+        request = Request(self._rpc_url(func),data=json.dumps(payload,ensure_ascii=False).encode('utf-8'),headers={'Accept':'text/x-json','Content-Type':f'text/x-json; tz="{mailtime.STORE_ZONE_NAME}"'})
         raw,_ = self._fetch(request)
         return self._decode_response(raw)
     _last_code=None
@@ -209,40 +211,16 @@ class DesktopSession(CoremailSession):
                                   headers={'Content-Type':'multipart/form-data; boundary='+boundary,'Accept':'text/x-json'}))
         return self._decode_response(raw)
 
-# Dates in responses are written in the zone named by the request's tz header
-# (Asia/Riyadh, UTC+3, no DST): a scheduled draft's sentDate read this way equals
-# the requested moment exactly (verified 2026-10-17).
-RESPONSE_ZONE = timezone(timedelta(hours=3))
-# scheduleDate, however, is read in the account's own time_zone attribute (Asia/Shanghai
-# on the deployment; a UTC+3 string was refused as a past date). Only zones with a
-# fixed offset are listed: without tz data a zone with daylight saving cannot be
-# converted safely, so scheduling is refused there instead of guessed.
-FIXED_ZONES = {'Asia/Shanghai':8,'Asia/Chongqing':8,'Asia/Harbin':8,'Asia/Urumqi':6,'Asia/Hong_Kong':8,'Asia/Macau':8,'Asia/Taipei':8,
-               'Asia/Singapore':8,'Asia/Kuala_Lumpur':8,'Asia/Manila':8,'Asia/Tokyo':9,'Asia/Seoul':9,'Asia/Riyadh':3,'Asia/Dubai':4,
-               'Asia/Karachi':5,'Asia/Kolkata':5.5,'Asia/Calcutta':5.5,'Asia/Dhaka':6,'Asia/Bangkok':7,'Asia/Jakarta':7,'Asia/Ho_Chi_Minh':7,
-               'Europe/Moscow':3,'Africa/Nairobi':3,'UTC':0,'Etc/UTC':0,'GMT':0,'Etc/GMT':0}
-
-def account_zone(name):
-    if isinstance(name,str) and name in FIXED_ZONES: return timezone(timedelta(hours=FIXED_ZONES[name]))
-    match=re.fullmatch(r'(?:GMT|UTC)?([+-])(\d{1,2})(?::?(\d\d))?',name.strip()) if isinstance(name,str) else None
-    if match and int(match.group(2))<=14:
-        hours=int(match.group(2))+int(match.group(3) or 0)/60
-        return timezone(timedelta(hours=hours if match.group(1)=='+' else -hours))
-    raise AppError('SCHEDULE_ZONE_UNSUPPORTED')
-
+# Dates in JSON-RPC responses are written in the zone named by the request's tz header (mailtime's
+# stored zone): a scheduled draft's sentDate read this way equals the requested moment exactly
+# (verified 2026-10-17). scheduleDate, however, is read in the account's own time_zone attribute
+# (a UTC+3 string was refused as a past date): mailtime.account_zone.
 DATE_KEYS=('date','receivedDate','sentDate')
-
-def _in_response_zone(text,zone):
-    """A server date written in zone, rewritten in RESPONSE_ZONE; anything unreadable stays as it is."""
-    try: moment=datetime.strptime(str(text)[:19],'%Y-%m-%d %H:%M:%S').replace(tzinfo=zone)
-    except ValueError: return text
-    return moment.astimezone(RESPONSE_ZONE).strftime('%Y-%m-%d %H:%M:%S')
 
 def _schedule_at(item,flags):
     if not flags.get('scheduleDelivery'): return None
-    try: moment=datetime.strptime(str(item.get('sentDate','')),'%Y-%m-%d %H:%M:%S').replace(tzinfo=RESPONSE_ZONE)
-    except ValueError: return None
-    return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    moment=mailtime.moment(item.get('sentDate',''))
+    return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') if moment else None
 
 def _box(mboxa):
     """The mboxa parameter naming a shared mailbox ('@'+id), or nothing for the user's own.
@@ -423,13 +401,13 @@ class CoremailAdapter:
         if not isinstance(rows,list) or type(total) is not int or total<0: raise AppError('INVALID_RESPONSE')
         messages=[]
         # The form route takes no tz header: its dates are in the account's zone (Asia/Shanghai on the
-        # deployment), not RESPONSE_ZONE like every JSON-RPC list; written as the lists write them.
+        # deployment), not the stored zone like every JSON-RPC list; stored as the lists store them.
         zone=self._search_zone() if any(isinstance(i,dict) and any(i.get(k) for k in DATE_KEYS) for i in rows) else None
         for item in rows:
             if not isinstance(item,dict) or not isinstance(item.get('id'),str) or not item['id'] or not isinstance(item.get('fid'),(int,str)) or not isinstance(item.get('flags',{}),dict): raise AppError('INVALID_RESPONSE')
             sender=item.get('from','')
             if isinstance(sender,list): sender=', '.join(str(x) for x in sender)
-            if zone: item={**item,**{k:_in_response_zone(item[k],zone) for k in DATE_KEYS if item.get(k)}}
+            if zone: item={**item,**{k:mailtime.stored(item[k],zone) for k in DATE_KEYS if item.get(k)}}
             messages.append(_summary(item,str(item['fid']),sender))
         return {'messages':messages,'total':total}
     def _search_zone(self):

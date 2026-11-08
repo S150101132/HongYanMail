@@ -17,7 +17,7 @@ from coremail_desktop.errors import AppError
 from coremail_desktop.tasks import plan, transfer
 from coremail_desktop.tasks.rules import (CANCELED, DATE_FIELDS, DONE, FIELDS, LABEL, OPEN_STATUSES, OWNER_DEFAULT, STATUSES,
                                           append_history, blank_task, check_blocked, check_fields, day, is_day, missing, overdue,
-                                          riyadh_today, sheet_of, text)
+                                          local_today, sheet_of, text)
 
 EDITABLE = tuple(f for f in FIELDS if f not in ('id', 'history'))
 BACKUPS = 14
@@ -37,7 +37,7 @@ class TaskCenter:
         self._daily_backup()
 
     def today(self):
-        return riyadh_today(self.clock())
+        return local_today(self.clock())
 
     def _settings(self):
         return {'folder': '', 'mode': 'off', **(self.store.get('settings') or {})}

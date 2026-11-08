@@ -43,7 +43,13 @@ function initials(name, email) {
 }
 function avatar(el, name, email) { el.textContent = initials(name, email); el.style.background = colorFor(email || name); }
 function avatarHtml(name, email, cls = 'xs') { return `<span class="avatar ${cls}" style="background:${colorFor(email || name)}">${esc(initials(name, email))}</span>`; }
-function parseTs(row) { return row.ts ? new Date(row.ts * 1000) : new Date(String(row.date).replace(' ', 'T')); }
+// 邮件时间 (Z1): mail times arrive as stored Riyadh text (protocol/mailtime.py); the Date shows them
+// where the computer is. The only place the UI reads that text.
+function mailTime(text) {
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(:\d{2})?)?/.exec(String(text || ''));
+  return m ? new Date(`${m[1]}T${m[2] || '00:00'}${m[3] || ':00'}+03:00`) : new Date(NaN);
+}
+function parseTs(row) { return row.ts ? new Date(row.ts * 1000) : mailTime(row.date); }
 function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
 function shortDate(d) {
   if (isNaN(d)) return '';
@@ -925,10 +931,10 @@ function renderMessage(m) {
   const from = m.from[0] || { name: '', email: '' };
   $('#r-from-name').textContent = from.name || from.email; $('#r-from-mail').textContent = from.email ? `<${from.email}>` : '';
   avatar($('#r-avatar'), from.name, from.email);
-  const d = m.date ? new Date(String(m.date).replace(' ', 'T')) : null;
+  const d = m.date ? mailTime(m.date) : null;
   $('#r-date').textContent = d && !isNaN(d) ? longDate(d) : (m.date || '');
   // Held on the way (the backend only sends sentDate for a gap of 30 minutes or more): show when it left.
-  const s = m.sentDate ? new Date(String(m.sentDate).replace(' ', 'T')) : null;
+  const s = m.sentDate ? mailTime(m.sentDate) : null;
   if (s && !isNaN(s) && d && !isNaN(d)) {
     const mins = Math.round(Math.abs(d - s) / 60000), gap = mins >= 60 ? `${Math.floor(mins / 60)} 小时${mins % 60 ? ` ${mins % 60} 分` : ''}` : `${mins} 分钟`;
     const sameDay = s.toDateString() === d.toDateString();

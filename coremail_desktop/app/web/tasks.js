@@ -225,11 +225,11 @@ async function nameOpenTasks(skip) {
 // The timeline: task changes and linked mail, newest first. A change made from mail shows that
 // mail; the latest change (not a new task, not an undo) can be undone.
 function taskTimeline(d) {
-  const mailTime = (s) => { const t = Date.parse(String(s || '').replace(' ', 'T')); return Number.isNaN(t) ? 0 : t / 1000; };
+  const mailAt = (s) => { const t = mailTime(s).getTime(); return Number.isNaN(t) ? 0 : t / 1000; };
   const linkedFrom = new Set(d.events.flatMap((e) => (e.mails || []).map((m) => m.mid)));
   const items = d.events.map((e) => ({ at: e.at || 0, html: eventHtml(e) }))
-    .concat(d.links.filter((l) => !linkedFrom.has(l.mid)).map((l) => ({ at: mailTime(l.date) || l.at || 0, html: `<div class="tk-event tk-mailev">
-      <div class="tk-ev-head"><i data-icon="mail"></i><b>关联邮件</b><span>${esc(String(l.date || '').slice(0, 16))}</span><span class="spacer"></span>
+    .concat(d.links.filter((l) => !linkedFrom.has(l.mid)).map((l) => ({ at: mailAt(l.date) || l.at || 0, html: `<div class="tk-event tk-mailev">
+      <div class="tk-ev-head"><i data-icon="mail"></i><b>关联邮件</b><span>${esc(mailAt(l.date) ? longDate(mailTime(l.date)) : String(l.date || '').slice(0, 16))}</span><span class="spacer"></span>
       <button class="link-btn" data-open="${esc(l.mid)}">打开</button></div><div class="tk-ev-note">${esc(l.subject || '（无主题）')}${l.from ? ' · ' + esc(l.from) : ''}</div></div>` })));
   items.sort((a, b) => b.at - a.at);
   return items.map((i) => i.html).join('') || '<p class="muted">没有记录。</p>';

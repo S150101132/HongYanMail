@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from coremail_desktop.archive import reader
 from coremail_desktop.errors import AppError
+from coremail_desktop.protocol import mailtime
 from coremail_desktop.mime.parser import MAX_DEPTH, _raw_body, _raw_children
 
 TEXT_CHARS = 12000
@@ -48,10 +49,9 @@ def _header(head, name):
 
 def _date(text):
     try:
-        value = parsedate_to_datetime(text)
-        if value.tzinfo is not None:
-            value = value.astimezone()  # Local time, as server rows show it.
-        return value.strftime('%Y-%m-%d %H:%M:%S'), value.timestamp()
+        value = parsedate_to_datetime(text)  # A Date with no zone is read as stored (Riyadh) time.
+        value = value.astimezone(mailtime.STORE_ZONE) if value.tzinfo else value.replace(tzinfo=mailtime.STORE_ZONE)
+        return value.strftime('%Y-%m-%d %H:%M:%S'), value.timestamp()  # Stored text, as server rows carry it.
     except (TypeError, ValueError, IndexError, OverflowError):
         return '', 0.0
 

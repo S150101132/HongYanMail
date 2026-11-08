@@ -17,6 +17,7 @@ from email.utils import format_datetime, formataddr
 from pathlib import Path
 
 from coremail_desktop.errors import AppError
+from coremail_desktop.protocol import mailtime
 
 MAIL_CLASSES = ('ipm.note', 'ipm.schedule.meeting', 'report.ipm.note', 'ipm.outlook.recall', 'ipm.recall')
 # MAPI property tags (MS-OXPROPS).
@@ -225,7 +226,7 @@ def describe(message, props, mid):
         row['size'] = _int(props, SIZE) or row['size']
         return row
     people, when = _people(message, props), _when(props)
-    local = when.replace(tzinfo=timezone.utc).astimezone() if when else None  # Local time, as server rows show it.
+    local = when.replace(tzinfo=timezone.utc).astimezone(mailtime.STORE_ZONE) if when else None  # Stored text, as server rows carry it.
     row = {'id': mid, 'subject': _text(props, SUBJECT), 'from': _shown([people['from']]), 'to': _shown(people[1]),
            'cc': _shown(people[2]), 'date': local.strftime('%Y-%m-%d %H:%M:%S') if local else '',
            'ts': local.timestamp() if local else 0.0, 'messageId': _text(props, MESSAGE_ID).strip('<> '),

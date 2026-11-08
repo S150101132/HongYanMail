@@ -1,7 +1,7 @@
 """The task-management rules of the Saudi-NG task folder (AGENTS.md, 任务管理说明.md)
 as checks and defaults. Pure functions: no storage, no files."""
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 from coremail_desktop.errors import AppError
 
@@ -19,14 +19,13 @@ DONE, CANCELED = '已完成', '已取消'
 OPEN_SHEET, DONE_SHEET, CANCELED_SHEET = '未完成任务', '已完成任务', '已取消任务'
 OWNER_DEFAULT = '用户本人'  # Confirmed 2026-10-15: the user is the default owner.
 TEXT_LIMIT = 20000
-# Saudi Arabia keeps +03:00 all year (no daylight saving), so no tz database is needed.
-RIYADH = timezone(timedelta(hours=3), 'Asia/Riyadh')
 DAY = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 CONTROL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')  # Not storable in a workbook.
 
 
-def riyadh_today(now=None):
-    return (now or datetime.now(timezone.utc)).astimezone(RIYADH).date().isoformat()
+def local_today(now=None, zone=None):
+    """「今天」 where the computer is (GLOSSARY.md 邮件时间); zone only for tests."""
+    return (now or datetime.now(timezone.utc)).astimezone(zone).date().isoformat()
 
 
 def sheet_of(status):

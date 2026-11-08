@@ -20,6 +20,7 @@ from email.utils import getaddresses, parseaddr
 from pathlib import Path
 
 from coremail_desktop.app.cache import MailCache, date_ts
+from coremail_desktop.protocol import mailtime
 from coremail_desktop.compose.attachments import validate_attachments
 from coremail_desktop.compose.inline import extract_inline
 from coremail_desktop.compose.service import build_reply
@@ -237,16 +238,15 @@ def _decode_body(data):
 
 
 def _sent_date(header_date, received):
-    """The sender's Date header as a server-zone string, when it is SENT_GAP or more away
+    """The sender's Date header as stored mail-time text, when it is SENT_GAP or more away
     from the server's received time (a mail held on the way); otherwise ''."""
     from email.utils import parsedate_to_datetime
-    from coremail_desktop.protocol.coremail import RESPONSE_ZONE
     try:
-        sent = parsedate_to_datetime(header_date).astimezone(RESPONSE_ZONE)
-        got = datetime.strptime(str(received)[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=RESPONSE_ZONE)
+        sent = parsedate_to_datetime(header_date).astimezone(mailtime.STORE_ZONE)
     except (TypeError, ValueError, IndexError):
         return ''
-    return sent.strftime('%Y-%m-%d %H:%M:%S') if abs(got - sent) >= SENT_GAP else ''
+    got = mailtime.moment(received)
+    return sent.strftime('%Y-%m-%d %H:%M:%S') if got and abs(got - sent) >= SENT_GAP else ''
 
 
 def _image_uri(raw, limit=256 * 1024):
@@ -3761,11 +3761,10 @@ class MailBackend:
         return found
 
     def _task_mail(self, mid, allow):
-        """One selected mail for 转为任务: the envelope, the Riyadh date, attachment names and
+        """One selected mail for 转为任务: the envelope, the mail time where the computer is, attachment names and
         the body text. Encrypted mail only when the user agreed for it (allow)."""
         from email.utils import getaddresses, parsedate_to_datetime
         from coremail_desktop.ai.summary import _who, mail_text
-        from coremail_desktop.tasks.rules import RIYADH
         if not self._local_only(mid) and mid not in self._docs and (self.cache is None or self.cache.get_body(mid) is None):
             raise AppError('AI_MAIL_UNAVAILABLE')
         document = self._document(mid)
@@ -3776,10 +3775,10 @@ class MailBackend:
         header = lambda key: ', '.join(document.headers.get(key, ()))
         summary = (self.cache.summary(mid) if self.cache else None) or self._archive_summary(mid) or {}
         try:
-            when = parsedate_to_datetime(header('date')).astimezone(RIYADH)
+            when = parsedate_to_datetime(header('date')).astimezone()  # Shown where the computer is.
         except (TypeError, ValueError, IndexError, OverflowError):
             ts = summary.get('ts') or date_ts(summary.get('date') or '')
-            when = (datetime.fromtimestamp(ts) if ts else datetime.now()).astimezone(RIYADH)  # No usable date: now.
+            when = (datetime.fromtimestamp(ts) if ts else datetime.now()).astimezone()  # No usable date: now.
         sender = getaddresses([header('from')])
         text, _ = mail_text(document)
         return {'mid': mid, 'messageId': header('message-id').strip('<> '), 'subject': header('subject') or summary.get('subject', ''),

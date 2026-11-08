@@ -8,20 +8,18 @@ import os
 import sqlite3
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from coremail_desktop.protocol import mailtime
 
 BODY_BUDGET = 300 * 1024 * 1024
 
 
 def date_ts(text):
-    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d'):
-        try:
-            return datetime.strptime(str(text)[:19], fmt).timestamp()
-        except ValueError:
-            continue
-    return 0.0
+    """A stored mail time (Riyadh text, mailtime) -> epoch seconds, whatever the computer's zone; 0.0 if none."""
+    moment = mailtime.moment(text)
+    return moment.timestamp() if moment else 0.0
 
 
 class MailCache:

@@ -13,7 +13,7 @@ from unittest.mock import patch
 from coremail_desktop.errors import AppError
 from coremail_desktop.tasks import transfer, xlsx
 from coremail_desktop.tasks.center import TaskCenter
-from coremail_desktop.tasks.rules import HEADERS, riyadh_today
+from coremail_desktop.tasks.rules import HEADERS, local_today
 from coremail_desktop.tasks.store import TaskStore
 from tests.test_app_backend import XorProtector
 from tests.test_compose_v05 import scratch
@@ -222,10 +222,10 @@ class CenterTests(unittest.TestCase):
         self.assertEqual(result['verify']['counts']['open'], 4)
         self.assertIn('新增334任务', result['export']['message'])
 
-    def test_complete_defaults_to_today_in_riyadh(self):
+    def test_complete_defaults_to_today_where_the_computer_is(self):
         self.live()
-        self.clock.now = datetime(2026, 10, 20, 22, 30, tzinfo=timezone.utc)  # Already 21 October in Riyadh.
-        self.assertEqual(riyadh_today(self.clock.now), '2026-10-21')
+        self.clock.now = datetime(2026, 10, 21, 0, 30).astimezone()  # Just past midnight here: already 21 October.
+        self.assertEqual(local_today(self.clock.now), "2026-10-21")
         self.center.complete(333, self.rev(333))
         task = self.center.get(333)['task']
         self.assertEqual((task['status'], task['end'], task['updated']), ('已完成', '2026-10-21', '2026-10-21'))
