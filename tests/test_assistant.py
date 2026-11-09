@@ -406,7 +406,8 @@ class PlanBackendTest(TaskCenterCase):
     def test_errors_explained_and_plans_expire_or_get_replaced(self):
         result, _ = self.ask(('tools', [('read_task', {'ref': 'T302'})]), ('tools', [('plan_tasks', {'actions': [
             {'op': 'update', 'task': 'T302', 'fields': {'status': '已完成'}}]})]), ('answer', '不能这样改'), question='302 改成已完成')
-        self.assertTrue(result['plans'][0]['preview'][0]['message'])  # A fixed code's text, as in 任务中心.
+        from coremail_desktop.ui.messages import with_text
+        self.assertTrue(with_text(result)['plans'][0]['preview'][0]['message'])  # A fixed code's text, filled at the edge (K4).
         first, _ = self.complete_330()
         second, _ = self.complete_330(chat=first['chat'], question='还是 330 已完成')
         with self.assertRaises(AppError):  # The newer plan for #330 replaced the older one.

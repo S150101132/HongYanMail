@@ -111,5 +111,32 @@ class AiConsentTest(unittest.TestCase):  # K3
         self.assertTrue('access(' in tools_src)
 
 
+class ErrorTextTest(unittest.TestCase):  # K4
+    def test_the_backend_returns_codes_only(self):
+        self.assertFalse('ui.messages' in (ROOT / 'app' / 'backend.py').read_text(encoding='utf-8'))
+
+    def test_text_is_filled_from_codes_at_the_edge(self):
+        from coremail_desktop.ui.messages import user_message, with_text
+        value = with_text({'state': 'Failed', 'failureCode': 'SEND_FAILED', 'rows': [{'error': 'TASK_NOT_FOUND'}],
+                           'serverErrorCode': 'DRAFT_ENCRYPTED_LOCAL', 'unavailable': '', 'unavailableCode': 'MEMORY_UNAVAILABLE',
+                           'errorCode': 'AI_NOT_CONFIGURED', 'note': {'error': '这是文字，不是代码'}})
+        self.assertEqual(value['failureMessage'], user_message('SEND_FAILED'))
+        self.assertEqual(value['rows'][0]['message'], user_message('TASK_NOT_FOUND'))
+        self.assertEqual(value['serverError'], user_message('DRAFT_ENCRYPTED_LOCAL'))
+        self.assertEqual(value['unavailable'], user_message('MEMORY_UNAVAILABLE'))
+        self.assertEqual(value['error'], user_message('AI_NOT_CONFIGURED'))
+        self.assertNotIn('message', value['note'])  # Text already: left alone.
+        self.assertEqual(with_text({'failureCode': None}), {'failureCode': None})
+
+    def test_a_queued_send_has_no_failure_text(self):
+        b = backend(self)
+        value = b.compose('new')
+        value.update(to=['zhangxm@example.invalid'], subject='s', html='<p>b</p>')
+        b.adapter.offline = True
+        res = b.send(value)
+        self.assertEqual((res['state'], res.get('failureCode')), ('Queued', None))
+        self.assertNotIn('failureMessage', res)
+
+
 if __name__ == '__main__':
     unittest.main()

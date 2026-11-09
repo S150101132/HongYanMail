@@ -30,7 +30,7 @@ from coremail_desktop.errors import AppError
 from coremail_desktop.app.backend import NETWORK_CODES
 from coremail_desktop.app.tray_check import tray_registered
 from coremail_desktop.ui.branding import app_icon
-from coremail_desktop.ui.messages import login_message, user_message
+from coremail_desktop.ui.messages import login_message, user_message, with_text
 
 WEB_ROOT = Path(__file__).resolve().parent / 'web'
 # 拼写检查: Chromium's en-US Hunspell dictionary (chromium/deps/hunspell_dictionaries,
@@ -401,7 +401,7 @@ class Bridge(QObject):
 
         def work():
             try:
-                result = getattr(self.backend, BACKEND_METHODS.get(name) or INTERNAL_METHODS[name])(**params)
+                result = with_text(getattr(self.backend, BACKEND_METHODS.get(name) or INTERNAL_METHODS[name])(**params))  # Codes -> text (K4).
                 if name == 'send' and isinstance(result, dict) and result.get('state') == 'Held':
                     # The undo delay runs in the main window, so closing to the tray (or
                     # closing the pop-out that sent it) still sends when it ends.
@@ -446,7 +446,7 @@ class Bridge(QObject):
         native = getattr(self.host, 'native_' + method, None) or getattr(self.shell, 'native_' + method, None)
         if native is not None:
             try:
-                result = native(**params)
+                result = with_text(native(**params))  # As backend results (K4).
                 self.reply.emit(request_id, True, json.dumps(result, ensure_ascii=False))
             except Exception as error:
                 code = error.code if isinstance(error, AppError) else 'WRITE_DENIED' if isinstance(error, PermissionError) else 'INTERNAL_ERROR'

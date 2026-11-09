@@ -414,7 +414,8 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(preview[0]['changes']['history'][1].endswith('2026-10-20：客户回复周四开通'))
         self.assertEqual(preview[1]['changes']['status'], ['未开始', '已完成'])
         self.assertEqual(preview[2]['error'], 'TASK_BLOCKER_REQUIRED')
-        self.assertIn('阻塞与依赖', preview[2]['message'])
+        from coremail_desktop.ui.messages import with_text
+        self.assertIn('阻塞与依赖', with_text(preview)[2]['message'])  # Text filled at the edge (K4).
         self.assertEqual(preview[3]['id'], 334)
         self.assertEqual(self.backend.tasks.store.on_disk(), before)  # Nothing written.
         prompt = '\n'.join(m['content'] for m in self.seen[0])

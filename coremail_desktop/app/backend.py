@@ -1809,7 +1809,6 @@ class MailBackend:
             return saved
         # The local copy is saved either way; a server failure is reported, not raised,
         # so the composer keeps the revision it now has.
-        from coremail_desktop.ui.messages import user_message
         try:
             if draft.encryption_required or draft.signature_required:
                 raise AppError('DRAFT_ENCRYPTED_LOCAL')  # Never written to the server in plaintext.
@@ -1817,7 +1816,7 @@ class MailBackend:
         except AppError as error:
             if error.code in REAUTH_CODES:
                 raise
-            return {**saved, 'serverErrorCode': error.code, 'serverError': user_message(error.code)}
+            return {**saved, 'serverErrorCode': error.code}
         self.delete_draft(draft.local_id)
         return {**saved, 'serverDraftId': new_id, 'local': False}
 
@@ -2096,7 +2095,6 @@ class MailBackend:
         """Hand a stored draft to the durable outbox. A network failure before anything
         was submitted puts it in the offline outbox (离线发件箱); an uncertain outcome
         (Unknown) is never retried by itself."""
-        from coremail_desktop.ui.messages import user_message
         try:
             job = self._online(self.services['request_send'], draft=draft)
             state, failure = job.state, job.failure_code
@@ -2116,7 +2114,7 @@ class MailBackend:
         after = {'after': self._after_send(draft)} if state == 'Accepted' else {}
         return {**after, 'state': state, 'failure': failure, 'localId': draft.local_id, 'revision': draft.revision,
                 'subject': draft.subject, 'serverDraft': bool(draft.server_draft_id),
-                'failureMessage': user_message(failure) if failure and state != 'Queued' else None,
+                'failureCode': failure if failure and state != 'Queued' else None,  # Its text: ui/messages.with_text.
                 'scheduledAt': _schedule_ms(draft.schedule_at) if state == 'Accepted' else None}
 
     def _after_send(self, draft):
@@ -3390,11 +3388,7 @@ class MailBackend:
 
     def _assist_preview(self, actions):
         """plan_tasks: each operation checked like the task center's preview, nothing written."""
-        from coremail_desktop.ui.messages import user_message
         preview = self._tasks().preview(actions)
-        for item in preview:
-            if item.get('error'):
-                item['message'] = user_message(item['error'])
         return preview
 
     def cancel_ask(self):
@@ -3490,10 +3484,9 @@ class MailBackend:
 
     def _mcp_call(self, name, arguments):
         from coremail_desktop.ai.tools import MCP_SPECS, AssistantTools
-        from coremail_desktop.ui.messages import user_message
         if self.mcp_record() is None or self.cache is None:
             code = 'MCP_OFF' if self.cache is not None else 'NOT_AUTHENTICATED'
-            return {'code': code, 'message': user_message(code)}, True
+            return {'code': code}, True
         if name not in {s['function']['name'] for s in MCP_SPECS}:
             return {'error': '没有这个工具'}, True  # Drafting, plans and mail operations stay inside the app.
         if self._mcp_tools is None:
@@ -3507,7 +3500,7 @@ class MailBackend:
         try:
             result, _ = tools.run(name, json.dumps(arguments, ensure_ascii=False))
         except AppError as error:
-            return {'code': error.code, 'message': user_message(error.code)}, True
+            return {'code': error.code}, True
         self._mcp_use = {'calls': self._mcp_use['calls'] + 1, 'last': datetime.now().strftime('%Y-%m-%d %H:%M')}
         return result, 'error' in result
 
@@ -3831,7 +3824,6 @@ class MailBackend:
         target: 'auto' (the AI decides), 'new', or a task number to update; check (自动更新 only,
         not from the page): the AI first says whether the mail belongs to that task ('fit')."""
         from coremail_desktop.tasks import assistant
-        from coremail_desktop.ui.messages import user_message
         if not isinstance(mids, list) or not 1 <= len(mids) <= assistant.MAX_MAILS or not all(isinstance(m, str) and m for m in mids):
             raise AppError('TASK_MAIL_LIMIT')
         if target not in ('auto', 'new'):
@@ -3861,9 +3853,6 @@ class MailBackend:
             if action['op'] == 'progress' and not action['date']:
                 action['date'] = max(m['day'] for m in mails)  # The (newest) mail's date is the event's date.
         preview = center.preview(plan['actions'])
-        for item in preview:
-            if item.get('error'):
-                item['message'] = user_message(item['error'])
         known = center.store.tasks
         candidates = [{'id': c, 'system': known[c]['system'], 'content': known[c]['content'], 'status': known[c]['status']}
                       for c in plan['candidates'] if c in known]
@@ -3935,7 +3924,6 @@ class MailBackend:
         """自然语言操作: the sentence (and the turns before it, when the assistant asked back)
         -> a plan with each operation previewed. Nothing is written here."""
         from coremail_desktop.tasks import assistant
-        from coremail_desktop.ui.messages import user_message
         text = text.strip() if isinstance(text, str) else ''
         if not text or len(text) > assistant.MAX_TEXT:
             raise AppError('INVALID_TASK_COMMAND')
@@ -3948,9 +3936,6 @@ class MailBackend:
         content, _ = self._ai_call(messages, max_tokens=assistant.PLAN_TOKENS, json_mode=True)
         plan = assistant.parse_plan(content)
         preview = center.preview(plan['actions'])
-        for item in preview:
-            if item.get('error'):
-                item['message'] = user_message(item['error'])
         return {**plan, 'preview': preview, 'raw': content}
 
     def tasks_command_run(self, actions, text=''):
@@ -4146,10 +4131,9 @@ class MailBackend:
             counts['wait'] = len(self.followups())
         usage = (self.memory.get('usage') if self.memory else None) or {}
         month = datetime.now().strftime('%Y-%m')
-        from coremail_desktop.ui.messages import user_message
         error = getattr(self, '_memory_error', '')
         return {'state': self.prefs()['understand'] if self.cache else '', 'available': self.memory is not None,
-                'unavailable': user_message(error) if self.memory is None and error else '',
+                'unavailableCode': error if self.memory is None and error else '',
                 'encrypted': self.ai_encrypted(), 'counts': counts, 'rules': len(self.memory.rules) if self.memory else 0,
                 'month': usage.get('mails', 0) if usage.get('month') == month else 0, 'failed': len(self._understand_failed)}
 
@@ -4214,7 +4198,6 @@ class MailBackend:
         comes out the feed is looked at again at most every 30 minutes. Offline, the last
         issue shows with a note."""
         from coremail_desktop.app import news
-        from coremail_desktop.ui.messages import user_message
         now, path = datetime.now(), self.data_dir / 'news' / 'latest.json'
         try:
             saved = json.loads(path.read_text(encoding='utf-8'))
@@ -4229,7 +4212,7 @@ class MailBackend:
         except AppError as err:
             if not brief:
                 raise
-            return {'brief': brief, 'checked': checked[11:16], 'error': user_message(err.code)}
+            return {'brief': brief, 'checked': checked[11:16], 'error': '', 'errorCode': err.code}
         checked = now.isoformat(timespec='seconds')
         try:
             path.parent.mkdir(exist_ok=True)
@@ -4244,7 +4227,6 @@ class MailBackend:
         in trending/<date>.json (public data only). Without AI, or when it fails, the English
         descriptions show and the intros are tried again the next time the page opens."""
         from coremail_desktop.ai import trending
-        from coremail_desktop.ui.messages import user_message
         now = datetime.now()
         folder = self.data_dir / 'trending'
         path = folder / (now.strftime('%Y-%m-%d') + '.json')
@@ -4268,9 +4250,9 @@ class MailBackend:
                     r['intro'] = intros.get(r['name'], '')
                 ai = True
             except AppError as err:
-                error = user_message(err.code)
+                error = err.code
         result = {'date': now.strftime('%Y-%m-%d'), 'at': now.strftime('%H:%M'), 'repos': repos, 'ai': ai, 'ready': ready,
-                  'error': error, 'v': trending.TRENDING_VERSION}
+                  'error': '', 'errorCode': error, 'v': trending.TRENDING_VERSION}
         try:
             folder.mkdir(exist_ok=True)
             path.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')

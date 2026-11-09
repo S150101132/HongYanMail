@@ -2,6 +2,8 @@
 import json
 import unittest
 
+from coremail_desktop.ui.messages import with_text
+
 from coremail_desktop.app import news
 from coremail_desktop.app.backend import MailBackend
 from coremail_desktop.errors import AppError
@@ -39,7 +41,7 @@ class NewsTest(unittest.TestCase):
         b.news_get = lambda url, timeout=15: (_ for _ in ()).throw(OSError())
         view = b.daily_news(refresh=True)  # Offline: the last issue, with a note.
         self.assertEqual(view['brief']['date'], '2026-10-24')
-        self.assertIn('36氪', view['error'])
+        self.assertIn('36氪', with_text(view)['error'])  # The code's text, filled at the edge (K4).
         saved = json.loads((b.data_dir / 'news' / 'latest.json').read_text(encoding='utf-8'))
         self.assertEqual(saved['brief'], view['brief'])
         fresh = MailBackend(scratch(self), protector=XorProtector())

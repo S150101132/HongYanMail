@@ -1,6 +1,8 @@
 """每日速览 (G2; GitHub Trending G1; the page that was 今天 R2a), its 在等别人 sub-page, and a sent reply
 marking its mail answered (R3a). Demo adapter, local task workbooks, a stand-in network; nothing leaves."""
 import unittest
+
+from coremail_desktop.ui.messages import with_text
 from pathlib import Path
 
 from coremail_desktop.ai import trending, understand
@@ -63,7 +65,7 @@ class TodayTest(unittest.TestCase):
         b.ai_client = type('Ai', (), {'model': 'm', 'chat': lambda *a, **k: ('not json', 1)})()
         view = b.trending(refresh=True)  # 刷新 fetches again; a bad answer leaves the descriptions.
         self.assertEqual((view['ai'], gets.count(trending.TRENDING_URL)), (False, 2))
-        self.assertIn('AI', view['error'])
+        self.assertIn('AI', with_text(view)['error'])  # The code's text, filled at the edge (K4).
         b.trending_get = lambda url, timeout=15: (_ for _ in ()).throw(OSError())
         with self.assertRaises(AppError) as caught:
             b.trending(refresh=True)

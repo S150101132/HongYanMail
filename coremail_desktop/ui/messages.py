@@ -4,6 +4,8 @@ Only the code selects text from this table. Exception text, server responses,
 URLs, addresses and message content never reach the interface, so a failure can
 never display a value the user did not just type.
 """
+import re
+
 
 MESSAGES = {
     'LOCAL_STORAGE_UNAVAILABLE': '无法访问本机草稿或发送记录。请关闭程序，从文件资源管理器重新启动鸿雁；本机保存和发送需要该目录的访问权限。',
@@ -210,6 +212,32 @@ def user_message(code) -> str:
     if isinstance(code, str):
         return MESSAGES.get(code, GENERIC)
     return GENERIC
+
+
+CODE_RE = re.compile(r'[A-Z][A-Z0-9_]{2,63}')
+# (code field, text field): the backend returns only fixed codes (K4); the edge (shell.py, the
+# MCP server) fills the text the page shows. Order matters: errorCode fills error first.
+TEXT_FIELDS = (('failureCode', 'failureMessage'), ('serverErrorCode', 'serverError'), ('unavailableCode', 'unavailable'),
+               ('errorCode', 'error'), ('code', 'message'), ('error', 'message'))
+
+
+def with_text(value, depth=0):
+    """value with the text for each fixed code filled in, in place (dicts and lists inside it
+    too). A field already holding text is left alone; so is anything that is not a code."""
+    if depth > 6:
+        return value
+    if isinstance(value, list):
+        for item in value:
+            with_text(item, depth + 1)
+    elif isinstance(value, dict):
+        for code_key, text_key in TEXT_FIELDS:
+            code = value.get(code_key)
+            if isinstance(code, str) and CODE_RE.fullmatch(code) and not value.get(text_key):
+                value[text_key] = user_message(code)
+        for item in value.values():
+            if isinstance(item, (dict, list)):
+                with_text(item, depth + 1)
+    return value
 
 
 def login_message(code, category='') -> str:

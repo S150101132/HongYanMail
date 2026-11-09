@@ -10,6 +10,8 @@ import secrets
 import threading
 from multiprocessing.connection import Client, Listener
 
+from coremail_desktop.ui.messages import with_text
+
 PROTOCOLS = ('2025-06-18', '2025-03-26', '2024-11-05')
 KEY_FILE = 'mcp.key'
 INSTRUCTIONS = ('鸿雁工作邮箱（只读）：search_mail 搜邮件，返回编号（如 M3），再用 read_mail 读正文和附件文字；'
@@ -45,6 +47,7 @@ def handle(message, specs, call, version=''):
         if not isinstance(name, str) or not isinstance(arguments, dict):
             return _error(mid, -32602, 'Invalid params')
         value, failed = call(name, arguments)
+        with_text(value)  # Fixed codes -> their text (the backend returns codes only).
         result = {'content': [{'type': 'text', 'text': json.dumps(value, ensure_ascii=False)}], 'isError': bool(failed)}
     else:
         return _error(mid, -32601, 'Method not found')
