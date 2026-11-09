@@ -848,7 +848,7 @@ class MailBackend:
                   'sentDate': _sent_date(header('date'), summary['date']) if summary.get('date') else '',
                   'html': body_html, 'text': document.text, 'hasRemoteImages': remote,
                   'encryption': document.encryption_state, 'signature': self._signature_view(document),
-                  'aiAllowed': document.encryption_state == 'decrypted' and self._encrypted_ok(mid),
+                  'aiAllowed': document.encryption_state != 'none' and self._ai_access(mid, document.encryption_state) == 'ok',  # Encrypted, allowed without asking.
                   'flags': summary.get('flags', {}),
                   'scheduled': bool(summary.get('flags', {}).get('scheduleDelivery')), 'scheduleAt': summary.get('scheduleAt'),
                   'attachments': [{'part': a.part_id, 'name': a.name, 'type': a.media_type, 'size': a.size}
@@ -2679,7 +2679,8 @@ class MailBackend:
         model = getattr(client, 'model', '')
         document, encrypted = self._ai_document(mid, allow_encrypted)
         saved = self.cache.get('aiSummaries') or {}
-        if (not encrypted or self._encrypted_ok(mid)) and not refresh and saved.get(mid, {}).get('v') == SUMMARY_VERSION:
+        keep = self._ai_access(mid, document.encryption_state) == 'ok'  # Allowed once for all: kept like the decrypted body cache.
+        if keep and not refresh and saved.get(mid, {}).get('v') == SUMMARY_VERSION:
             return {**saved[mid], 'cached': True}
         summary = self.cache.summary(mid) or {}
         messages = self._with_about(build_messages(document, summary.get('date') or '', self.display_name, [self.account or '', *self.identities],
@@ -2687,7 +2688,7 @@ class MailBackend:
         content, _ = self._ai_call(messages, max_tokens=SUMMARY_TOKENS, json_mode=True)
         result = {**parse_summary(content), 'model': model, 'at': datetime.now().strftime('%Y-%m-%d %H:%M'), 'encrypted': encrypted,
                   'v': SUMMARY_VERSION}
-        if not encrypted or self._encrypted_ok(mid):  # Allowed once for all: kept like the decrypted body cache.
+        if keep:
             saved.pop(mid, None)
             saved[mid] = result
             self.cache.set('aiSummaries', dict(list(saved.items())[-300:]))
@@ -2700,12 +2701,18 @@ class MailBackend:
         if not self._local_only(mid) and mid not in self._docs and self.cache.get_body(mid) is None:
             raise AppError('AI_MAIL_UNAVAILABLE')  # Opening the mail downloads it; this thread never does.
         document = self._document(mid)
-        if document.encryption_state == 'locked':
-            raise AppError('CERT_LOCKED')
-        encrypted = document.encryption_state == 'decrypted'
-        if encrypted and not allow_encrypted and not self._encrypted_ok(mid):
-            raise AppError('AI_ENCRYPTED_CONFIRM')
-        return document, encrypted
+        self._ai_gate(mid, document, allow_encrypted)
+        return document, document.encryption_state == 'decrypted'
+
+    def _ai_access(self, mid, state, allowed=False):
+        """'ok' / 'locked' / 'ask' for mid's body going to the AI service (ai/consent.py)."""
+        from coremail_desktop.ai.consent import access
+        return access(state, allowed, lambda: self._encrypted_ok(mid))
+
+    def _ai_gate(self, mid, document, allowed=False):
+        access = self._ai_access(mid, document.encryption_state, allowed)
+        if access != 'ok':
+            raise AppError('CERT_LOCKED' if access == 'locked' else 'AI_ENCRYPTED_CONFIRM')
 
     # 加密邮件与 AI: the company sets no limit (user, 2026-10-21), so one setting replaces
     # asking for every mail. Excluded folders and senders are still asked for each time.
@@ -2905,8 +2912,7 @@ class MailBackend:
         rows, left_out = pick(rows)
         ids = [r['id'] for r in rows]
         missing = [m for m in ids if not self._local_only(m) and m not in self._docs and self.cache.get_body(m) is None]
-        state = lambda m: self._document(m).encryption_state
-        encrypted = sum(1 for m in ids if m not in missing and (state(m) == 'locked' or state(m) == 'decrypted' and not self._encrypted_ok(m)))
+        encrypted = sum(1 for m in ids if m not in missing and self._ai_access(m, self._document(m).encryption_state) != 'ok')
         return {'ids': ids, 'missing': missing, 'encrypted': encrypted, 'leftOut': left_out}
 
     def summarize_thread(self, mid, allow_encrypted=False, refresh=False):
@@ -3715,10 +3721,7 @@ class MailBackend:
         if not self._local_only(mid) and mid not in self._docs and (self.cache is None or self.cache.get_body(mid) is None):
             raise AppError('AI_MAIL_UNAVAILABLE')
         document = self._document(mid)
-        if document.encryption_state == 'locked':
-            raise AppError('CERT_LOCKED')
-        if document.encryption_state == 'decrypted' and mid not in allow and not self._encrypted_ok(mid):
-            raise AppError('AI_ENCRYPTED_CONFIRM')
+        self._ai_gate(mid, document, mid in allow)
         header = lambda key: ', '.join(document.headers.get(key, ()))
         summary = (self.cache.summary(mid) if self.cache else None) or self._archive_summary(mid) or {}
         try:
@@ -3992,7 +3995,7 @@ class MailBackend:
             card = memory.card(row['id']) or {}
             if card.get('actor') == 'user' or card.get('done') or card.get('v') == CARD_VERSION or row['id'] in self._understand_failed:
                 return False
-            return not row['flags'].get('encrypted') or self._encrypted_ok(row['id'])
+            return self._ai_access(row['id'], 'decrypted' if row['flags'].get('encrypted') else 'none') == 'ok'
         rows = sorted((r for r in self._understand_rows() if todo(r)), key=lambda r: r.get('ts') or 0, reverse=True)
         ids = [r['id'] for r in rows[:UNDERSTAND_ROUND]]
         return {'ids': ids, 'missing': [m for m in ids if self.cache.get_body(m) is None], 'left': len(rows)}
@@ -4616,7 +4619,7 @@ class MailBackend:
         rows = self.cache.matching(lambda r: not r.get('mailbox') and r['fid'] in roles and roles[r['fid']] not in UNDERSTAND_SKIP
                                    and (r.get('ts') or 0) >= cutoff and not r['flags'].get('draft'))
         rows = [r for r in rows if (self.memory.card(r['id']) or {}).get('kind') != 'ignore'
-                and (not r['flags'].get('encrypted') or self._encrypted_ok(r['id']))]
+                and self._ai_access(r['id'], 'decrypted' if r['flags'].get('encrypted') else 'none') == 'ok']
         rows.sort(key=lambda r: r.get('ts') or 0, reverse=True)
         ids = [r['id'] for r in rows[:500]]
         return {'ids': ids, 'missing': [m for m in ids if self.cache.get_body(m) is None], 'tokens': len(ids) * self.BACKFILL_TOKENS}

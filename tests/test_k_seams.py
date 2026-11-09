@@ -92,5 +92,24 @@ class ConversationTest(unittest.TestCase):  # K2
         self.assertEqual(json.loads(out.stdout), [conversation_key(s) for s in SUBJECTS])
 
 
+class AiConsentTest(unittest.TestCase):  # K3
+    def test_one_rule(self):
+        from coremail_desktop.ai.consent import access
+        never = lambda: self.fail('the setting is only asked about decrypted mail')
+        self.assertEqual(access('none', False, never), 'ok')
+        self.assertEqual(access('locked', True, never), 'locked')
+        self.assertEqual(access('decrypted', True, never), 'ok')  # The user agreed for this mail.
+        self.assertEqual(access('decrypted', False, lambda: True), 'ok')  # Allowed once for all (设置 → AI 助手).
+        self.assertEqual(access('decrypted', False, lambda: False), 'ask')
+
+    def test_no_other_copy(self):
+        backend_src = (ROOT / 'app' / 'backend.py').read_text(encoding='utf-8')
+        tools_src = (ROOT / 'ai' / 'tools.py').read_text(encoding='utf-8')
+        self.assertEqual(backend_src.count('self._encrypted_ok('), 1)  # Only inside _ai_access.
+        self.assertFalse("encryption_state == 'decrypted' and" in backend_src)
+        self.assertFalse("encryption_state in ('decrypted', 'locked')" in tools_src)
+        self.assertTrue('access(' in tools_src)
+
+
 if __name__ == '__main__':
     unittest.main()

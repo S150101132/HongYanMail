@@ -9,6 +9,7 @@ import json
 import re
 from datetime import datetime
 
+from coremail_desktop.ai.consent import access
 from coremail_desktop.ai.attachments import attachment_texts
 from coremail_desktop.ai.summary import _who, mail_text
 from coremail_desktop.errors import AppError
@@ -204,8 +205,7 @@ class MailboxTools:
         if len(self.read_refs) >= MAX_READS:
             return {'error': f'本次最多阅读 {MAX_READS} 封，请根据已有信息回答'}, label + '（已达上限）'
         document = self._read(row['id'])
-        if document.encryption_state in ('decrypted', 'locked') and (
-                document.encryption_state == 'locked' or row['id'] not in self.allowed and not self._auto_allow(row['id'])):
+        if access(document.encryption_state, row['id'] in self.allowed, lambda: self._auto_allow(row['id'])) != 'ok':
             if ref not in self.encrypted:
                 self.encrypted.append(ref)
             return {'ref': ref, 'encrypted': True, 'note': '这是加密邮件，用户没有允许把正文发给 AI，不能阅读'}, label + '（加密，未读取）'
