@@ -51,7 +51,6 @@ class AdapterTest(unittest.TestCase):
         adapter.list_folders(); adapter.list_messages('1', 0, 10); adapter.set_flags_many(['m1'], {'read': True}); adapter.fetch_mime('m1')
         self.assertTrue(all('mboxa' not in params for _, params in adapter._session.calls))
         self.assertEqual(adapter._session.fetched, [('m1', {})])
-        self.assertEqual(adapter.last_folder_id, '1')
 
     def test_shared_mailbox_is_named_in_every_mail_call(self):
         adapter = self.adapter()
@@ -59,7 +58,6 @@ class AdapterTest(unittest.TestCase):
         adapter.set_message_flags('m1', {'read': True}, mboxa='@7'); adapter.set_flags_many(['m1'], {'flagged': True}, mboxa='@7')
         adapter.move_many(['m1'], '4', mboxa='@7'); adapter.move_message('m1', '4', mboxa='@7'); adapter.delivery_history('m1', '@7')
         self.assertTrue(all(params.get('mboxa') == '@7' for _, params in adapter._session.calls))
-        self.assertEqual(adapter.last_folder_id, '1@7')
         adapter.fetch_mime('m1', '@7')
         self.assertEqual(adapter._session.fetched, [('m1', {'mboxa': '@7'})])
 

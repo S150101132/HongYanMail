@@ -14,7 +14,7 @@ from probe.coremail_transport import CoremailSession, CoremailError, SameOriginR
 from coremail_desktop.protocol import mailtime
 from coremail_desktop.protocol.keepalive import KeepAliveHTTPSHandler
 from coremail_desktop.protocol.mailtime import account_zone  # noqa: F401 (callers import it from here)
-from coremail_desktop.models import Folder, MessageSummary
+from coremail_desktop.models import Folder, MessagePage, MessageSummary
 from coremail_desktop.errors import AppError
 from coremail_desktop.compose.recipients import normalize_recipients
 
@@ -268,8 +268,6 @@ class CoremailAdapter:
         self._session = None
         self._identities = set()
         self._compose_attachments = {}
-        self.last_folder_total = None
-        self.last_folder_id = None
         self._zone = None
     def login(self, account, password):
         self.close()
@@ -324,11 +322,9 @@ class CoremailAdapter:
             value = value.get('messages')
         else:
             total = response.get('total')
-        if isinstance(total,int) and total >= 0:
-            # The server reports the folder total on the list response, so the
-            # interface can show a real count without inventing one.
-            self.last_folder_total = total
-            self.last_folder_id = str(folder_id) + (mboxa or '')  # A shared folder reads as 'fid@id'.
+        # The server reports the folder total on the list response, so the interface can show a
+        # real count without inventing one; it travels with the page (K1).
+        total = total if isinstance(total,int) and total >= 0 else None
         if not isinstance(value,list): raise AppError('INVALID_RESPONSE')
         result = []
         for item in value:
@@ -336,7 +332,7 @@ class CoremailAdapter:
             sender = item.get('from','')
             if isinstance(sender,list): sender = ', '.join(str(x) for x in sender)
             result.append(_summary(item,str(folder_id),sender))
-        return result
+        return MessagePage(result,total)
     def fetch_mime(self, message_id, mboxa=''):
         if self._session is None: raise AppError('NOT_AUTHENTICATED')
         extra = _box(mboxa)

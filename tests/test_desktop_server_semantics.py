@@ -53,9 +53,8 @@ class FolderSchemaTests(unittest.TestCase):
 
     def test_the_folder_total_is_taken_from_the_list_envelope(self):
         adapter = self.adapter()
-        adapter.list_messages('1', 0, 50)
-        self.assertEqual(adapter.last_folder_total, 321)
-        self.assertEqual(adapter.last_folder_id, '1')
+        page = adapter.list_messages('1', 0, 50)
+        self.assertEqual(page.total, 321)  # Travels with the page (K1), not on the adapter.
 
     def test_message_flags_are_passed_through_unchanged(self):
         summaries = self.adapter().list_messages('1', 0, 50)

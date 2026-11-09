@@ -27,6 +27,14 @@ class Folder(_ImmutableMappings):
     parent: str | None = None  # Parent folder id of a sub-folder; None at the top level.
     system: bool = False  # Server folder (inbox, drafts, sent, trash, spam, virus): no rename or delete.
 
+class MessagePage(list):
+    """A page of MessageSummary from list_messages; total is the folder's message count
+    from the same response (None when the server did not say)."""
+    def __init__(self, items=(), total=None):
+        super().__init__(items)
+        self.total = total
+
+
 @dataclass(frozen=True)
 class MessageSummary(_ImmutableMappings):
     remote_id: str

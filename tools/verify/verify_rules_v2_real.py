@@ -83,7 +83,7 @@ def main():
         if state.get('rule') is not None:
             # Raw, before the app's guard: 0 means the server filters by the rule; the inbox total means it ignores it.
             check('rule_matches_raw', lambda: {'total': adapter.rule_matches(state['rule'], '1', 0, 5)['total'],
-                                               'inbox_total': (adapter.list_messages('1', 0, 1), adapter.last_folder_total)[1]})
+                                               'inbox_total': adapter.list_messages('1', 0, 1).total})
             check('rule_matches_new_rule', lambda: {k: v for k, v in backend.rule_matches(state['rule']).items() if k in ('total', 'applicable')}
                   | {'rows': len(backend.rule_matches(state['rule'])['rows'])})
     finally:

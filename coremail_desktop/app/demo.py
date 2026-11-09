@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from coremail_desktop.errors import AppError
-from coremail_desktop.models import DraftAttachment, Folder, MessageSummary
+from coremail_desktop.models import DraftAttachment, Folder, MessagePage, MessageSummary
 
 PEOPLE = [('产品协作组', 'product@example.invalid'), ('研发团队', 'rd@example.invalid'),
           ('张晓明', 'zhangxm@example.invalid'), ('李华', 'lihua@example.invalid'),
@@ -141,8 +141,6 @@ class DemoAdapter:
         self.parents = {}  # Sub-folder id -> parent id.
         self.lists = {'safelist': ['partner@external.example'], 'refuselist': ['*@spam.example', 'ads@promo.example']}
         self.reports = []
-        self.last_folder_total = None
-        self.last_folder_id = None
         self.signed_in = False
         self.sent = []
         self.sent_payloads = []
@@ -211,8 +209,7 @@ class DemoAdapter:
         if not 1 <= limit <= 100:  # As the real server (protocol/coremail.py).
             raise AppError('INVALID_PAGE')
         rows = sorted((r for r in self._store(mboxa)[1].values() if r['fid'] == str(folder_id)), key=lambda r: r['date'], reverse=True)
-        self.last_folder_total, self.last_folder_id = len(rows), str(folder_id) + mboxa
-        return [self._summary(r) for r in rows[offset:offset + limit]]
+        return MessagePage([self._summary(r) for r in rows[offset:offset + limit]], total=len(rows))
 
     def fetch_mime(self, message_id, mboxa=''):
         self._need()
@@ -268,7 +265,7 @@ class DemoAdapter:
     SEARCH_FILTERS = frozenset({'from', 'to', 'with', 'scope', 'since', 'until', 'folder', 'attachment', 'unread', 'flagged'})
 
     def search_messages(self, pattern, offset, limit=50, filters=None, snippet=False):
-        from coremail_desktop.app.backend import filter_match
+        from coremail_desktop.app.searchfilter import filter_match
         from coremail_desktop.app.cache import date_ts
         filters = dict(filters or {})
         if not pattern.strip() and not filters:
