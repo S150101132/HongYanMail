@@ -179,16 +179,9 @@ function ucAfterChange() {
   ucRefreshStatus();
 }
 
-// 回复后只标已回复 (R3a): a reply or forward that went out marks its 要我做 mail 已回复 / 已转发;
-// it stays on the list (a reply is not the work done) and the toast offers 已处理 in one click.
-const _ucSendOutcome = sendOutcome;
-sendOutcome = function (res, meta = {}) { _ucSendOutcome(res, meta); ucAnswered(res, meta); };
-async function ucAnswered(res, meta) {
-  if (!ucOn() || !meta.source || !['Accepted', 'Queued'].includes(res.state)) return;
-  const mid = meta.source, how = meta.how === 'forward' ? 'forward' : 'reply';
-  let changed;
-  try { ({ changed } = await api('understandAnswered', { mid, how })); } catch { return; }
-  if (!changed.length) return;
+// 回复后只标已回复 (R3a): a reply or forward that went out marked its 要我做 mail 已回复 / 已转发
+// (发后跟进, after.answered); it stays on the list (a reply is not the work done) and the toast offers 已处理.
+function ucShowAnswered({ mid, how }) {
   UC.cards.delete(mid); ucAfterChange();
   toast(`已${UC_ANSWERED[how]}，这封仍在「要我做」里。事情办完了就点「已处理」`, { ms: 9000,
     action: { label: '已处理', run: () => ucCorrect(mid, { done: true }, {}) } });

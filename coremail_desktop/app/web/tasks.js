@@ -594,15 +594,10 @@ function planItem(p, pick, on = true) {
 }
 
 // 回复后提醒关闭任务: a reply or forward to mail linked to an open task (or of its conversation)
-// went out; the toast offers 标记完成, which opens the usual dialog in 任务. Never by itself.
-const _tkSendOutcome = sendOutcome;
-sendOutcome = function (res, meta = {}) { _tkSendOutcome(res, meta); tkAfterReply(res, meta); };
-async function tkAfterReply(res, meta) {
-  if (READER_MID || !meta.source || !['Accepted', 'Queued'].includes(res.state)) return;
-  let open;
-  try { open = await api('tasksForReply', { mid: meta.source }); } catch { return; }
-  for (const t of open.slice(0, 3)) {
-    toast(`邮件已${meta.how === 'forward' ? '转发' : '回复'}。任务 #${t.id}「${t.content.slice(0, 24)}」要关闭吗？`, { ms: 12000,
+// went out (发后跟进, after.tasks); the toast offers 标记完成, which opens the usual dialog in 任务. Never by itself.
+function tkShowClose(tasks, how) {
+  for (const t of tasks) {
+    toast(`邮件已${how === 'forward' ? '转发' : '回复'}。任务 #${t.id}「${t.content.slice(0, 24)}」要关闭吗？`, { ms: 12000,
       action: { label: '关闭任务', run: () => tkCloseFromMail(t.id) } });
   }
 }

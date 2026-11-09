@@ -135,8 +135,7 @@ class PageTest(unittest.TestCase):
     def test_reply_and_strip(self):
         app, understand_js, memory = self.read('app.js'), self.read('understand.js'), self.read('memory.js')
         self.assertIn('draft.sourceMid = mid', app)
-        self.assertIn("source: C.draft.sourceMid || C.draft.replySourceId || '', how: C.draft.mode === 'forward' ? 'forward' : 'reply'", app)
-        self.assertIn("api('understandAnswered', { mid, how })", understand_js)
+        self.assertIn('function ucShowAnswered({ mid, how })', understand_js)  # 发后跟进: the backend marked it.
         self.assertIn("label: '已处理', run: () => ucCorrect(mid, { done: true }, {})", understand_js)  # R3a: done is the user's click.
         self.assertNotIn('没有需要你处理的邮件', understand_js)  # V3
         self.assertIn('关联 #${c.task}', memory)  # The task candidate is a button on the one strip.

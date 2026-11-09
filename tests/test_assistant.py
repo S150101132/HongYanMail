@@ -628,10 +628,9 @@ class PageTest(unittest.TestCase):
         self.assertIn('assistantPlanRun', TASK_METHODS)  # Writes run on the task thread, after any other change.
         from coremail_desktop.app.shell import AI_METHODS, STREAM_METHODS
         self.assertTrue({'assistantDraftWrite'} <= AI_METHODS & STREAM_METHODS)
-        self.assertIn('assistantSent', TASK_METHODS)
+        self.assertNotIn('assistantSent', BACKEND_METHODS)  # 发后跟进: the backend offers it with the send result.
         for field in ('d.purpose', 'd.mail.fromName', 'd.mail.subject', 'd.subject', 'points', 'c.name || c.domain'):
             self.assertIn(f'esc({field})', source)
-        self.assertIn("['Accepted', 'Queued'].includes(res.state)", source)  # Progress is offered only once it went out.
         for name in ('assistantNudgeDismiss', 'assistantLinkRun'):  # Task writes, in order with the rest.
             self.assertIn(name, TASK_METHODS)
         self.assertEqual(BACKEND_METHODS['assistantNudge'], 'assistant_nudge')

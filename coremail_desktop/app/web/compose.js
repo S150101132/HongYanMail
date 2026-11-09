@@ -67,7 +67,19 @@ on('sendResult', (v) => {
   const h = dropHold(v.localId);
   // A pop-out that sent this may be gone: the main window then reports it.
   if (h || !READER_MID) sendOutcome(v, h ? h.meta : {});
+  if (!READER_MID) showAfter(v.after);
 });
+// 发后跟进 (F1): what the backend did or offers once the server took a reply / forward
+// (已回复 / 已转发, closing linked tasks, the assistant's progress line). Shown in the main
+// window, where 任务 and the assistant are; a pop-out passes it on.
+function showAfter(after) {
+  if (!after) return;
+  if (READER_MID) { api('notifyMain', { name: 'afterSend', value: after }).catch(() => {}); return; }
+  if (after.answered) ucShowAnswered(after.answered);
+  tkShowClose(after.tasks || [], after.how);
+  if (after.plan) assistShowProgress(after.plan);
+}
+on('afterSend', showAfter);
 
 // ---------------------------------------------------------------- 离线发件箱
 async function refreshOutbox() {
@@ -116,6 +128,7 @@ function outboxFlushed(v) {
   if (sent) toast(`发件箱：${sent} 封邮件已发出`);
   if (still && !sent) toast('网络仍不可用，发件箱中的邮件稍后自动重试');
   v.results.filter((r) => !['Accepted', 'Queued'].includes(r.state)).forEach((r) => sendOutcome(r));
+  if (!READER_MID) v.results.forEach((r) => showAfter(r.after));
   refreshOutbox(); refreshDraftCount();
 }
 on('outboxFlushed', outboxFlushed);

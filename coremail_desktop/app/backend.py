@@ -198,6 +198,10 @@ def shell_reveal(path):
 SENDER_RE = re.compile(r'(?:[^\s<>@,;*]+|\*)@[^\s<>@,;*]+\.[^\s<>@,;*]+')
 
 
+def _short(value, limit=300):
+    return value[:limit] if isinstance(value, str) else ''
+
+
 def _schedule_iso(value):
     """Epoch milliseconds from the page -> UTC 'YYYY-MM-DDTHH:MM:SSZ'; None means send now."""
     if value in (None, '', 0):
@@ -1857,7 +1861,9 @@ class MailBackend:
                              value.get('encrypt') is True, source,
                              attachments, True, signature_required=value.get('sign') is True,
                              schedule_at=_schedule_iso(value.get('scheduleAt')), request_receipt=value.get('receipt') is True,
-                             reply_mailbox='@' + box if box else '', server_draft_id=server_draft or '')
+                             reply_mailbox='@' + box if box else '', server_draft_id=server_draft or '',
+                             source_mid=_short(value.get('sourceMid') or value.get('replySourceId')),
+                             assist_plan=_short(value.get('assistPlan'), 64))
 
     def save_draft(self, value, server=False):
         """Save locally (encrypted). server=True, for a draft opened from the server's
@@ -1930,6 +1936,7 @@ class MailBackend:
                 'sign': True if draft.signature_required else False if draft.encryption_required else None,
                 'scheduleAt': _schedule_ms(draft.schedule_at), 'receipt': draft.request_receipt,
                 'serverDraftId': draft.server_draft_id or None,
+                'sourceMid': draft.source_mid or None, 'assistPlan': draft.assist_plan or None,
                 'attachments': [{'name': a.name, 'type': a.media_type, 'size': len(a.payload),
                                  'data': base64.b64encode(a.payload).decode('ascii')} for a in draft.attachments]}
 
@@ -2174,10 +2181,18 @@ class MailBackend:
             self.delete_draft(draft.local_id)
             if draft.mode in ('reply', 'reply_all') and draft.reply_source_id:
                 self.cache.update(self._reply_id(draft), flags={'replied': True})
-        return {'state': state, 'failure': failure, 'localId': draft.local_id, 'revision': draft.revision,
+        after = {'after': self._after_send(draft)} if state == 'Accepted' else {}
+        return {**after, 'state': state, 'failure': failure, 'localId': draft.local_id, 'revision': draft.revision,
                 'subject': draft.subject, 'serverDraft': bool(draft.server_draft_id),
                 'failureMessage': user_message(failure) if failure and state != 'Queued' else None,
                 'scheduledAt': _schedule_ms(draft.schedule_at) if state == 'Accepted' else None}
+
+    def _after_send(self, draft):
+        """发后跟进 (F1): 已回复 / 已转发 on its card, the tasks to offer closing, the assistant's progress line."""
+        from coremail_desktop.app.aftersend import after_send
+        has_tasks = self.tasks is not None or (self.data_dir / 'tasks').exists()  # Never sets up 任务 by itself.
+        return after_send(draft, lambda mid, how: self.understand_answered(mid, how)['changed'],
+                          self.tasks_for_reply if has_tasks else lambda mid: [], self.assistant_sent)
 
     # 撤销发送 --------------------------------------------------------------------
     def release_send(self, local_id, revision):
@@ -3397,7 +3412,7 @@ class MailBackend:
         entry['sentTo'] = [parseaddr(a)[0] or parseaddr(a)[1].partition('@')[0] for a in value['to']][:3]
         if entry.get('scheduleAt'):  # 定时 on the draft only (A3): the user still presses 发送.
             value['scheduleAt'] = entry['scheduleAt']
-        return {**value, 'assist': True}
+        return {**value, 'assist': True, 'assistPlan': plan}  # The draft remembers it (发后跟进).
 
     def assistant_draft_write(self, plan, points=None, allow_encrypted=False, req='', progress=None):
         """The body of a draft plan, streamed: a reply to its mail, or a new mail from the

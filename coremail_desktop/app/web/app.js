@@ -1910,7 +1910,7 @@ async function sendMail() {
       if (go && (await unlockCertificate())) setTimeout(sendMail, 0);
       return;
     }
-    const meta = { encrypt: value.encrypt, sign: value.sign, subject: value.subject, source: C.draft.sourceMid || C.draft.replySourceId || '', how: C.draft.mode === 'forward' ? 'forward' : 'reply' };
+    const meta = { encrypt: value.encrypt, sign: value.sign, subject: value.subject };
     if (res.state === 'Held') {
       // 撤销发送: the composer closes; the bar counts down and can bring it back.
       closeComposer(true);
@@ -1918,6 +1918,7 @@ async function sendMail() {
     } else if (res.state === 'Accepted' || res.state === 'Queued') {
       closeComposer(true);
       sendOutcome(res, meta);
+      showAfter(res.after);  // 发后跟进 (a pop-out passes it to the main window).
     } else if (res.state === 'Unknown') {
       $('#cmp-status').textContent = '发送结果待确认';
       sendOutcome(res, meta);

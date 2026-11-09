@@ -827,7 +827,6 @@ async function draftFromPlan(p) {
   if (C.draft && !$('#composer').classList.contains('hidden') && C.dirty) await saveDraft(true);
   openComposer(draft);
   $('#cmp-title').textContent += ' · 助理起草';
-  S.assistDrafts.set(draft.localId, p.id);
   p.state = 'drafted'; renderAsk();
   const points = (p.points !== undefined ? p.points : d.points.join('\n')).split('\n').map((x) => x.trim()).filter(Boolean);
   let allow = false;
@@ -864,17 +863,9 @@ $('#ask-out').addEventListener('input', (e) => {
   if (card) S.chat.turns[+card.dataset.turn].result.plans[+card.dataset.plan].points = el.value;
 });
 
-// A drafted mail that went out (or into the outbox): offer the progress line (Q5: never by itself).
-S.assistDrafts = new Map();  // composer localId -> draft plan id
-const _assistSendOutcome = sendOutcome;
-sendOutcome = function (res, meta = {}) { _assistSendOutcome(res, meta); assistAfterSend(res); };
-async function assistAfterSend(res) {
-  const plan = res && S.assistDrafts.get(res.localId);
-  if (!plan || !['Accepted', 'Queued'].includes(res.state)) return;
-  S.assistDrafts.delete(res.localId);
-  let next;
-  try { next = await api('assistantSent', { plan }); } catch (err) { return; }  // Only a proposal.
-  if (!next) return;
+// A drafted mail went out (发后跟进, after.plan; the draft remembers its plan): offer the
+// progress line (Q5: never by itself).
+function assistShowProgress(next) {
   S.chat.turns.push({ event: '邮件已发出。要在任务里记一条进展吗？', result: { plans: [next] } });
   if (chatOpen()) renderAsk();
   else toast('邮件已发出。要在任务里记一条进展吗？', { ms: 9000, action: { label: '查看', run: () => showAsk() } });

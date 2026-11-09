@@ -91,6 +91,10 @@ class DraftDocument(_ImmutableMappings):
     reply_mailbox: str = ''
     # The server draft (草稿箱 message id) this draft edits; sending or saving replaces it.
     server_draft_id: str = ''
+    # The page's id of the mail this replies to or forwards (发后跟进); '' for a new mail.
+    source_mid: str = ''
+    # The assistant draft plan that wrote it: its progress line is offered once it goes out.
+    assist_plan: str = ''
 
 @dataclass(frozen=True)
 class SendJob:

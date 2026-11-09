@@ -77,7 +77,7 @@ BACKEND_METHODS = {
     'aiSettings': 'ai_settings', 'setAiSettings': 'set_ai_settings', 'aiTest': 'ai_test', 'aiModels': 'ai_models', 'summarize': 'summarize',
     'mcpStatus': 'mcp_status', 'setMcp': 'set_mcp',
     'askMailbox': 'ask_mailbox', 'cancelAsk': 'cancel_ask', 'assistantPlanRun': 'assistant_plan_run',
-    'assistantDraftCompose': 'assistant_draft_compose', 'assistantDraftWrite': 'assistant_draft_write', 'assistantSent': 'assistant_sent',
+    'assistantDraftCompose': 'assistant_draft_compose', 'assistantDraftWrite': 'assistant_draft_write',
     'assistantNudge': 'assistant_nudge', 'assistantNudgeDismiss': 'assistant_nudge_dismiss', 'assistantLinkRun': 'assistant_link_run',
     'assistantMailRun': 'assistant_mail_run', 'assistantMailUndo': 'assistant_mail_undo',
     'replyIdeas': 'reply_ideas', 'draftReply': 'draft_reply', 'writeFromNote': 'write_from_note', 'styleTables': 'style_tables', 'cancelAi': 'cancel_ai',
@@ -91,13 +91,13 @@ BACKEND_METHODS = {
     'tasksExport': 'tasks_export', 'tasksResolve': 'tasks_resolve', 'tasksStopLive': 'tasks_stop_live', 'tasksRestore': 'tasks_restore',
     'tasksCompare': 'tasks_compare', 'taskLink': 'task_link', 'taskUnlink': 'task_unlink',
     'tasksCommand': 'tasks_command', 'tasksCommandRun': 'tasks_command_run',
-    'tasksFromMail': 'tasks_from_mail', 'taskUndo': 'task_undo', 'tasksMailIndex': 'tasks_mail_index', 'tasksForReply': 'tasks_for_reply',
+    'tasksFromMail': 'tasks_from_mail', 'taskUndo': 'task_undo', 'tasksMailIndex': 'tasks_mail_index',
     'taskStory': 'task_story', 'taskStoryTitles': 'task_story_titles',
     'tasksNewMail': 'tasks_new_mail', 'tasksAutoMail': 'tasks_auto_mail', 'tasksReport': 'tasks_report',
     'aiEncrypted': 'ai_encrypted', 'setAiEncrypted': 'set_ai_encrypted',
     'understandStatus': 'understand_status', 'setUnderstand': 'set_understand', 'understandPending': 'understand_pending',
     'understandFetch': 'understand_fetch', 'understandMail': 'understand_mail', 'understandCards': 'understand_cards',
-    'understandView': 'understand_view', 'understandCorrect': 'understand_correct', 'understandSetDone': 'understand_set_done', 'understandAnswered': 'understand_answered', 'understandRules': 'understand_rules',
+    'understandView': 'understand_view', 'understandCorrect': 'understand_correct', 'understandSetDone': 'understand_set_done', 'understandRules': 'understand_rules',
     'understandAddRule': 'understand_add_rule', 'understandDeleteRule': 'understand_delete_rule', 'understandClear': 'understand_clear',
     'memoryProjects': 'memory_projects', 'memoryProject': 'memory_project', 'memoryFacts': 'memory_facts', 'memoryRecent': 'memory_recent',
     'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryWeekBrief': 'memory_week_brief', 'memoryPerson': 'memory_person', 'followups': 'followups',
@@ -126,13 +126,13 @@ STREAM_METHODS = {'draftReply', 'writeFromNote', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.
 ARCHIVE_METHODS = {'archiveScan'}
 # 任务中心: one thread, so every task change and its export run one after another.
-TASK_METHODS = {name for name in BACKEND_METHODS if name.startswith('task')} | {'assistantPlanRun', 'assistantSent',
+TASK_METHODS = {name for name in BACKEND_METHODS if name.startswith('task')} | {'assistantPlanRun',
                                                                                 'assistantNudgeDismiss', 'assistantLinkRun', 'todayWaiting'}
 # assistantNudge reads the task's conversation from the server: the mail thread, like thread.
 # Called only by the app itself (the undo timer), never by the page.
 INTERNAL_METHODS = {'releaseSend': 'release_send'}
 # Events a pop-out reader may pass on to the main window.
-POPOUT_EVENTS = {'mailChanged', 'authRequired'}
+POPOUT_EVENTS = {'mailChanged', 'authRequired', 'afterSend'}  # afterSend: 发后跟进 shows in the main window.
 # One-shot documents for printing, served at hongyan://app/print/<token>.html.
 _PRINT_DOCS = {}
 BACKGROUND_METHODS = {'prefetch', 'networkCheck'}
