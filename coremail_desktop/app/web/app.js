@@ -566,7 +566,8 @@ const SUBJECT_PREFIX = /^\s*(?:re|fwd?|fw|回复|转发|答复)\s*(?:\[\d+\])?\s
 function threadKey(subject) {
   let s = String(subject || '').trim();
   for (let prev = null; prev !== s;) { prev = s; s = s.replace(SUBJECT_PREFIX, '').trim(); }
-  return s.replace(/\s+/g, ' ').toLowerCase();
+  s = s.replace(/\s+/g, ' ').toLowerCase();
+  return s.length >= 6 ? s : '';  // As the backend (app/conversation.py): a short subject is a conversation of its own.
 }
 function conversations(rows) {
   const byKey = new Map(); const items = [];

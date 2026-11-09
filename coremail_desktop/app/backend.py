@@ -20,6 +20,7 @@ from email.utils import getaddresses, parseaddr
 from pathlib import Path
 
 from coremail_desktop.app.cache import MailCache, date_ts
+from coremail_desktop.app.conversation import THREAD_SKIP, conversation_key, skip_folders, thread_key, thread_subject  # noqa: F401
 from coremail_desktop.app.searchfilter import SEARCH_FLAGS, SEARCH_TEXT, filter_match, search_filters  # noqa: F401 (also imported from here)
 from coremail_desktop.protocol import mailtime
 from coremail_desktop.compose.attachments import validate_attachments
@@ -315,23 +316,8 @@ def _card_view(card):
             'task': (card.get('task') or {}).get('id') or 0, 'why': (card.get('task') or {}).get('why') or ''}
 
 
-# Conversations: messages whose subjects match once reply/forward prefixes are gone.
-# The page groups its list with the same rule (threadKey in app.js).
-SUBJECT_PREFIX = re.compile(r'^\s*(?:re|fwd?|fw|回复|转发|答复)\s*(?:\[\d+\])?\s*[:：]\s*', re.I)
-THREAD_SKIP = ('trash', 'spam', 'virus', 'drafts')  # Folders a conversation does not reach into.
 CONTACT_SKIP = THREAD_SKIP  # Folders the 个人通讯录 scan does not read.
 AUTOMATED_ADDRESS = re.compile(r'(no-?reply|do-?not-?reply|mailer-daemon|postmaster|bounces?|notifications?|newsletter|alerts?|system)\b[^@]*@', re.I)
-
-
-def thread_subject(subject):
-    text, prev = str(subject or '').strip(), None
-    while prev != text:
-        prev, text = text, SUBJECT_PREFIX.sub('', text).strip()
-    return text
-
-
-def thread_key(subject):
-    return ' '.join(thread_subject(subject).split()).lower()
 
 
 def _cid_to_data(document, body_html):
@@ -1369,25 +1355,25 @@ class MailBackend:
         row = self.cache.summary(mid)
         if row is None:
             return '', None, []
-        key, box = thread_key(row.get('subject')), row.get('mailbox')
+        key, box = conversation_key(row.get('subject')), row.get('mailbox')
         if not key:
             return '', box, [row]
-        skip = {f['id'] for f in self._all_folders() if f.get('role') in THREAD_SKIP}
+        skip = skip_folders(self._all_folders())
         return key, box, self.cache.matching(lambda r: r.get('mailbox') == box and str(r.get('fid')) not in skip
-                                             and thread_key(r.get('subject')) == key)
+                                             and conversation_key(r.get('subject')) == key)
 
     def thread_counts(self, ids):
         """How many cached messages each listed message's conversation holds (instant)."""
-        skip = {f['id'] for f in self._all_folders() if f.get('role') in THREAD_SKIP}
+        skip = skip_folders(self._all_folders())
         counts = {}
         for r in self.cache.matching(lambda r: str(r.get('fid')) not in skip):
-            key = (r.get('mailbox'), thread_key(r.get('subject')))
+            key = (r.get('mailbox'), conversation_key(r.get('subject')))
             counts[key] = counts.get(key, 0) + 1
         result = {}
         for mid in list(ids or [])[:500]:
             row = isinstance(mid, str) and self.cache.summary(mid)
             if row:
-                key = thread_key(row.get('subject'))
+                key = conversation_key(row.get('subject'))
                 result[mid] = counts.get((row.get('mailbox'), key), 1) if key else 1
         return result
 
@@ -1401,7 +1387,7 @@ class MailBackend:
             try:
                 found = self._online(self.adapter.search_messages, subject[:200], 0, 100, filters={'scope': 'subject'})
                 fresh = [_summary_dict(item) for item in found['messages']]
-                fresh = [r for r in fresh if thread_key(r['subject']) == key and not self.cache.summary(r['id'])]
+                fresh = [r for r in fresh if conversation_key(r['subject']) == key and not self.cache.summary(r['id'])]
                 for fid in {str(r['fid']) for r in fresh}:
                     self.cache.put_summaries(fid, [r for r in fresh if str(r['fid']) == fid])
                 if fresh:
@@ -3685,10 +3671,10 @@ class MailBackend:
         from coremail_desktop.tasks.rules import OPEN_STATUSES
         center = self._tasks()
         summary = (self.cache.summary(mid) if self.cache else None) or self._archive_summary(mid) or {}
-        key = thread_key(summary.get('subject') or '')
+        key = conversation_key(summary.get('subject') or '')
         ids = []
         for link in center.store.links():
-            same = link['mid'] == mid or (len(key) >= 6 and thread_key(link.get('subject') or '') == key)
+            same = link['mid'] == mid or (key and conversation_key(link.get('subject') or '') == key)
             if same and link['task'] not in ids:
                 ids.append(link['task'])
         tasks = center.store.tasks
@@ -3701,8 +3687,8 @@ class MailBackend:
             return {}
         threads = {}
         for link in self._tasks().store.links():
-            key = thread_key(link.get('subject') or '')
-            if len(key) < 6:
+            key = conversation_key(link.get('subject') or '')
+            if not key:
                 continue  # A very short subject would match unrelated mail.
             entry = threads.setdefault(link['task'], {'keys': set(), 'mids': set(), 'after': 0.0})
             entry['keys'].add(key)
@@ -3711,11 +3697,11 @@ class MailBackend:
         if not threads:
             return {}
         keys = set().union(*(t['keys'] for t in threads.values()))
-        skip = {f['id'] for f in self._folders if f.get('role') in ('trash', 'spam', 'virus', 'drafts')}
-        rows = self.cache.matching(lambda r: not r.get('mailbox') and r.get('fid') not in skip and thread_key(r.get('subject') or '') in keys)
+        skip = skip_folders(self._folders)
+        rows = self.cache.matching(lambda r: not r.get('mailbox') and r.get('fid') not in skip and conversation_key(r.get('subject') or '') in keys)
         found = {}
         for task_id, entry in threads.items():
-            new = [r for r in rows if thread_key(r['subject']) in entry['keys'] and r['id'] not in entry['mids'] and r['ts'] > entry['after']]
+            new = [r for r in rows if conversation_key(r['subject']) in entry['keys'] and r['id'] not in entry['mids'] and r['ts'] > entry['after']]
             if new:
                 new.sort(key=lambda r: r['ts'])
                 found[task_id] = [{'id': r['id'], 'subject': r['subject'], 'from': r.get('fromName') or r['from'], 'date': r['date']} for r in new[-10:]]
@@ -5054,12 +5040,12 @@ class MailBackend:
         now, mine = time.time(), self._mine()
         cutoff, ready = now - UNDERSTAND_DAYS * 86400, now - FOLLOWUP_DAYS * 86400
         dismissed = set(self.memory.get('followupDismissed') or [])
-        skip = {f['id'] for f in folders if f.get('role') in THREAD_SKIP}
+        skip = skip_folders(folders)
         mail = self.cache.matching(lambda r: not r.get('mailbox') and (r.get('ts') or 0) >= cutoff and r['fid'] not in skip
                                    and not r['flags'].get('draft') and not r['flags'].get('scheduleDelivery'))
         threads = {}
         for r in mail:
-            threads.setdefault(thread_key(r.get('subject') or ''), []).append(r)
+            threads.setdefault(conversation_key(r.get('subject') or ''), []).append(r)
         out = []
         for r in mail:
             if r['fid'] not in sent or r['ts'] > ready or r['id'] in dismissed or not ASKING.search(f"{r.get('subject') or ''} {r.get('preview') or ''}"):
@@ -5067,8 +5053,8 @@ class MailBackend:
             to = [(n, a) for n, a in getaddresses([r.get('to') or '']) if a and a.casefold() not in mine]
             if not to:
                 continue
-            key = thread_key(r.get('subject') or '')
-            later = [x for x in threads.get(key, ()) if x['ts'] > r['ts'] and x['id'] != r['id']] if len(key) >= 4 else []
+            key = conversation_key(r.get('subject') or '')
+            later = [x for x in threads.get(key, ()) if x['ts'] > r['ts'] and x['id'] != r['id']] if key else []
             if any(x['fid'] in sent or (x.get('fromEmail') or '').casefold() not in mine for x in later):
                 continue  # Answered, or followed up already (the newest of mine is the one to chase).
             out.append({**r, 'waiting': int((now - r['ts']) // 86400), 'toNames': '、'.join(n or a for n, a in to[:5])})
