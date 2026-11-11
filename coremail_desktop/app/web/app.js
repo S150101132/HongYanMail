@@ -509,7 +509,10 @@ async function loadList(reset) {
   } catch (err) {
     if (token !== S.listToken) return;
     if (!reset) { S.loading = false; S.moreFailed = true; renderList(); return; }
-    if (S.rows.length) showOffline('无法连接服务器，正在显示本机缓存。');
+    // Only a network/TLS failure is an outage worth diagnosing; any other code is the server's answer.
+    const offline = err && (err.code === 'NETWORK_ERROR' || err.code === 'TLS_ERROR');
+    if (S.rows.length && offline) showOffline('无法连接服务器，正在显示本机缓存。');
+    else if (S.rows.length) showListError(`${err.message || '收信失败'} 正在显示本机缓存。`);
     else $('#mail-list').innerHTML = `<div class="list-foot">${esc(err.message)}<br><br><button class="btn ghost" onclick="loadList(true)">重试</button></div>`;
   } finally { if (token === S.listToken) S.loading = false; }
   // Still at the bottom (a short page, or the scroll ended while this page loaded): keep going.
@@ -548,6 +551,12 @@ function checkNetwork(text) {
     bar.innerHTML = `${esc(text)}<br><b>${esc(netVerdict(r))}</b> <a href="#" class="net-again">${r.failed ? '重新检测' : '重新收信'}</a>`;
     bar.querySelector('.net-again').onclick = (e) => { e.preventDefault(); r.failed ? checkNetwork(text) : $('#btn-refresh').click(); };
   }).catch(() => { if (!bar.classList.contains('hidden')) bar.textContent = text; });
+}
+function showListError(text) {
+  const bar = $('#sync-bar');
+  bar.classList.remove('hidden'); delete bar.dataset.net; bar.title = '';
+  bar.innerHTML = `${esc(text)} <a href="#" class="net-again">重新收信</a>`;
+  bar.querySelector('.net-again').onclick = (e) => { e.preventDefault(); $('#btn-refresh').click(); };
 }
 function hideOffline() { const bar = $('#sync-bar'); bar.classList.add('hidden'); delete bar.dataset.net; bar.title = ''; }
 function dedupe(rows) { const seen = new Set(); return rows.filter((r) => !seen.has(r.id) && seen.add(r.id)); }
