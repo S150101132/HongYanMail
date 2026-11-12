@@ -29,10 +29,6 @@ shot_dir = tempfile.mkdtemp(prefix='hongyan-shot-', dir=str(ROOT / 'build'))
 atexit.register(shutil.rmtree, shot_dir, True)
 backend = MailBackend(shot_dir, adapter_factory=DemoAdapter)
 backend.login('https://demo.invalid/coremail/', 'demo@example.invalid', 'demo', True)
-from coremail_desktop.ai.trending import demo_get  # noqa: E402
-backend.trending_get = demo_get  # G1: never the real GitHub.
-from coremail_desktop.app import news  # noqa: E402
-backend.news_get = news.demo_get  # G2: nor 36氪.
 from coremail_desktop.app.demo import DemoNetProbe  # noqa: E402
 backend.net_probe = DemoNetProbe(backend)  # 网络检测 (N1): nor the real network.
 backend.set_prefs({'theme': theme, 'signature': '<b>演示用户</b><br>研发中心 · 产品部<br><span style="color:#2563eb">demo@example.invalid</span>'})
@@ -329,11 +325,9 @@ STEPS += [
     (900, m2_setup, None),
     (600, "S.prefs.understand = 'on'; S.prefs.memoryFacts = true; api('closeReaders'); selectFolder('1'); renderFolders(); ucRound()", None),
     (12000, "ucRound()", None),
-    (12000, "UC.cards.clear(); memReset(); showToday()", None),
-    (1500, "document.body.offsetWidth", 'g2-daily'),  # G2: 每日速览, a page of its own.
-    (500, "$('#daily-view .dv-story').click()", 'g2-daily-open'),
+    (12000, "UC.cards.clear(); memReset(); showToday('wait')", 'r2-wait'),
     (900, "showAsk()", 'r2-ask-today'),
-    (500, "hideAsk(); showToday('wait')", 'r2-wait'),
+    (500, "hideAsk()", None),
     (500, "$('#search').value = 'hongyan-walk-no-match'; $('#search').dispatchEvent(new Event('input'))", 'r3-search-from-today'),  # V1
     (500, "clearSearch(); $('#search').value = ''", None),
     (900, "MEM.week = 0; showToday('week')", 'r2-week'),

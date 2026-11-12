@@ -39,7 +39,6 @@ DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify'
                  'listGist': True,  # The list's second line shows the card's 要点 instead of the body's start.
                  'colorAccent': '',  # U2: the 多彩 theme's main colour '#rrggbb'; '' is the built-in violet.
                  'toolbar': 'lean',  # A4: 'lean' folds low-use buttons into ⋯ / 格式 / the send menu; 'full' shows them all.
-                 'startPage': 'inbox',  # R2a/R3b: 'inbox' opens the 收件箱 after signing in, 'today' GitHub Trending (G1).
                  'memoryFacts': False,  # R3c: the 理解层 also keeps project facts (工作记忆); off: it only sorts mail.
                  'notesFromMail': True,  # Me4: the 理解层 keeps 资料 (who does what) from mail, each change undoable.
                  'hiddenFolders': [],  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
@@ -390,8 +389,6 @@ class MailBackend:
         self.memory = None  # 理解层 (memory/store.py): cards and correction rules of this account.
         self._understand_failed = {}  # mid -> code: mail the 理解层 could not read this session (not retried).
         self.ai_client = None  # Demo and tests: a stand-in chat client used instead of the configured one.
-        self.trending_get = None  # GitHub Trending (G1): demo and tests pass a stand-in for the network.
-        self.news_get = None  # 每日速览 (G2): the same for 36氪's feed.
         self.sentence_get = None  # 每日一句: the same for its feed.
         self._sentence_tried = 0
         self.net_probe = None  # 网络检测: demo and tests pass a stand-in for the network primitives.
@@ -576,8 +573,6 @@ class MailBackend:
             prefs['closeAction'] = ''
         if prefs['understand'] not in ('', 'on', 'off'):
             prefs['understand'] = ''
-        if prefs['startPage'] not in ('today', 'inbox'):
-            prefs['startPage'] = 'inbox'
         if prefs['toolbar'] not in ('lean', 'full'):
             prefs['toolbar'] = 'lean'
         if not re.fullmatch(r'#[0-9a-fA-F]{6}', prefs['colorAccent']):
@@ -4192,77 +4187,7 @@ class MailBackend:
         self.memory.put_card(mid, {**card, 'answered': how})
         return {'changed': [mid]}
 
-    # 每日速览 (G2): 36氪 9点1氪 ---------------------------------------------------------
-    def daily_news(self, refresh=False):
-        """The newest 9点1氪, kept in news/latest.json. Today's issue is read once; before it
-        comes out the feed is looked at again at most every 30 minutes. Offline, the last
-        issue shows with a note."""
-        from coremail_desktop.app import news
-        now, path = datetime.now(), self.data_dir / 'news' / 'latest.json'
-        try:
-            saved = json.loads(path.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            saved = {}
-        brief, checked = saved.get('brief'), saved.get('checked') or ''
-        fresh = brief and brief['date'] == now.strftime('%Y-%m-%d') or checked > (now - timedelta(minutes=30)).isoformat(timespec='seconds')
-        if saved and fresh and not refresh:
-            return {'brief': brief, 'checked': checked[11:16], 'error': ''}
-        try:
-            brief = news.fetch(self.news_get) or brief
-        except AppError as err:
-            if not brief:
-                raise
-            return {'brief': brief, 'checked': checked[11:16], 'error': '', 'errorCode': err.code}
-        checked = now.isoformat(timespec='seconds')
-        try:
-            path.parent.mkdir(exist_ok=True)
-            path.write_text(json.dumps({'brief': brief, 'checked': checked}, ensure_ascii=False), encoding='utf-8')
-        except OSError:
-            pass  # A blocked data folder must not hide the news.
-        return {'brief': brief, 'checked': checked[11:16], 'error': ''}
-
-    # GitHub Trending (G1) ----------------------------------------------------------
-    def trending(self, refresh=False):
-        """Today's GitHub Trending with a Chinese intro per repository, made once a day and kept
-        in trending/<date>.json (public data only). Without AI, or when it fails, the English
-        descriptions show and the intros are tried again the next time the page opens."""
-        from coremail_desktop.ai import trending
-        now = datetime.now()
-        folder = self.data_dir / 'trending'
-        path = folder / (now.strftime('%Y-%m-%d') + '.json')
-        try:
-            saved = json.loads(path.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            saved = None
-        if saved and saved.get('v') != trending.TRENDING_VERSION:
-            saved = None
-        ready = self.ai_settings()['ready']
-        if saved and not refresh and (saved['ai'] or not ready):
-            return saved
-        repos = saved['repos'] if saved and not refresh else trending.fetch(self.trending_get)
-        ai, error = False, ''
-        if ready:
-            try:
-                docs = trending.readmes(repos, self.trending_get)
-                content, _ = self._ai_call(trending.build_messages(repos, docs), max_tokens=trending.TRENDING_TOKENS, json_mode=True)
-                intros = trending.parse_intros(content, [r['name'] for r in repos])
-                for r in repos:
-                    r['intro'] = intros.get(r['name'], '')
-                ai = True
-            except AppError as err:
-                error = err.code
-        result = {'date': now.strftime('%Y-%m-%d'), 'at': now.strftime('%H:%M'), 'repos': repos, 'ai': ai, 'ready': ready,
-                  'error': '', 'errorCode': error, 'v': trending.TRENDING_VERSION}
-        try:
-            folder.mkdir(exist_ok=True)
-            path.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
-            for old in sorted(folder.glob('*.json'))[:-7]:  # A week of days is plenty.
-                old.unlink()
-        except OSError:
-            pass  # A blocked data folder must not hide the list.
-        return result
-
-    # 在等别人 (R2a; a sub-page of Trending since G1) ------------------------------------
+    # 在等别人 (R2a; reached from the 命令框) ------------------------------------
     def today_waiting(self):
         """在等别人: sent mail nobody answered and 受阻 tasks."""
         center = self._tasks()

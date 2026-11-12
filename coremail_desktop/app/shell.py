@@ -101,7 +101,7 @@ BACKEND_METHODS = {
     'understandAddRule': 'understand_add_rule', 'understandDeleteRule': 'understand_delete_rule', 'understandClear': 'understand_clear',
     'memoryProjects': 'memory_projects', 'memoryProject': 'memory_project', 'memoryFacts': 'memory_facts', 'memoryRecent': 'memory_recent',
     'memoryCorrect': 'memory_correct', 'memoryWeek': 'memory_week', 'memoryWeekBrief': 'memory_week_brief', 'memoryPerson': 'memory_person', 'followups': 'followups',
-    'todayWaiting': 'today_waiting', 'trending': 'trending', 'dailyNews': 'daily_news',
+    'todayWaiting': 'today_waiting',
     'followupDismiss': 'followup_dismiss',
     'aboutMe': 'about_me', 'aboutEntry': 'about_entry', 'aboutAdd': 'about_add', 'aboutPrepare': 'about_prepare', 'aboutDraft': 'about_draft',
     'aboutPending': 'about_pending', 'aboutRestore': 'about_restore', 'aboutRemove': 'about_remove', 'assistantRememberRun': 'assistant_remember_run',
@@ -120,7 +120,7 @@ FAST_METHODS = {'savedLogin', 'profile', 'prefs', 'cachedView', 'searchLocal', '
 # AI calls take up to a minute: their own thread, so mail work never waits behind them.
 AI_METHODS = {'summarize', 'aiTest', 'aiModels', 'askMailbox', 'tasksCommand', 'tasksFromMail', 'taskStoryTitles', 'tasksAutoMail', 'tasksReport',
               'replyIdeas', 'draftReply', 'writeFromNote', 'styleTables', 'summarizeThread', 'understandMail', 'assistantDraftWrite',
-              'memoryWeekBrief', 'trending', 'dailyNews', 'aboutDraft', 'contactCompanies', 'notesBackfill'}
+              'memoryWeekBrief', 'aboutDraft', 'contactCompanies', 'notesBackfill'}
 # Streamed AI text: each piece reaches the page as an aiStream event.
 STREAM_METHODS = {'draftReply', 'writeFromNote', 'assistantDraftWrite'}
 # Scanning the local archive takes minutes the first time: a thread of its own.

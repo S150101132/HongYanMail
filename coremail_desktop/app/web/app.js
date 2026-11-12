@@ -400,7 +400,7 @@ for (const [key, sp] of Object.entries(SPLITS)) {
 const ROLE_ICON = { inbox: 'inbox', drafts: 'drafts', sent: 'sent', trash: 'trash', spam: 'spam', virus: 'virus' };
 // 设置 › 左侧栏显示: hidden folders (and their subfolders) stay out of the sidebar unless open.
 const LOCAL_NAV = [['scheduled', '定时发送', '#nav-scheduled'], ['outbox', '发件箱', '#nav-outbox'], ['drafts', '本机草稿', '#nav-drafts'],
-  ['archive', '本地存档', '#nav-archive'], ['today', '每日速览', '#nav-today'], ['tasks', '任务', '#nav-tasks'],
+  ['archive', '本地存档', '#nav-archive'], ['tasks', '任务', '#nav-tasks'],
   ['contacts', '通讯录', '#nav-contacts']];
 function folderShown(f) {
   const hidden = S.prefs.hiddenFolders || [];
@@ -2001,7 +2001,6 @@ function openSettings() {
   $('#pref-notify').checked = !!p.notify; $('#pref-markread').checked = !!p.markReadOnOpen;
   $('#pref-autostart').checked = !!p.autostart;
   $('#pref-close').value = p.closeAction || '';
-  $('#pref-start').value = p.startPage || 'inbox';
   // The first-close dialog may have remembered a choice since the page last read prefs.
   api('prefs').then((fresh) => { S.prefs.closeAction = fresh.closeAction; $('#pref-close').value = fresh.closeAction || ''; }).catch(() => {});
   $('#pref-undo').value = String(p.undoSeconds ?? 10); $('#pref-precheck').checked = p.precheck !== false;
@@ -2046,7 +2045,7 @@ $$('#settings [data-close]').forEach((b) => (b.onclick = () => { $('#settings').
 $('#btn-save-settings').onclick = async () => {
   const values = { theme: $('#theme-seg .on').dataset.theme, density: $('#density-seg .on').dataset.density, toolbar: $('#toolbar-seg .on').dataset.toolbar, colorAccent: accentDraft(), pollSeconds: +$('#pref-poll').value,
     notify: $('#pref-notify').checked, markReadOnOpen: $('#pref-markread').checked, autostart: $('#pref-autostart').checked, undoSeconds: +$('#pref-undo').value, precheck: $('#pref-precheck').checked, signature: signatureHtml(), tables: tablePrefs(),
-    closeAction: $('#pref-close').value, startPage: $('#pref-start').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
+    closeAction: $('#pref-close').value, hiddenFolders: $$('#pref-side input[data-side]').filter((c) => !c.checked).map((c) => c.dataset.side) };
   try {
     S.prefs = await api('setPrefs', { values });
     applyTheme(S.prefs.theme, S.prefs.density);

@@ -145,10 +145,6 @@ def run_app(demo=False,minimized=False,eml=None):
         atexit.register(shutil.rmtree,demo_dir,True)
         backend=MailBackend(demo_dir,adapter_factory=DemoAdapter)
         backend.ai_client=DemoAiClient()
-        from .ai.trending import demo_get
-        backend.trending_get=demo_get
-        from .app import news
-        backend.news_get=news.demo_get
         from .app.demo import DemoNetProbe
         backend.net_probe=DemoNetProbe(backend)
         backend.login('https://demo.invalid/coremail/','demo@example.invalid','demo',True)

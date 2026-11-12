@@ -61,7 +61,6 @@ const ICONS = {
   summary: '<path d="M4 5h9M4 10h12M4 15h16M4 20h10"/>' + AI_MARK,
   'task-ai': '<path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m8 13 2.5 2.5L16 10"/>' + AI_MARK,
   'write-ai': '<path d="M4 20l.9-3.7 9.6-9.6 2.8 2.8-9.6 9.6Z"/><path d="m12.6 8.6 2.8 2.8M13 20h8"/>' + AI_MARK,
-  brief: '<path d="M4 4h12v15a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2Z"/><path d="M16 9h4v10a2 2 0 0 1-4 0M8 8h4M8 12h4M8 16h4"/>',
   sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
   caret: '<path d="m6 9 6 6 6-6"/>',
   route:'<circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H17a3.5 3.5 0 0 0 0-7H7a3.5 3.5 0 0 1 0-7h8.5"/>',

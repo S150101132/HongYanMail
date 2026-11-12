@@ -703,9 +703,6 @@ class DemoAiClient:
             return json.dumps({'ideas': [{'label': '同意并确认', 'hint': '答应对方的要求，确认时间（演示）'},
                                          {'label': '先问清楚', 'hint': '请对方补充缺少的信息（演示）'},
                                          {'label': '婉拒或改期', 'hint': '说明原因，提出别的时间（演示）'}]}, ensure_ascii=False), 0
-        if '今天 GitHub Trending' in messages[0]['content']:
-            from coremail_desktop.ai.trending import demo
-            return demo(messages), 0
         if '鸿雁每周概要助手' in messages[0]['content']:
             from coremail_desktop.ai.weekly import demo
             return demo(messages), 0
