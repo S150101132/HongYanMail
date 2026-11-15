@@ -1095,7 +1095,9 @@ function externalLinks(doc) {
 }
 function renderFlagButton() { $$('.reader-toolbar [data-act="flag"]').forEach((b) => b.classList.toggle('on', !!(S.message && S.message.flags.flagged))); }
 function renderBody(m) {
+  const report = !m.html && monitorReport(m.subject, m.text);  // 服务器巡检邮件（H1，web/monitor.js）
   if (m.html) writeFrame(m.html, { remote: S.allowRemote.has(m.id), paper: true });
+  else if (report) writeFrame(report, {});
   else writeFrame(`<div style="white-space:pre-wrap">${linkify(m.text || '')}</div>`, {});
 }
 function writeFrame(html, opts = {}) {
@@ -1105,7 +1107,7 @@ function writeFrame(html, opts = {}) {
   const fg = dark && !paper ? '#e6e9ef' : '#1d2433';
   const csp = `default-src 'none'; style-src 'unsafe-inline'; img-src data: ${opts.remote ? 'https: http:' : ''}; font-src data:`;
   frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
-    <style>html{background:${paper ? '#fff' : 'transparent'};${paper ? 'border-radius:10px;' : ''}overflow-y:hidden}
+    <style>html{color-scheme:${dark && !paper ? 'dark' : 'light'};background:${paper ? '#fff' : 'transparent'};${paper ? 'border-radius:10px;' : ''}overflow-y:hidden}
     body{margin:0;padding:${paper ? '18px 20px' : '0'};color:${fg};font:14.5px/1.7 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;word-wrap:break-word;overflow-wrap:anywhere;overflow-x:auto}
     img{max-width:100%;height:auto} a{color:${dark && !paper ? '#7aa2ff' : '#2563eb'}} pre{white-space:pre-wrap}
     blockquote{margin:0 0 0 4px;padding-left:12px;border-left:3px solid #d0d5dd;color:${dark && !paper ? '#b3bac7' : '#475467'}}

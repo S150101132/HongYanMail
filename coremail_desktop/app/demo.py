@@ -53,6 +53,16 @@ def demo_certificate(email):
 OUTLOOK_DEMO_ID = 'demo3'
 INVITE_ID, CANCEL_ID = 'demo10', 'demo14'  # Meeting request / cancellation (text/calendar parts).
 INVITES = {INVITE_ID: '邀请：设计评审第二轮（演示）', CANCEL_ID: '已取消：服务器迁移方案沟通（演示）'}
+MONITOR_ID = 'demo40'  # 服务器巡检邮件（H1）: plain text in the [OT-MON] shape, synthetic hosts.
+MONITOR_TEXT = '\r\n'.join([
+    'CHANGED ITEMS', 'CHANGE: job_logs:minio_dr UNKNOWN no matching result line', '', 'CURRENT STATUS', 'CHECK\tLEVEL\tMESSAGE',
+    'gr_members\tOK\tPRIMARY=10.0.1.11; all members ONLINE', 'gr_queue:10.0.1.11\tOK\tremote_applier=0, queue=0',
+    'read_only:10.0.1.12\tOK\tsuper_read_only=1 expected=1', 'binlog:10.0.1.11\tOK\t279.33 GiB',
+    'backup\tOK\tFULL SUCCESS end=2026-10-17 09:32:11 age=1.0h PRIMARY=10.0.1.11',
+    'proxysql_writer\tOK\twriter=10.0.1.11 GR PRIMARY=10.0.1.11', 'bi_site\tOK\thttps://10.0.1.15:8080/ HTTP 200',
+    'local_disk\tOK\t/ 6%; /opt/oss 25%', 'remote_disk:root@10.0.1.12\tWARNING\t/opt/oss 86%',
+    'job_logs:meb\tOK\tage=1.0h; [2026-10-17 09:34:41] BACKUP OK type=full size=8.9G',
+    'job_logs:minio_dr\tUNKNOWN\tno matching result line', 'monitor_self\tOK\tchecker healthy', 'Disclaimer: synthetic demo footer.', ''])
 _TINY_PNG = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
              b'\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\xa7\xc1\x9b\xb7\x00\x00\x00\x00IEND\xaeB`\x82')
 
@@ -118,6 +128,8 @@ class DemoAdapter:
         # Two existing inbox rows carry them, so folder counts stay as the other tests expect.
         for mid, subject in INVITES.items():
             self.rows[mid].update(subject=subject, **{'from': '"张晓明" <zhangxm@example.invalid>'})
+        self.rows[MONITOR_ID].update(subject='[OT-MON] CHECK WARNING 2026-10-17 10:20:06', text=MONITOR_TEXT, **{'from': '<noc@example.invalid>'})
+        self.rows[MONITOR_ID]['flags']['attached'] = False
         # Server-shaped mail rules, auto-reply attributes and tags (see protocol/rules.py).
         self.rules = [{'id': 100, 'name': '项目归档', 'continue': True,
                        'condictions': [{'field': 'from', 'operator': '=', 'operand': 'product@example.invalid,rd@example.invalid', 'ignoreCase': True,
@@ -228,6 +240,9 @@ class DemoAdapter:
             cancel = message_id == CANCEL_ID
             message.set_content('张晓明 邀请你参加会议。（合成演示数据）')
             message.add_alternative(_demo_ics(cancel), subtype='calendar', params={'method': 'CANCEL' if cancel else 'REQUEST'})
+            return bytes(message)
+        if r.get('text'):  # Plain text only, as the monitoring mail arrives.
+            message.set_content(r['text'])
             return bytes(message)
         message.set_content('各位同事：本周的设计评审已经完成。（合成演示数据）')
         if r.get('html'):

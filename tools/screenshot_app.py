@@ -39,6 +39,7 @@ window.show()
 STEPS = [
     (2500, None, None),
     (600, "selectMessage(visibleRows()[0].id)", 'main'),
+    (900, "selectMessage('demo40')", 'monitor-report'),  # 服务器巡检邮件 (H1).
     # 精简工具栏 (A4): the folded buttons in ⋯, then the same screen with 完整.
     (600, "$('#reader-body [data-act=\"more\"]').click()", 'lean-more'),
     (500, "hideMenu(); document.documentElement.classList.remove('tb-lean')", 'full-main'),
