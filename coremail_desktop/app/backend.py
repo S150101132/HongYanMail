@@ -42,6 +42,7 @@ DEFAULT_PREFS = {'theme': 'system', 'signature': '', 'pollSeconds': 60, 'notify'
                  'memoryFacts': False,  # R3c: the 理解层 also keeps project facts (工作记忆); off: it only sorts mail.
                  'notesFromMail': True,  # Me4: the 理解层 keeps 资料 (who does what) from mail, each change undoable.
                  'hiddenFolders': [],  # Sidebar entries the user chose not to show: folder ids, or 'local:<entry>'.
+                 'autoSave': {},  # W10: folder id -> a local folder; mail opened there is saved into it as .eml once.
                  'tables': {}}  # T2 表格: theme / headAlign / dateAlign / keepColors chosen by the user (TABLE_PREFS).
 CLOSE_ACTIONS = ('', 'tray', 'quit')
 TABLE_PREFS = {'theme': ('auto', 'business', 'compact', 'report'), 'headAlign': ('column', 'left', 'center'),
@@ -585,6 +586,8 @@ class MailBackend:
         prefs['tables'] = {k: v for k, v in prefs['tables'].items() if k in TABLE_PREFS and v in TABLE_PREFS[k] and type(v) is type(TABLE_PREFS[k][0])}
         hidden = [v for v in prefs['hiddenFolders'] if isinstance(v, str) and 0 < len(v) <= 200]
         prefs['hiddenFolders'] = list(dict.fromkeys(hidden))[:300]
+        prefs['autoSave'] = dict(list({k: v for k, v in prefs['autoSave'].items() if isinstance(k, str) and 0 < len(k) <= 200
+                                       and isinstance(v, str) and 0 < len(v) <= 240 and Path(v).is_absolute()}.items())[:20])
         if self.autostart is not None and type(values.get('autostart')) is bool:
             prefs['autostart'] = self.autostart.set_enabled(values['autostart'])
         self.cache.set('prefs', prefs)
@@ -858,6 +861,9 @@ class MailBackend:
         if invitation:
             result['invitation'] = {**invitation, 'answer': (self.cache.get('inviteAnswers') or {}).get(mid),
                                     'canAnswer': not result['mailbox'] and hasattr(self.adapter, 'respond_invitation')}
+        folder = self.prefs()['autoSave'].get(result['fid'] or '')
+        if folder and not result['mailbox'] and not self._local_only(mid):
+            result['autoSaved'] = self._auto_save(mid, Path(folder))
         if mark_read is None:
             mark_read = self.prefs()['markReadOnOpen']
         if result['mailbox'] and not result['mailbox']['rw']:
@@ -1966,6 +1972,29 @@ class MailBackend:
         stem = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', ' ', subject).strip(' .')[:80]
         return stem or '邮件'
 
+    def _auto_save(self, mid, folder):
+        """W10: the opened mail as its original .eml in the folder chosen for its mail folder.
+        'saved', 'exists' (a file of that name with the same bytes, e.g. saved by hand
+        earlier) or 'failed'; a different file of the same name gets a numbered name."""
+        try:
+            name, data = self.export_eml(mid)
+            stem, target, n = name[:-4], folder / name, 1
+            while target.exists():
+                if target.stat().st_size == len(data) and target.read_bytes() == data:
+                    return 'exists'
+                n += 1
+                target = folder / f'{stem} ({n}).eml'
+            folder.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            return 'saved'
+        except (OSError, AppError) as error:
+            try:
+                with open(self.data_dir / 'autosave-errors.log', 'a', encoding='utf-8') as stream:
+                    stream.write(f'{datetime.now():%Y-%m-%d %H:%M:%S} {type(error).__name__} {getattr(error, "code", "")}\n')
+            except OSError:
+                pass
+            return 'failed'
+
     def export_eml(self, mid, decrypted=False):
         """(file name, bytes) of the message. By default the original as stored on the
         server, so encrypted mail stays encrypted; decrypted=True gives the readable
@@ -2785,7 +2814,8 @@ class MailBackend:
     # AI 写信 / 帮我起草回复 / 发送前检查 (ai/writing.py, ai/precheck.py) ----------
     def reply_ideas(self, mid, allow_encrypted=False):
         """2–3 directions to answer this mail ({label, hint})."""
-        from coremail_desktop.ai.writing import IDEA_TOKENS, idea_messages, parse_ideas
+        from email.utils import getaddresses
+        from coremail_desktop.ai.writing import IDEA_TOKENS, idea_messages, mail_addresses, parse_ideas
         mid = str(mid)
         if self.cache is None:
             raise AppError('NOT_AUTHENTICATED')
@@ -2793,7 +2823,16 @@ class MailBackend:
         document, encrypted = self._ai_document(mid, allow_encrypted)
         content, _ = self._ai_call(self._with_about(idea_messages(document, (self.cache.summary(mid) or {}).get('date') or ''), seen=self._seen([document])),
                                    max_tokens=IDEA_TOKENS, json_mode=True)
-        return {'ideas': parse_ideas(content), 'encrypted': encrypted}
+        # An idea may write to an address the mail itself gives (not the sender's, not mine).
+        sender = [a for _, a in getaddresses(list(document.headers.get('from', ())))]
+        addresses = mail_addresses(document, [*sender, self.account or '', *self.identities])
+        return {'ideas': parse_ideas(content, addresses), 'encrypted': encrypted}
+
+    def _my_names(self):
+        """The user's display name (and its parts: 'Wang Biao (王标)' -> 'Wang Biao', '王标') and
+        addresses: a draft's trailing lines holding one are a signature (writing.tidy_draft)."""
+        name = self.display_name or ''
+        return [name, *(p.strip() for p in re.split(r'[()（）]', name)), self.account or '', *self.identities]
 
     def draft_reply(self, mid, idea='', note='', allow_encrypted=False, req='', progress=None):
         """The body of a reply in the chosen direction, streamed. Recipients, subject and
@@ -2805,7 +2844,7 @@ class MailBackend:
         self._ai()
         document, _ = self._ai_document(mid, allow_encrypted)
         messages = self._with_about(draft_messages(document, idea, note, (self.cache.summary(mid) or {}).get('date') or ''), seen=self._seen([document]))
-        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
+        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS), self._my_names())}
 
     def write_from_note(self, note, subject='', to=(), cc=(), mid='', how='new', allow_encrypted=False, rounds=(),
                         req='', progress=None):
@@ -2835,7 +2874,7 @@ class MailBackend:
         messages = self._with_about(note_messages(note, subject, who(to), who(cc), document, date, how, rounds, self._style_samples(external)),
                                     seen=self._seen([document] if document else [], [str(p.get('email') or '') for p in [*to, *cc] if isinstance(p, dict)],
                                                     subject if isinstance(subject, str) else ''))
-        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
+        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS), self._my_names())}
 
     def _style_samples(self, external):
         """学习写作风格 (W6): what the user wrote in their latest sent mail to the same kind of
@@ -3362,7 +3401,7 @@ class MailBackend:
             messages = new_messages(entry['purpose'], points, [c['name'] for c in entry['contacts']], fields)
         seen = self._seen([document], text=entry['purpose']) if entry['reply'] else             self._seen(addresses=[c['email'] for c in entry['contacts']], text=' '.join((entry['subject'], fields.get('system', ''))))
         messages = self._with_about(messages, seen=seen)
-        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS))}
+        return {'text': tidy_draft(self._ai_stream(messages, progress, str(req)[:40], WRITE_TOKENS), self._my_names())}
 
     def assistant_sent(self, plan):
         """A drafted mail went out (sent or queued): a progress line proposed for its task,

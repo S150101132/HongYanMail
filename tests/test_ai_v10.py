@@ -90,6 +90,25 @@ class WritingTest(unittest.TestCase):
             with self.assertRaises(AppError):
                 writing.parse_ideas(bad)
 
+    def test_idea_writes_only_to_an_address_the_mail_gives(self):
+        document = SimpleNamespace(headers={'subject': ('报销',), 'from': ('钱 <qh@inspur.com>',)}, html=None, attachments=(),
+                                   text='请给财务部CW@inspur.com发个邮件；也可抄送 qh@inspur.com，或问 me@inspur.com。')
+        allowed = writing.mail_addresses(document, ['qh@inspur.com', 'ME@inspur.com'])
+        self.assertEqual(allowed, {'cw@inspur.com'})  # Chinese right next to it is not part of the address.
+        # No "to", but the address in its words: taken from there and put first.
+        named = writing.parse_ideas(json.dumps({'ideas': [{'label': '先确认单号', 'hint': '补充单号'},
+                                                          {'label': '按指引转财务部', 'hint': '抄送 cw@inspur.com 请分配审核人'}]}, ensure_ascii=False), allowed)
+        self.assertEqual([(i['label'], i.get('to')) for i in named], [('按指引转财务部', 'cw@inspur.com'), ('先确认单号', None)])
+        content = json.dumps({'ideas': [{'label': '给财务部写信', 'hint': '请分配审核人', 'to': 'cw@inspur.com'},
+                                        {'label': '回复钱老师', 'hint': '道谢', 'to': 'qh@inspur.com'},  # The sender: a plain reply.
+                                        {'label': '编一个', 'hint': '不行', 'to': 'made@up.com'}]}, ensure_ascii=False)
+        ideas = writing.parse_ideas(content, allowed)
+        self.assertEqual([i.get('to') for i in ideas], ['cw@inspur.com', None, None])
+        self.assertEqual([i.get('to') for i in writing.parse_ideas(content)], [None, None, None])
+        messages = writing.note_messages('给财务部写信：请分配审核人', '报销', ['cw（同事）'], document=document, how='followup')
+        self.assertIn('按收到的邮件的要求另外写', messages[1]['content'])
+        self.assertNotIn('要回复的原邮件', messages[1]['content'])
+
     def test_draft_needs_a_direction(self):
         document = SimpleNamespace(headers={'subject': ('测试',), 'from': ('张三 <zs@inspur.com>',)}, html=None, text='请周四前给方案。', attachments=())
         with self.assertRaises(AppError):
@@ -99,6 +118,10 @@ class WritingTest(unittest.TestCase):
         self.assertNotIn('zs@inspur.com', messages[1]['content'])
         self.assertIn('回复方向：同意：确认时间', messages[1]['content'])
         self.assertEqual(writing.tidy_draft('```\n您好：\n\n\n\n收到。\n```'), '您好：\n\n收到。')
+        signed = '钱老师 好，\n收到，谢谢指引。\n谢谢！\nBest regards,\nWang Biao (王标)\nInspur Co., Ltd.\nRiyadh\nM: +966 5\nE: wb@inspur.com'
+        self.assertEqual(writing.tidy_draft(signed), '钱老师 好，\n收到，谢谢指引。\n谢谢！')
+        self.assertEqual(writing.tidy_draft('Hi Ahmed,\n\nPlease confirm.\n\nWang Biao (王标)\nE: wb@inspur.com', ['王标']), 'Hi Ahmed,\n\nPlease confirm.')
+        self.assertEqual(writing.tidy_draft('Hi,\n\nBest regards from the team, see below.'), 'Hi,\n\nBest regards from the team, see below.')
 
     def test_note_prompt(self):
         document = SimpleNamespace(headers={'subject': ('LDAP 测试',), 'from': ('Ahmed <ah@stc.com.sa>',)}, html=None, text='Please confirm.', attachments=())

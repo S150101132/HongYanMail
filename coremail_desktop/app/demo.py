@@ -715,9 +715,13 @@ class DemoAiClient:
             return json.dumps({'tables': [{'purpose': 'expense' if any('费' in c['head'] for c in t['columns']) else 'list', 'rows': [], 'cols': [], 'emphasis': []}
                                           for t in data['tables']]}, ensure_ascii=False), 0
         if '鸿雁写信助手' in messages[0]['content'] and '回复方向' in messages[0]['content'] and 'ideas' in messages[0]['content']:
-            return json.dumps({'ideas': [{'label': '同意并确认', 'hint': '答应对方的要求，确认时间（演示）'},
-                                         {'label': '先问清楚', 'hint': '请对方补充缺少的信息（演示）'},
-                                         {'label': '婉拒或改期', 'hint': '说明原因，提出别的时间（演示）'}]}, ensure_ascii=False), 0
+            ideas = [{'label': '同意并确认', 'hint': '答应对方的要求，确认时间（演示）'},
+                     {'label': '先问清楚', 'hint': '请对方补充缺少的信息（演示）'},
+                     {'label': '婉拒或改期', 'hint': '说明原因，提出别的时间（演示）'}]
+            found = re.search(r'[\w.+-]+@[\w-]+(?:\.[\w-]+)+', text.partition('正文：')[2], re.ASCII)  # The mail names another address.
+            if found:
+                ideas = [{'label': '给对方写信', 'hint': f'按邮件说的，给 {found.group()} 写一封新邮件（演示）', 'to': found.group()}] + ideas[:2]
+            return json.dumps({'ideas': ideas}, ensure_ascii=False), 0
         if '鸿雁每周概要助手' in messages[0]['content']:
             from coremail_desktop.ai.weekly import demo
             return demo(messages), 0

@@ -94,8 +94,19 @@ const MG = {
     if ((!box || box.rw) && f.role !== 'sent' && f.role !== 'drafts') items.push({ label: '全部标为已读', icon: 'checkall', run: () => this.markAllRead(f.id) });
     if (!box && (f.role === 'trash' || f.role === 'spam')) items.push({ label: `清空「${f.name}」…`, icon: 'purge', run: () => this.emptyFolder(f) });
     items.push({ label: '刷新', icon: 'refresh', run: () => this.refresh(f.id) });
+    if (!box) items.push(this.autoSaveItem(f));
     if (!box) items.push('-', { label: '新建文件夹', icon: 'folderplus', run: () => this.createFolder(null) });
     return items;
+  },
+  // W10: mail opened in this folder is saved as .eml into a local folder (once; same file is skipped).
+  autoSaveItem(f) {
+    const map = { ...(S.prefs.autoSave || {}) }, path = map[f.id];
+    const save = async () => { try { S.prefs = await api('setPrefs', { values: { autoSave: map } }); } catch (err) { fail(err); return false; } return true; };
+    if (path) return { label: `停止自动存档（${path.split(/[\\/]/).pop()}）`, icon: 'download', run: async () => { delete map[f.id]; if (await save()) toast(`「${f.name}」不再自动存档`); } };
+    return { label: '打开时自动存档到…', icon: 'download', run: async () => {
+      const dir = await api('pickFolder', { title: `「${f.name}」的邮件打开时存到` }).catch(fail); if (!dir) return;
+      map[f.id] = dir; if (await save()) toast(`「${f.name}」的邮件打开时会存为 .eml 到 ${dir}`);
+    } };
   },
 
   // ------------------------------------------------------------ permanent deletion

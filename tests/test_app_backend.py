@@ -92,6 +92,25 @@ class BackendTest(unittest.TestCase):
         self.assertIn('color:#b42318', message['html'])
         self.assertEqual(message['from'][0]['email'], 'product@example.invalid')
 
+    def test_mail_opened_in_an_auto_save_folder_is_saved_once_as_eml(self):
+        target = Path(self.directory, 'LOG')
+        prefs = self.backend.set_prefs({'autoSave': {'1': str(target), '2': 'relative', 3: str(target)}})
+        self.assertEqual(prefs['autoSave'], {'1': str(target)})  # Only absolute paths under folder ids.
+        rows = self.backend.messages('1', 0, 2)['rows']
+        self.assertEqual(self.backend.open_message(rows[0]['id'], mark_read=False)['autoSaved'], 'saved')
+        name, data = self.backend.export_eml(rows[0]['id'])
+        self.assertEqual((target / name).read_bytes(), data)
+        self.assertEqual(self.backend.open_message(rows[0]['id'], mark_read=False)['autoSaved'], 'exists')
+        (target / name).write_bytes(b'other')  # Another file of that name is kept; this one gets a number.
+        self.assertEqual(self.backend.open_message(rows[0]['id'], mark_read=False)['autoSaved'], 'saved')
+        self.assertEqual((target / f'{name[:-4]} (2).eml').read_bytes(), data)
+        other = self.backend.messages('3', 0, 1)['rows'][0]['id']
+        self.assertNotIn('autoSaved', self.backend.open_message(other, mark_read=False))
+        self.backend.set_prefs({'autoSave': {'1': str(Path(self.directory, 'f.txt', 'x'))}})
+        Path(self.directory, 'f.txt').write_text('a file, not a folder')
+        self.assertEqual(self.backend.open_message(rows[1]['id'], mark_read=False)['autoSaved'], 'failed')
+        self.assertTrue(Path(self.directory, 'autosave-errors.log').exists())
+
     def test_attachments_open_and_forward_with_original_files(self):
         row = next(r for r in self.backend.messages('1', 0, 50)['rows'] if r['flags'].get('attached'))
         message = self.backend.open_message(row['id'])

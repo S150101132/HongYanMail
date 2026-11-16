@@ -30,9 +30,14 @@ function renderAiPanel(m) {
     box.innerHTML = head('') + `<div class="ai-body"><p class="ai-error">${esc(state.error.message)}</p>` +
       (setup ? '<button class="btn primary" data-ai="setup">打开 AI 设置</button>' : '') + '</div>';
   } else if (state.kind === 'reply') {
-    box.innerHTML = head('<span class="muted small">选一个方向，或写下你想怎么回；AI 只写正文，收件人和加密按普通回复</span>') +
-      `<div class="ai-body"><div class="ai-ideas">${state.ideas.map((x, i) => `<button class="ai-idea" data-idea="${i}"><b>${esc(x.label)}</b>` +
-        `<span class="muted small">${esc(x.hint)}</span></button>`).join('')}</div>` +
+    box.innerHTML = head('<span class="muted small">选一个方向，或写下你想怎么回；AI 只写正文，发送前请核对收件人</span>') +
+      // An idea that writes to another address (x.to) asks how: a new mail, or a reply on this one.
+      `<div class="ai-body"><div class="ai-ideas">${state.ideas.map((x, i) => x.to
+        ? `<div class="ai-idea ai-idea-pick"><b>${esc(x.label)}</b><span class="muted small">${esc(x.hint)}</span>` +
+          `<span class="ai-idea-to"><i data-icon="mail"></i>发给 ${esc(x.to)}</span><span class="ai-idea-ways">` +
+          `<button class="btn ghost sm" data-idea="${i}" data-way="new" title="新开一封发给 ${esc(x.to)} 的邮件，不带原邮件">新邮件</button>` +
+          `<button class="btn ghost sm" data-idea="${i}" data-way="reply" title="在这封邮件上回复（带原邮件）：主送 ${esc(x.to)}，原来的收件人改为抄送；右边可选回复 / 全部回复">在这封上回复</button></span></div>`
+        : `<button class="ai-idea" data-idea="${i}"><b>${esc(x.label)}</b><span class="muted small">${esc(x.hint)}</span></button>`).join('')}</div>` +
       '<div class="ai-reply-row"><input id="ai-reply-note" maxlength="300" placeholder="或者写下你想怎么回，例如：同意，周四前给方案">' +
       `<select id="ai-reply-mode"><option value="reply">回复</option><option value="reply_all"${state.all ? ' selected' : ''}>全部回复</option></select>` +
       '<button class="btn primary" data-ai="write">起草</button></div></div>';
@@ -63,7 +68,7 @@ function renderAiPanel(m) {
     setup: () => openSettings('ai'),
     write: () => writeReply(m, null),
   }[b.dataset.ai])()));
-  $$('[data-idea]', box).forEach((b) => (b.onclick = () => writeReply(m, state.ideas[+b.dataset.idea])));
+  $$('[data-idea]', box).forEach((b) => (b.onclick = () => writeReply(m, state.ideas[+b.dataset.idea], b.dataset.way)));
   $$('.ai-steps [data-mid]', box).forEach((li) => (li.onclick = () => openSource(li.dataset.mid)));
   const note = $('#ai-reply-note', box);
   if (note) note.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); writeReply(m, null); } };
@@ -134,15 +139,44 @@ function textHtml(text) {
   return text.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
 }
 
-async function writeReply(m, idea) {
+async function writeReply(m, idea, way = 'new') {
   const state = S.ai.get(m.id) || {};
   const note = ($('#ai-reply-note') || {}).value || '';
   if (!idea && !note.trim()) { toast('请选一个回复方向，或写下你想怎么回'); return; }
   const mode = ($('#ai-reply-mode') || {}).value || 'reply';
+  if (idea && idea.to) { writeFollowup(m, idea, note, state, way === 'reply' ? mode : ''); return; }
   await startCompose(mode, m.id);
   if ($('#composer').classList.contains('hidden')) return;
   try {
     await streamIntoComposer('draftReply', { mid: m.id, idea: idea ? `${idea.label}：${idea.hint}` : '', note, allow_encrypted: !!state.allow });
+  } catch (err) { if (err.code !== 'AI_CANCELLED') fail(err); }
+}
+// The mail asks the user to write to someone else (idea.to, an address the backend found in
+// its body), the body from the AI with the received mail as context. replyMode '' : a new
+// mail to that address, same subject without 回复:. replyMode reply / reply_all: a reply on
+// this mail (quoted, in its conversation) to that address, the reply's own recipients moved
+// to 抄送. Encryption is the composer's as usual.
+async function writeFollowup(m, idea, note, state, replyMode) {
+  let subject = String(m.subject || '').trim();
+  if (replyMode) await startCompose(replyMode, m.id);
+  else {
+    for (let prev = null; prev !== subject;) { prev = subject; subject = subject.replace(SUBJECT_PREFIX, '').trim(); }
+    await startCompose('new', null, { to: [idea.to], subject });
+  }
+  if ($('#composer').classList.contains('hidden')) return;
+  const person = (a) => parseAddressList(a)[0];
+  let cc = [];
+  if (replyMode) {
+    cc = [...chipsValue('to'), ...chipsValue('cc')].filter((a) => { const p = person(a); return p && p.email.toLowerCase() !== idea.to; });
+    setChips('to', [idea.to]); setChips('cc', cc);
+    $('#row-cc').classList.toggle('hidden', !cc.length);
+    subject = $('#cmp-subject').value;
+    renderEncrypt();
+  }
+  try {
+    await streamIntoComposer('writeFromNote', { note: `${idea.label}：${idea.hint}${note.trim() ? `\n${note.trim()}` : ''}`, subject,
+      to: [{ name: '', email: idea.to }], cc: cc.map(person).filter(Boolean).map((p) => ({ name: p.name || '', email: p.email })),
+      mid: m.id, how: 'followup', allow_encrypted: !!state.allow });
   } catch (err) { if (err.code !== 'AI_CANCELLED') fail(err); }
 }
 // A streamed body into the open composer, above the signature; errors go to the caller.

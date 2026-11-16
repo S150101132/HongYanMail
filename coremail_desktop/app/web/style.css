@@ -726,6 +726,8 @@ img.avatar.photo { object-fit: cover; background: var(--line); }
 .pp-facts:empty { display: none; }
 .pp-note { margin: 10px 0; }
 .pp-actions { display: flex; gap: 8px; margin-top: 4px; }
+.pp-actions:empty { display: none; }
+.person-pop.hover .pp-facts { margin-bottom: 0; }
 .pp-actions .btn i { width: 15px; height: 15px; }
 .ct-row .ct-unit { color: var(--muted); }
 
@@ -844,6 +846,11 @@ img.hy-picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ai-idea { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; max-width: 260px; padding: 7px 10px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); cursor: pointer; }
 .ai-idea:hover { border-color: var(--accent); background: var(--accent-soft); }
+.ai-idea-to { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 12px; color: var(--accent); word-break: break-all; }
+.ai-idea-to svg { width: 13px; height: 13px; flex: none; }
+.ai-idea-pick { cursor: default; }
+.ai-idea-pick:hover { border-color: var(--line); background: var(--bg); }
+.ai-idea-ways { display: flex; gap: 6px; margin-top: 6px; }
 .ai-reply-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .ai-reply-row input { flex: 1; min-width: 180px; }
 .ai-draft { white-space: pre-wrap; color: var(--text-2); border-left: 3px solid var(--accent); padding-left: 10px; margin: 4px 0 8px; }

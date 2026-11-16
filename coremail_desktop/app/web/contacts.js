@@ -367,10 +367,11 @@ function renderCard(p, details) {
 // ---------------------------------------------------------------- person popover (reader names)
 // Clicking a sender or recipient in the reader shows who it is; 写邮件 stays one click away.
 function closePersonPop() { const pop = $('#person-pop'); if (pop) pop.remove(); }
-function personPopover(anchor, person) {
+// hover: the compose chips' card — no buttons (writing to them is already under way).
+function personPopover(anchor, person, hover = false) {
   closePersonPop();
   const pop = document.createElement('div');
-  pop.id = 'person-pop'; pop.className = 'person-pop'; pop.setAttribute('role', 'dialog');
+  pop.id = 'person-pop'; pop.className = 'person-pop' + (hover ? ' hover' : ''); pop.setAttribute('role', 'dialog');
   document.body.appendChild(pop);
   const draw = (details) => {
     const p = mergePerson(person, details);
@@ -381,8 +382,9 @@ function personPopover(anchor, person) {
       <div class="pp-actions"><button class="btn primary" data-pp="write"><i data-icon="pen"></i>写邮件</button>
         <button class="btn ghost" data-pp="mails"><i data-icon="search"></i>查看往来邮件</button></div>`;
     renderIcons(pop);
-    $('[data-pp="write"]', pop).onclick = () => { closePersonPop(); writeTo(p); };
-    $('[data-pp="mails"]', pop).onclick = () => { closePersonPop(); mailsWith(p); };
+    if (hover) $$('.pp-actions > *', pop).forEach((b) => b.remove());
+    else $('[data-pp="write"]', pop).onclick = () => { closePersonPop(); writeTo(p); };
+    if (!hover) $('[data-pp="mails"]', pop).onclick = () => { closePersonPop(); mailsWith(p); };
     place();
     if (details !== undefined && window.personExtra) window.personExtra(pop, p).then(() => pop.isConnected && place());  // 人物卡片 (memory.js)
   };
@@ -401,6 +403,24 @@ $('#r-from-name').addEventListener('click', (e) => {
   const email = ($('#r-from-mail').textContent || '').replace(/^<|>$/g, '');
   if (email) personPopover(e.currentTarget, { name: e.currentTarget.textContent === email ? '' : e.currentTarget.textContent, email });
 });
+// Resting the pointer on a compose recipient shows the same card; it stays while the pointer
+// is on the chip or the card (so a field can be copied) and goes when it leaves both.
+const CHIP_HOVER = { timer: 0, chip: null };
+function chipHoverEnd() {
+  clearTimeout(CHIP_HOVER.timer);
+  CHIP_HOVER.timer = setTimeout(() => { const pop = $('#person-pop.hover'); if (pop && pop.matches(':hover')) return; if (pop) closePersonPop(); CHIP_HOVER.chip = null; }, 200);
+}
+$('.composer').addEventListener('mouseover', (e) => {
+  const chip = e.target.closest('.chips .chip');
+  if (!chip || dragChip || !EMAIL_RE.test(chip.dataset.email)) return;
+  clearTimeout(CHIP_HOVER.timer);
+  if (chip === CHIP_HOVER.chip && $('#person-pop.hover')) return;  // Back on the chip whose card is open.
+  CHIP_HOVER.chip = chip;
+  CHIP_HOVER.timer = setTimeout(() => { if (chip.isConnected && chip.matches(':hover')) personPopover(chip, { name: chip.dataset.name, email: chip.dataset.email }, true); }, 450);
+});
+$('.composer').addEventListener('mouseout', (e) => { const chip = e.target.closest('.chips .chip'); if (chip && !chip.contains(e.relatedTarget)) chipHoverEnd(); });
+$('.composer').addEventListener('dragstart', () => { clearTimeout(CHIP_HOVER.timer); if ($('#person-pop.hover')) closePersonPop(); });
+document.addEventListener('mouseout', (e) => { const pop = e.target.closest('#person-pop.hover'); if (pop && !pop.contains(e.relatedTarget)) chipHoverEnd(); });
 function writeTo(p) {
   const name = String(p.name || '').replace(/["<>]/g, '');
   startCompose('new', null, { to: [name ? `"${name}" <${p.email}>` : p.email] });

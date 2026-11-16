@@ -326,7 +326,7 @@ def _make_web(owner):
 def _spelling_menu(view, bridge):
     """No Chromium menu: the page draws its own. A right-click on a misspelled word in the
     composer (spellcheck on, page did not take the click) sends the suggestions to it; one
-    on a picture in a mail body asks the page for its 复制图片 menu (native copyImage)."""
+    on a picture in a mail body or the composer asks the page for its 复制图片 menu (native copyImage)."""
     view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def requested(pos):
@@ -334,7 +334,9 @@ def _spelling_menu(view, bridge):
         if request is None: return
         if request.isContentEditable() and request.misspelledWord():
             bridge.emit_event('spelling', {'word': request.misspelledWord(), 'suggestions': list(request.spellCheckerSuggestions())[:6]})
-        elif request.mediaType() == QWebEngineContextMenuRequest.MediaType.MediaTypeImage and not request.isContentEditable():
+        elif request.mediaType() == QWebEngineContextMenuRequest.MediaType.MediaTypeImage:
+            # Read or being written (the composer, quoted mail too); a picture in a table cell
+            # gets the page's table menu instead (the page takes that click).
             bridge.emit_event('imageMenu', {'x': pos.x(), 'y': pos.y()})
     view.customContextMenuRequested.connect(requested)
 

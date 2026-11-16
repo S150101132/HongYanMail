@@ -903,6 +903,8 @@ async function selectMessage(id, opts = {}) {
     if (token !== openToken) return;
     S.message = m;
     renderMessage(m);
+    if (m.autoSaved === 'saved') toast('已自动存档到本地文件夹');  // W10: 文件夹右键「打开时自动存档」.
+    else if (m.autoSaved === 'failed') toast('自动存档失败：无法写入选定的文件夹', { error: true });
     if (typeof chatMailChanged === 'function') chatMailChanged();
     if (READER_MID) { document.title = (m.subject || '（无主题）') + ' · 鸿雁'; if (m.markedRead) notifyMain({ kind: 'flags', id, flags: { read: true } }); }
     if (m.markedRead && summary && !early) showRead(true);
@@ -1556,7 +1558,7 @@ function chipEl(addr) {
   const el = document.createElement('span');
   el.className = 'chip' + (EMAIL_RE.test(p.email) ? '' : ' bad');
   el.dataset.email = p.email; el.dataset.name = p.name || '';
-  el.title = p.email;
+  if (!EMAIL_RE.test(p.email)) el.title = p.email;  // A valid address gets the card on hover (contacts.js).
   el.innerHTML = `<span>${esc(p.name ? `${p.name}` : p.email)}</span><button tabindex="-1" title="移除">×</button>`;
   el.querySelector('button').onclick = () => { el.remove(); C.dirty = true; renderEncrypt(); };
   el.draggable = true;

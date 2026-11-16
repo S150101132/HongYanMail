@@ -237,6 +237,9 @@ class SpellingTest(unittest.TestCase):
         self.assertIn("on('imageMenu'", app)
         self.assertIn("api('copyImage')", app)
         self.assertIn('sel && !sel.isCollapsed', app)
+        # The composer too (its quoted mail included): an editable picture is not left out.
+        import inspect
+        self.assertNotIn('not request.isContentEditable()', inspect.getsource(shell._spelling_menu))
 
 
 if __name__ == '__main__':
